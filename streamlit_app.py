@@ -18,6 +18,7 @@ IDX_COMPANY_PROFILE_URLS = [
     "https://www.idx.co.id/primary/ListedCompany/GetCompanyProfiles?emitenType=s",
     "https://www.idx.co.id/umbraco/Surface/ListedCompany/GetCompanyProfiles?emitenType=s",
 ]
+IDX_STOCK_LIST_URL = "https://www.idx.id/primary/StockData/GetSecuritiesStock?start=0&length=9999&code=&sector=&board=&language=en-us"
 TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/indonesia/scan"
 STOCKANALYSIS_IDX_URL = "https://stockanalysis.com/list/indonesia-stock-exchange/"
 ONLINE_LOAD_PERIOD = "1y"
@@ -333,14 +334,14 @@ def first_existing_column(dataframe, candidates):
 
 def normalize_universe_frame(dataframe, source):
     if dataframe is None or dataframe.empty:
-        return pd.DataFrame(columns=["Kode", "Nama Perusahaan", "Sektor", "Industry", "Universe_Source"])
+        return pd.DataFrame(columns=["Kode", "Nama Perusahaan", "Sektor", "Industry", "ListingDate", "Shares", "ListingBoard", "Universe_Source"])
 
     code_column = first_existing_column(
         dataframe,
         ["Kode", "Code", "Stock Code", "StockCode", "Ticker", "Symbol", "EmitenCode"],
     )
     if code_column is None:
-        return pd.DataFrame(columns=["Kode", "Nama Perusahaan", "Sektor", "Industry", "Universe_Source"])
+        return pd.DataFrame(columns=["Kode", "Nama Perusahaan", "Sektor", "Industry", "ListingDate", "Shares", "ListingBoard", "Universe_Source"])
 
     name_column = first_existing_column(
         dataframe,
@@ -348,12 +349,18 @@ def normalize_universe_frame(dataframe, source):
     )
     sector_column = first_existing_column(dataframe, ["Sektor", "Sector"])
     industry_column = first_existing_column(dataframe, ["Industry", "Subsector", "Sub Sector", "SubSektor"])
+    listing_date_column = first_existing_column(dataframe, ["ListingDate", "Listing Date", "Tanggal Pencatatan"])
+    shares_column = first_existing_column(dataframe, ["Shares", "Share", "Saham"])
+    listing_board_column = first_existing_column(dataframe, ["ListingBoard", "Listing Board", "Papan Pencatatan", "Board"])
 
     universe = pd.DataFrame()
     universe["Kode"] = dataframe[code_column].map(clean_stock_code)
     universe["Nama Perusahaan"] = dataframe[name_column].map(clean_text) if name_column else "-"
     universe["Sektor"] = dataframe[sector_column].map(lambda value: clean_text(value, "No Sector")) if sector_column else "No Sector"
     universe["Industry"] = dataframe[industry_column].map(lambda value: clean_text(value, "No Industry")) if industry_column else "No Industry"
+    universe["ListingDate"] = pd.to_datetime(dataframe[listing_date_column], errors="coerce") if listing_date_column else pd.NaT
+    universe["Shares"] = pd.to_numeric(dataframe[shares_column], errors="coerce") if shares_column else np.nan
+    universe["ListingBoard"] = dataframe[listing_board_column].map(lambda value: clean_text(value, "-")) if listing_board_column else "-"
     universe["Universe_Source"] = source
     universe = universe[universe["Kode"].ne("")]
     universe = universe.drop_duplicates("Kode")
@@ -422,9 +429,25 @@ def load_tradingview_universe():
     return normalize_universe_frame(pd.DataFrame(rows), "TradingView online")
 
 
+def load_official_idx_universe():
+    payload = json.loads(read_url_text(IDX_STOCK_LIST_URL))
+    records = payload.get("data", payload if isinstance(payload, list) else [])
+    universe = normalize_universe_frame(pd.DataFrame(records), "BEI/IDX official")
+    universe.attrs["records_total"] = payload.get("recordsTotal") if isinstance(payload, dict) else len(universe)
+    return universe
+
+
 @st.cache_data(ttl=ONLINE_REFRESH_TTL, show_spinner=False)
 def load_idx_universe_online():
     errors = []
+
+    try:
+        universe = load_official_idx_universe()
+        if not universe.empty:
+            universe.attrs["universe_error"] = None
+            return universe
+    except Exception as exc:
+        errors.append(f"BEI/IDX: {exc}")
 
     try:
         universe = load_tradingview_universe()
@@ -1363,7 +1386,12 @@ def merge_universe_with_excel_fallback(universe, excel_summary):
     for column, default in [("Nama Perusahaan", "-"), ("Sektor", "No Sector"), ("Industry", "No Industry")]:
         if column not in excel_universe.columns:
             excel_universe[column] = default
+    excel_universe["ListingDate"] = pd.NaT
+    excel_universe["Shares"] = np.nan
+    excel_universe["ListingBoard"] = "-"
     excel_universe["Universe_Source"] = "Excel fallback"
+    excel_universe["In_IDX_Official"] = False
+    excel_universe["Universe_Diff_Status"] = "Excel fallback only"
 
     if universe.empty:
         return excel_universe.drop_duplicates("Kode")
@@ -1372,10 +1400,16 @@ def merge_universe_with_excel_fallback(universe, excel_summary):
     output = excel_universe.drop_duplicates("Kode").copy()
     online_codes = output["Kode"].isin(online_lookup.index)
     output.loc[online_codes, "Universe_Source"] = output.loc[online_codes, "Kode"].map(online_lookup["Universe_Source"])
+    output["In_IDX_Official"] = online_codes & output["Universe_Source"].eq("BEI/IDX official")
+    output["Universe_Diff_Status"] = np.where(
+        output["In_IDX_Official"],
+        "Match BEI/IDX official",
+        np.where(online_codes, "Match non-IDX online fallback", "Excel fallback only"),
+    )
 
-    for column in ["Nama Perusahaan", "Sektor", "Industry"]:
+    for column in ["Nama Perusahaan", "Sektor", "Industry", "ListingDate", "Shares", "ListingBoard"]:
         online_values = output["Kode"].map(online_lookup[column]) if column in online_lookup.columns else pd.Series(np.nan, index=output.index)
-        missing = output[column].isna() | output[column].astype(str).str.strip().isin(["", "-", "No Sector", "No Industry", "nan"])
+        missing = output[column].isna() | output[column].astype(str).str.strip().isin(["", "-", "No Sector", "No Industry", "nan", "NaT"])
         output.loc[missing & online_values.notna(), column] = online_values[missing & online_values.notna()]
 
     return output.reset_index(drop=True)
@@ -1437,7 +1471,12 @@ def load_data():
 
     if universe.empty:
         universe = excel_summary[["Kode", "Nama Perusahaan", "Sektor", "Industry"]].copy()
+        universe["ListingDate"] = pd.NaT
+        universe["Shares"] = np.nan
+        universe["ListingBoard"] = "-"
         universe["Universe_Source"] = "Excel fallback"
+        universe["In_IDX_Official"] = False
+        universe["Universe_Diff_Status"] = "Excel fallback only"
     else:
         universe = merge_universe_with_excel_fallback(universe, excel_summary)
 
@@ -1451,6 +1490,12 @@ def load_data():
         "Nama Perusahaan",
         "Sektor",
         "Industry",
+        "ListingDate",
+        "Shares",
+        "ListingBoard",
+        "Universe_Source",
+        "In_IDX_Official",
+        "Universe_Diff_Status",
         "Index",
         "Index_Count",
         "Index_Count_Raw",
@@ -2107,6 +2152,10 @@ with tab_reco:
             "Price_Source",
             "Volume_Source",
             "Data_Source",
+            "Universe_Source",
+            "Universe_Diff_Status",
+            "ListingBoard",
+            "ListingDate",
             "Volume_Original",
             "Volume_Online_Latest",
             "Online_Last_Date",
@@ -2132,6 +2181,7 @@ with tab_reco:
             "Volume",
             "Price_Source",
             "Volume_Source",
+            "Universe_Diff_Status",
             "Safety_Notes",
             "Sektor",
             "Industry",
@@ -2165,6 +2215,10 @@ with tab_reco:
                 "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari yfinance/cache."),
                 "Volume_Source": st.column_config.TextColumn("Sumber Volume", help="Menunjukkan apakah volume berasal dari yfinance/cache atau Excel fallback."),
                 "Data_Source": st.column_config.TextColumn("Sumber Data", help="Ringkasan sumber data pasar utama untuk baris ini."),
+                "Universe_Source": st.column_config.TextColumn("Sumber Kode", help="Sumber universe kode saham: BEI/IDX official atau fallback."),
+                "Universe_Diff_Status": st.column_config.TextColumn("Status Kode", help="Menunjukkan apakah kode match dengan daftar resmi BEI/IDX atau hanya ada di fallback."),
+                "ListingBoard": st.column_config.TextColumn("Papan", help="Papan pencatatan dari daftar resmi BEI/IDX bila tersedia."),
+                "ListingDate": st.column_config.DateColumn("Listing", help="Tanggal pencatatan dari daftar resmi BEI/IDX bila tersedia."),
                 "Online_Last_Date": st.column_config.DateColumn("Tanggal Online", help="Tanggal data online terakhir dari yfinance/cache."),
                 "Return_4W": st.column_config.NumberColumn("4W", format="%.1f%%", help=HELP_TEXT["return"]),
                 "Return_13W": st.column_config.NumberColumn("13W", format="%.1f%%", help=HELP_TEXT["return"]),
@@ -2549,6 +2603,27 @@ with tab_quality:
     quality_cols[1].metric("Perlu review", f"{review_count}")
     quality_cols[2].metric("High severity", f"{high_count}")
     quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
+
+    universe_status = scored_df["Universe_Diff_Status"].value_counts(dropna=False).reset_index()
+    universe_status.columns = ["Status Kode", "Jumlah"]
+    source_status = scored_df["Universe_Source"].value_counts(dropna=False).reset_index()
+    source_status.columns = ["Sumber Kode", "Jumlah"]
+    universe_cols = st.columns(4)
+    universe_cols[0].metric("Kode universe", f"{scored_df['Kode'].nunique():,}")
+    universe_cols[1].metric("Match BEI/IDX", f"{scored_df['In_IDX_Official'].sum():,}")
+    universe_cols[2].metric("Fallback non-BEI", f"{(~scored_df['In_IDX_Official']).sum():,}")
+    universe_cols[3].metric("Sumber kode", f"{scored_df['Universe_Source'].nunique():,}")
+    with st.expander("Audit sumber kode saham", expanded=True):
+        st.dataframe(universe_status, width="stretch", hide_index=True)
+        st.dataframe(source_status, width="stretch", hide_index=True)
+        diff_codes = scored_df[~scored_df["In_IDX_Official"]][
+            ["Kode", "Nama Perusahaan", "Universe_Source", "Universe_Diff_Status", "Sektor", "Industry", "ListingBoard"]
+        ].sort_values("Kode")
+        if diff_codes.empty:
+            st.success("Semua kode di universe match dengan daftar resmi BEI/IDX.")
+        else:
+            st.warning(f"Ada {len(diff_codes):,} kode yang tidak match dengan daftar resmi BEI/IDX dan tetap dipertahankan dari fallback.")
+            st.dataframe(diff_codes, width="stretch", hide_index=True)
 
     with st.expander("Audit Kode Saham: alasan lolos/gagal filter", expanded=True):
         audit_scope = st.radio(

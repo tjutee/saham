@@ -55,7 +55,7 @@ git push -u origin main
 Pastikan koneksi internet Streamlit Cloud aktif dan dependency di
 `requirements.txt` berhasil ter-install. Dashboard akan mencoba:
 
-1. daftar kode saham online dari TradingView IDX scanner, lalu fallback IDX/StockAnalysis,
+1. daftar kode saham online dari endpoint resmi BEI/IDX, lalu fallback TradingView/StockAnalysis,
 2. harga/histori dari `yfinance`,
 3. fallback `pandas-datareader`,
 4. cache lokal,

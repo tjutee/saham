@@ -7,7 +7,8 @@ untuk rasio fundamental, metrik bank, sektor, dan data yang belum tersedia onlin
 
 ## Fitur
 
-- Universe kode saham online dari TradingView IDX scanner, dengan fallback IDX/StockAnalysis/Excel.
+- Universe kode saham online dari daftar resmi BEI/IDX, dengan fallback TradingView/StockAnalysis/Excel.
+- Audit sumber kode menandai kode yang match BEI/IDX resmi dan kode yang hanya ada di fallback.
 - Deduplikasi saham berdasarkan `Kode`, karena saham yang sama bisa muncul di beberapa indeks.
 - Scoring multi-factor: valuasi, kualitas profit, risiko, likuiditas, momentum, dan kekuatan indeks.
 - Filter threshold dari sheet `NonBank` dan `Banking`.
