@@ -15,10 +15,10 @@ README.md
 .gitignore
 ```
 
-`Ringkasan.xlsx` sekarang berfungsi sebagai fallback. Aplikasi tetap mencoba
-mengambil daftar kode saham dan harga/histori secara online lebih dulu, tetapi
-file Excel tetap disarankan agar rasio fundamental, metrik bank, sektor, dan
-cadangan data tetap lengkap saat sumber online kosong.
+`Ringkasan.xlsx` berfungsi sebagai fallback. Aplikasi mengambil universe kode
+saham dari endpoint resmi BEI/IDX lebih dulu, mengambil harga/histori dari
+online, lalu memakai Excel untuk rasio fundamental, metrik bank, sektor, dan
+cadangan data yang belum tersedia online.
 
 File yang tidak perlu di-upload:
 
@@ -61,6 +61,10 @@ Pastikan koneksi internet Streamlit Cloud aktif dan dependency di
 4. cache lokal,
 5. `Ringkasan.xlsx` untuk kolom yang masih kosong.
 
+Setelah deploy, cek tab `Data Quality` -> `Audit sumber kode saham`. Di sana
+akan terlihat jumlah kode yang match daftar resmi BEI/IDX dan kode yang hanya
+berasal dari fallback.
+
 Jika fallback Excel ingin dipakai, pastikan `Ringkasan.xlsx` ada di root
 repository, satu folder dengan `streamlit_app.py`. Nama file harus sama persis
 karena app membaca:
@@ -72,8 +76,8 @@ DATA_FILE = "Ringkasan.xlsx"
 ## Update Data Fallback
 
 Harga dan histori utama akan di-refresh dari online/cache aplikasi. Jika ingin
-memperbaiki rasio fundamental, metrik bank, sektor, atau cadangan Excel, timpa
-file `Ringkasan.xlsx`, lalu push ulang:
+memperbaiki rasio fundamental, metrik bank, sektor, atau cadangan Excel-only,
+timpa file `Ringkasan.xlsx`, lalu push ulang:
 
 ```powershell
 git add Ringkasan.xlsx

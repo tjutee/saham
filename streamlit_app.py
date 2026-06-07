@@ -135,7 +135,7 @@ HELP_TEXT = {
     "liquidity": "Liquidity_Score dihitung dari volume dan turnover. Skor tinggi berarti saham lebih aktif diperdagangkan, tetapi tetap tidak menjamin order besar bisa dieksekusi tanpa slippage.",
     "momentum": "Momentum_Score memakai %Change dan return historis 4W, 13W, 26W, 52W, serta YTD bila tersedia. Ini membaca tren historis, bukan prediksi harga.",
     "index_strength": "Index_Score memakai jumlah kemunculan saham pada indeks/sumber data. Ini sinyal visibilitas dan coverage data, bukan jaminan kualitas perusahaan.",
-    "sector": "Menyaring berdasarkan sektor bisnis dari sumber online atau Excel fallback. Tidak mengubah rumus score, hanya membatasi saham yang dianalisis.",
+    "sector": "Menyaring berdasarkan sektor bisnis dari daftar resmi BEI/IDX bila tersedia, lalu Excel fallback. Tidak mengubah rumus score, hanya membatasi saham yang dianalisis.",
     "industry": "Menyaring berdasarkan industri yang lebih spesifik di dalam sektor. Tidak mengubah score dasar.",
     "price": "Penutupan diprioritaskan dari yfinance online, lalu diisi Excel bila online kosong. Filter ini membatasi rentang harga nominal, bukan valuasi murah/mahal.",
     "volume": "Volume diprioritaskan dari yfinance online, lalu diisi Excel bila online kosong. Volume minimum membantu membuang saham sangat tidak likuid.",
@@ -177,7 +177,8 @@ HELP_TEXT = {
     "factor_top_n": "Jumlah contoh saham teratas yang ditampilkan untuk faktor yang sedang diinspeksi.",
     "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai rekomendasi.",
     "audit_code": "Pilih satu atau beberapa kode saham untuk melihat alasan lolos/gagal pada filter aktif dan preset pembanding.",
-    "audit_scope": "Cakupan audit. Semua saham mengecek seluruh universe, Hasil filter aktif hanya saham yang sedang lolos filter sidebar, Kode pilihan untuk investigasi manual.",
+    "audit_scope": "Cakupan audit filter. Semua saham mengecek seluruh universe final, Hasil filter aktif hanya saham yang lolos filter sidebar, Kode pilihan untuk investigasi manual.",
+    "universe_audit": "Universe kode saham diprioritaskan dari daftar resmi BEI/IDX. Kode yang tidak ada di BEI/IDX tetapi ada di fallback tetap dipertahankan dan diberi status Excel fallback only.",
     "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih lebih panjang untuk analisis historis, lebih pendek untuk refresh cepat.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
@@ -1415,6 +1416,15 @@ def merge_universe_with_excel_fallback(universe, excel_summary):
     return output.reset_index(drop=True)
 
 
+def summarize_universe_source(universe):
+    if universe.empty or "Kode" not in universe.columns:
+        return "Universe kosong"
+    total = universe["Kode"].nunique()
+    idx_count = int(universe.get("In_IDX_Official", pd.Series(False, index=universe.index)).fillna(False).sum())
+    fallback_count = total - idx_count
+    return f"Universe {total:,} kode ({idx_count:,} BEI/IDX official, {fallback_count:,} fallback)"
+
+
 def is_banking_row(row):
     industry_text = f"{row.get('Industry', '')} {row.get('Industri', '')} {row.get('Subindustri', '')}".lower()
     name_text = str(row.get("Nama Perusahaan", "")).lower()
@@ -1622,7 +1632,7 @@ def load_data():
             df[column] = df[column].fillna(df[threshold_column])
             df = df.drop(columns=[threshold_column])
     df = apply_threshold_profile(df)
-    raw.attrs["data_source"] = f"Universe {universe['Universe_Source'].iloc[0] if not universe.empty else '-'}; Market {market_source}"
+    raw.attrs["data_source"] = f"{summarize_universe_source(universe)}; Market {market_source}"
     raw.attrs["online_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     raw.attrs["universe_error"] = universe_error
     raw.attrs["market_error"] = market_error
@@ -2604,18 +2614,26 @@ with tab_quality:
     quality_cols[2].metric("High severity", f"{high_count}")
     quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
 
-    universe_status = scored_df["Universe_Diff_Status"].value_counts(dropna=False).reset_index()
-    universe_status.columns = ["Status Kode", "Jumlah"]
-    source_status = scored_df["Universe_Source"].value_counts(dropna=False).reset_index()
-    source_status.columns = ["Sumber Kode", "Jumlah"]
+    universe_summary = (
+        scored_df.groupby(["Universe_Diff_Status", "Universe_Source"], dropna=False)
+        .agg(Jumlah=("Kode", "nunique"))
+        .reset_index()
+        .rename(columns={"Universe_Diff_Status": "Status Kode", "Universe_Source": "Sumber Kode"})
+        .sort_values(["Status Kode", "Sumber Kode"])
+    )
     universe_cols = st.columns(4)
     universe_cols[0].metric("Kode universe", f"{scored_df['Kode'].nunique():,}")
     universe_cols[1].metric("Match BEI/IDX", f"{scored_df['In_IDX_Official'].sum():,}")
     universe_cols[2].metric("Fallback non-BEI", f"{(~scored_df['In_IDX_Official']).sum():,}")
-    universe_cols[3].metric("Sumber kode", f"{scored_df['Universe_Source'].nunique():,}")
-    with st.expander("Audit sumber kode saham", expanded=True):
-        st.dataframe(universe_status, width="stretch", hide_index=True)
-        st.dataframe(source_status, width="stretch", hide_index=True)
+    universe_cols[3].metric("Sumber aktif", f"{scored_df['Universe_Source'].nunique():,}")
+    with st.expander("Audit sumber kode saham", expanded=False):
+        st.caption(HELP_TEXT["universe_audit"])
+        st.dataframe(
+            universe_summary,
+            width="stretch",
+            hide_index=True,
+            column_config={"Jumlah": st.column_config.NumberColumn("Jumlah", format="%d")},
+        )
         diff_codes = scored_df[~scored_df["In_IDX_Official"]][
             ["Kode", "Nama Perusahaan", "Universe_Source", "Universe_Diff_Status", "Sektor", "Industry", "ListingBoard"]
         ].sort_values("Kode")
@@ -2775,12 +2793,13 @@ with tab_quality:
     with st.expander("Workflow rutin yang disarankan", expanded=True):
         st.markdown(
             """
-            1. Biarkan dashboard mengambil universe kode saham online, lalu harga/histori dari yfinance.
-            2. Jalankan `Refresh cache histori top saham` di sidebar untuk memperbarui cache online.
-            3. Buka tab `Data Quality` dan cek apakah banyak harga/volume/return yang jatuh ke fallback.
-            4. Update `Ringkasan.xlsx` hanya bila rasio fundamental, metrik bank, sektor, atau fallback perlu diperbaiki.
-            5. Cek Top Rekomendasi, terutama saham dengan score tinggi tetapi volume rendah, PER negatif, atau threshold rendah.
-            6. Simpan/export hasil rekomendasi hanya setelah check High severity terkendali.
+            1. Biarkan dashboard mengambil universe kode dari daftar resmi BEI/IDX, lalu harga/histori dari yfinance.
+            2. Buka `Audit sumber kode saham` untuk memastikan kode BEI/IDX dan kode fallback terbaca jelas.
+            3. Jalankan `Refresh cache histori top saham` di sidebar untuk memperbarui cache online.
+            4. Cek tab `Data Quality` bila banyak harga/volume/return jatuh ke fallback.
+            5. Update `Ringkasan.xlsx` hanya bila rasio fundamental, metrik bank, sektor, atau kode fallback perlu diperbaiki.
+            6. Cek Top Rekomendasi, terutama saham dengan score tinggi tetapi volume rendah, PER negatif, atau threshold rendah.
+            7. Simpan/export hasil rekomendasi hanya setelah check High severity terkendali.
             """
         )
 
@@ -2796,7 +2815,7 @@ with tab_method:
         - Risiko: non-bank memakai DER rendah dan intraday range rendah; Banking memakai CAR, NPL, BOPO, dan LDR bila tersedia.
         - Likuiditas: volume dan turnover harga x volume.
         - Momentum: kombinasi histori online 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem, dengan Excel Metrik sebagai fallback.
-        - Kekuatan indeks: jumlah indeks/tempat kemunculan dari fallback; bila hanya universe online tersedia, minimal dihitung sebagai saham listed.
+        - Kekuatan indeks: jumlah indeks/tempat kemunculan dari fallback; bila hanya universe BEI/IDX tersedia, minimal dihitung sebagai saham listed.
         - Threshold sheet: rasio dibandingkan dengan batas dari sheet NonBank atau Banking sebagai cadangan metodologi fundamental.
 
         Penalti diterapkan untuk PER/PBV negatif, profitabilitas negatif, NPM negatif, volume rendah, harga nol, pergerakan harian ekstrem, dan kelulusan threshold yang terlalu rendah.
