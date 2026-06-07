@@ -46,6 +46,7 @@ NUMERIC_COLUMNS = [
     "CIR",
     "LAR",
     "Index_Count_Raw",
+    "Index_Count_Sigma",
 ]
 
 BASE_WEIGHTS = {
@@ -134,7 +135,7 @@ HELP_TEXT = {
     "risk": "Risk_Score adalah skor risiko relatif. Non-bank memakai DER dan volatilitas/pergerakan harga; bank memakai NIM, CAR, LDR, NPL, BOPO, serta CIR/LAR bila ada. Skor tinggi berarti risiko model lebih rendah, bukan bebas risiko.",
     "liquidity": "Liquidity_Score dihitung dari volume dan turnover. Skor tinggi berarti saham lebih aktif diperdagangkan, tetapi tetap tidak menjamin order besar bisa dieksekusi tanpa slippage.",
     "momentum": "Momentum_Score memakai %Change dan return historis 4W, 13W, 26W, 52W, serta YTD bila tersedia. Ini membaca tren historis, bukan prediksi harga.",
-    "index_strength": "Index_Score memakai jumlah kemunculan saham pada indeks/sumber data. Ini sinyal visibilitas dan coverage data, bukan jaminan kualitas perusahaan.",
+    "index_strength": "Index_Score memakai jumlah kemunculan saham pada indeks/sumber data. Bila tersedia, nilai utama diambil dari kolom sigma `∑i ≥ 7` di Excel sebagai sinyal coverage indeks; ini bukan jaminan kualitas perusahaan.",
     "sector": "Menyaring berdasarkan sektor bisnis dari daftar resmi BEI/IDX bila tersedia, lalu Excel fallback. Tidak mengubah rumus score, hanya membatasi saham yang dianalisis.",
     "industry": "Menyaring berdasarkan industri yang lebih spesifik di dalam sektor. Tidak mengubah score dasar.",
     "price": "Penutupan diprioritaskan dari yfinance online, lalu diisi Excel bila online kosong. Filter ini membatasi rentang harga nominal, bukan valuasi murah/mahal.",
@@ -330,6 +331,20 @@ def first_existing_column(dataframe, candidates):
         found = normalized_lookup.get(candidate.strip().lower())
         if found is not None:
             return found
+    return None
+
+
+def find_index_sigma_column(columns):
+    for column in columns:
+        text = str(column).strip().lower()
+        if "index" in text or "update" in text or "expired" in text:
+            continue
+        if "∑" in text or "sigma" in text or text.startswith("sum"):
+            return column
+    for column in columns:
+        text = str(column).strip().lower()
+        if "≥" in text and "7" in text and "index" not in text:
+            return column
     return None
 
 
@@ -1328,8 +1343,9 @@ def build_excel_fallback_summary():
     if raw.empty or "Kode" not in raw.columns:
         return pd.DataFrame(columns=["Kode"]), raw
 
-    index_count_column = next((column for column in raw.columns if "7" in column and "Index" not in column), None)
+    index_count_column = find_index_sigma_column(raw.columns)
     raw["Index_Count_Raw"] = raw[index_count_column] if index_count_column else np.nan
+    raw["Index_Count_Sigma"] = raw["Index_Count_Raw"]
 
     for column in NUMERIC_COLUMNS:
         if column in raw.columns:
@@ -1364,6 +1380,7 @@ def build_excel_fallback_summary():
         "Low": "median",
         "Volume": "median",
         "Index_Count_Raw": "max",
+        "Index_Count_Sigma": "max",
     }
 
     existing = {key: value for key, value in aggregations.items() if key in raw.columns}
@@ -1373,8 +1390,9 @@ def build_excel_fallback_summary():
     else:
         summary["Index"] = ""
         summary["Index_Count"] = 0
-    if "Index_Count_Raw" in summary.columns:
-        summary["Index_Count"] = summary[["Index_Count", "Index_Count_Raw"]].max(axis=1).fillna(0)
+    index_signal_columns = [column for column in ["Index_Count", "Index_Count_Raw", "Index_Count_Sigma"] if column in summary.columns]
+    if index_signal_columns:
+        summary["Index_Count"] = summary[index_signal_columns].max(axis=1).fillna(0)
     return summary, raw
 
 
@@ -1509,6 +1527,7 @@ def load_data():
         "Index",
         "Index_Count",
         "Index_Count_Raw",
+        "Index_Count_Sigma",
         "Penutupan",
         "PER",
         "PBV",
@@ -1557,6 +1576,7 @@ def load_data():
         "LAR",
         "Index_Count",
         "Index_Count_Raw",
+        "Index_Count_Sigma",
     ]
     for column in text_columns:
         excel_column = f"{column}_Excel"
@@ -1812,7 +1832,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Volume**: jumlah saham yang diperdagangkan.
         - **Turnover**: estimasi nilai transaksi dari harga penutupan dikali volume.
         - **Momentum**: sinyal tren dari `%Change`, return 4W, 13W, 26W, 52W, dan YTD bila tersedia.
-        - **Index Count / Kekuatan indeks**: jumlah kemunculan saham pada indeks/sumber data; ini sinyal visibilitas, bukan jaminan kualitas.
+        - **Index Count / Kekuatan indeks**: jumlah kemunculan saham pada indeks/sumber data. Jika tersedia, dashboard memakai nilai kolom sigma `∑i ≥ 7` dari Excel sebagai coverage indeks utama; ini sinyal visibilitas, bukan jaminan kualitas.
         - **Threshold**: persentase rasio yang lolos batas dari sheet `NonBank` atau `Banking`.
         - **Threshold Mode**: sumber batas rasio yang dipakai, yaitu `NonBank` atau `Banking`.
         - **Threshold Pass Count / Applicable**: jumlah rasio yang lolos dibanding jumlah rasio yang bisa dinilai.
@@ -2159,6 +2179,8 @@ with tab_reco:
             "Return_52W",
             "Return_YTD",
             "Volume",
+            "Index_Count",
+            "Index_Count_Sigma",
             "Price_Source",
             "Volume_Source",
             "Data_Source",
@@ -2189,6 +2211,7 @@ with tab_reco:
             "DER",
             "Return_52W",
             "Volume",
+            "Index_Count",
             "Price_Source",
             "Volume_Source",
             "Universe_Diff_Status",
@@ -2220,6 +2243,8 @@ with tab_reco:
                 "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
                 "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
                 "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
+                "Index_Count": st.column_config.NumberColumn("Index Count", format="%.0f", help=HELP_TEXT["index_strength"]),
+                "Index_Count_Sigma": st.column_config.NumberColumn("Sigma i", format="%.0f", help="Nilai coverage indeks dari kolom `∑i ≥ 7` di Excel fallback bila tersedia."),
                 "Price_Source": st.column_config.TextColumn("Sumber Harga", help="Menunjukkan apakah harga berasal dari yfinance/cache atau Excel fallback."),
                 "Volume_Original": st.column_config.NumberColumn("Volume Excel", format="%.0f", help="Volume dari Excel fallback bila tersedia."),
                 "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari yfinance/cache."),
@@ -2815,7 +2840,7 @@ with tab_method:
         - Risiko: non-bank memakai DER rendah dan intraday range rendah; Banking memakai CAR, NPL, BOPO, dan LDR bila tersedia.
         - Likuiditas: volume dan turnover harga x volume.
         - Momentum: kombinasi histori online 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem, dengan Excel Metrik sebagai fallback.
-        - Kekuatan indeks: jumlah indeks/tempat kemunculan dari fallback; bila hanya universe BEI/IDX tersedia, minimal dihitung sebagai saham listed.
+        - Kekuatan indeks: nilai kolom sigma `∑i ≥ 7` dari Excel bila tersedia, atau jumlah indeks/tempat kemunculan dari fallback; bila hanya universe BEI/IDX tersedia, minimal dihitung sebagai saham listed.
         - Threshold sheet: rasio dibandingkan dengan batas dari sheet NonBank atau Banking sebagai cadangan metodologi fundamental.
 
         Penalti diterapkan untuk PER/PBV negatif, profitabilitas negatif, NPM negatif, volume rendah, harga nol, pergerakan harian ekstrem, dan kelulusan threshold yang terlalu rendah.
