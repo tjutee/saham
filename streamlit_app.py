@@ -135,7 +135,7 @@ HELP_TEXT = {
     "risk": "Risk_Score adalah skor risiko relatif. Non-bank memakai DER dan volatilitas/pergerakan harga; bank memakai NIM, CAR, LDR, NPL, BOPO, serta CIR/LAR bila ada. Skor tinggi berarti risiko model lebih rendah, bukan bebas risiko.",
     "liquidity": "Liquidity_Score dihitung dari volume dan turnover. Skor tinggi berarti saham lebih aktif diperdagangkan, tetapi tetap tidak menjamin order besar bisa dieksekusi tanpa slippage.",
     "momentum": "Momentum_Score memakai %Change dan return historis 4W, 13W, 26W, 52W, serta YTD bila tersedia. Ini membaca tren historis, bukan prediksi harga.",
-    "index_strength": "Index_Score memakai jumlah kemunculan saham pada indeks/sumber data. Bila tersedia, nilai utama diambil dari kolom sigma `∑i ≥ 7` di Excel sebagai sinyal coverage indeks; ini bukan jaminan kualitas perusahaan.",
+    "index_strength": "Index_Score memakai jumlah kemunculan saham pada indeks/sumber data. Bila tersedia, nilai utama diambil dari kolom Sigma i >= 7 di Excel sebagai sinyal coverage indeks; ini bukan jaminan kualitas perusahaan.",
     "sector": "Menyaring berdasarkan sektor bisnis dari daftar resmi BEI/IDX bila tersedia, lalu Excel fallback. Tidak mengubah rumus score, hanya membatasi saham yang dianalisis.",
     "industry": "Menyaring berdasarkan industri yang lebih spesifik di dalam sektor. Tidak mengubah score dasar.",
     "price": "Penutupan diprioritaskan dari yfinance online, lalu diisi Excel bila online kosong. Filter ini membatasi rentang harga nominal, bukan valuasi murah/mahal.",
@@ -215,7 +215,7 @@ ANALYSIS_COLUMNS = [
 
 st.set_page_config(
     page_title="Dashboard Rekomendasi Saham IDX",
-    page_icon="📈",
+    page_icon=":chart_with_upwards_trend:",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -278,6 +278,50 @@ def prepare_chart_frame(data, metric, limit=None):
         chart = chart.head(limit)
     chart["Chart_Label"] = chart["Kode"]
     return chart
+
+
+def build_completeness_report(data):
+    groups = {
+        "Identitas": ["Kode", "Nama Perusahaan", "Sektor", "Industry", "ListingBoard"],
+        "Harga & Likuiditas": ["Penutupan", "Volume", "Turnover", "%Change"],
+        "Valuasi": ["PER", "PBV"],
+        "Profitabilitas": ["ROE", "ROA", "NPM"],
+        "Banking": ["NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"],
+        "Histori": ["Return_4W", "Return_13W", "Return_26W", "Return_52W", "Return_YTD"],
+        "Scoring": ["Score", "Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Index_Score"],
+        "Sumber Data": ["Price_Source", "Volume_Source", "Universe_Source", "Universe_Diff_Status"],
+    }
+    rows = []
+    total_rows = max(len(data), 1)
+    for group, columns in groups.items():
+        available_columns = [column for column in columns if column in data.columns]
+        if not available_columns:
+            continue
+        for column in available_columns:
+            available = int(data[column].notna().sum())
+            rows.append(
+                {
+                    "Grup": group,
+                    "Kolom": column,
+                    "Terisi": available,
+                    "Kosong": int(len(data) - available),
+                    "Coverage": available / total_rows * 100,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_source_mix(data):
+    source_columns = [column for column in ["Price_Source", "Volume_Source", "Data_Source", "Universe_Source", "Universe_Diff_Status"] if column in data.columns]
+    rows = []
+    for column in source_columns:
+        counts = data[column].fillna("Tidak diketahui").astype(str).value_counts().reset_index()
+        counts.columns = ["Nilai", "Jumlah"]
+        counts["Area"] = column
+        rows.append(counts[["Area", "Nilai", "Jumlah"]])
+    if not rows:
+        return pd.DataFrame(columns=["Area", "Nilai", "Jumlah"])
+    return pd.concat(rows, ignore_index=True)
 
 
 def get_file_status(path):
@@ -1814,6 +1858,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         Arahkan kursor ke ikon bantuan pada menu/filter untuk melihat penjelasan singkat langsung di tempatnya.
 
         **Menu utama**
+        - **Ringkasan**: snapshot eksekutif berisi kondisi universe, sumber data, distribusi rekomendasi, top kandidat, dan matriks faktor.
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
         - **Histori Harga**: grafik return dari yfinance online dengan format `KODE.JK`, serta mode Excel Metrik sebagai pembanding/cadangan.
@@ -1832,7 +1877,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Volume**: jumlah saham yang diperdagangkan.
         - **Turnover**: estimasi nilai transaksi dari harga penutupan dikali volume.
         - **Momentum**: sinyal tren dari `%Change`, return 4W, 13W, 26W, 52W, dan YTD bila tersedia.
-        - **Index Count / Kekuatan indeks**: jumlah kemunculan saham pada indeks/sumber data. Jika tersedia, dashboard memakai nilai kolom sigma `∑i ≥ 7` dari Excel sebagai coverage indeks utama; ini sinyal visibilitas, bukan jaminan kualitas.
+        - **Index Count / Kekuatan indeks**: jumlah kemunculan saham pada indeks/sumber data. Jika tersedia, dashboard memakai nilai kolom Sigma i >= 7 dari Excel sebagai coverage indeks utama; ini sinyal visibilitas, bukan jaminan kualitas.
         - **Threshold**: persentase rasio yang lolos batas dari sheet `NonBank` atau `Banking`.
         - **Threshold Mode**: sumber batas rasio yang dipakai, yaitu `NonBank` atau `Banking`.
         - **Threshold Pass Count / Applicable**: jumlah rasio yang lolos dibanding jumlah rasio yang bisa dinilai.
@@ -2037,9 +2082,143 @@ if best is not None:
         unsafe_allow_html=True,
     )
 
-tab_reco, tab_explore, tab_history, tab_sector, tab_quality, tab_method = st.tabs(
-    ["Rekomendasi", "Explorer", "Histori Harga", "Sektor", "Data Quality", "Metodologi"]
+tab_summary, tab_reco, tab_explore, tab_history, tab_sector, tab_quality, tab_method = st.tabs(
+    ["Ringkasan", "Rekomendasi", "Explorer", "Histori Harga", "Sektor", "Data Quality", "Metodologi"]
 )
+
+with tab_summary:
+    st.subheader("Ringkasan eksekutif")
+    summary_scope = st.radio(
+        "Cakupan ringkasan",
+        ["Hasil filter aktif", "Semua universe"],
+        horizontal=True,
+        help="Hasil filter aktif mengikuti seluruh filter sidebar. Semua universe memakai seluruh saham yang sudah di-score.",
+    )
+    summary_data = filtered.copy() if summary_scope == "Hasil filter aktif" else scored_df.copy()
+    if summary_data.empty:
+        st.warning("Tidak ada data pada cakupan ini. Longgarkan filter atau pilih Semua universe.")
+    else:
+        idx_match = int(summary_data.get("In_IDX_Official", pd.Series(False, index=summary_data.index)).fillna(False).sum())
+        fallback_only = int((~summary_data.get("In_IDX_Official", pd.Series(False, index=summary_data.index)).fillna(False)).sum())
+        online_price = int(summary_data.get("Price_Source", pd.Series("", index=summary_data.index)).astype(str).str.contains("Online|yfinance|cache", case=False, na=False).sum())
+        excel_price = int(summary_data.get("Price_Source", pd.Series("", index=summary_data.index)).astype(str).str.contains("Excel", case=False, na=False).sum())
+        clean_ratio = summary_data["Clean_Data"].mean() * 100 if "Clean_Data" in summary_data.columns and len(summary_data) else 0
+
+        summary_cols = st.columns(6)
+        summary_cols[0].metric("Saham dianalisis", f"{summary_data['Kode'].nunique():,}")
+        summary_cols[1].metric("Match BEI/IDX", f"{idx_match:,}")
+        summary_cols[2].metric("Fallback kode", f"{fallback_only:,}")
+        summary_cols[3].metric("Harga online/cache", f"{online_price:,}")
+        summary_cols[4].metric("Harga Excel", f"{excel_price:,}")
+        summary_cols[5].metric("Clean data", f"{clean_ratio:.0f}%")
+
+        chart_cols = st.columns([1, 1, 1])
+        with chart_cols[0]:
+            reco_counts = summary_data["Recommendation"].value_counts().reindex(["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"]).dropna().reset_index()
+            reco_counts.columns = ["Recommendation", "Jumlah"]
+            fig = px.bar(
+                reco_counts,
+                x="Recommendation",
+                y="Jumlah",
+                color="Recommendation",
+                title="Distribusi rekomendasi",
+                color_discrete_map={
+                    "Strong Buy": "#15803d",
+                    "Buy": "#65a30d",
+                    "Watchlist": "#ca8a04",
+                    "Speculative": "#ea580c",
+                    "Avoid": "#dc2626",
+                },
+            )
+            fig.update_layout(height=330, showlegend=False, margin=dict(l=20, r=20, t=60, b=40))
+            st.plotly_chart(fig, width="stretch")
+        with chart_cols[1]:
+            risk_counts = summary_data["Risk_Level"].value_counts().reindex(["Low", "Medium", "High"]).dropna().reset_index()
+            risk_counts.columns = ["Risk_Level", "Jumlah"]
+            fig = px.pie(
+                risk_counts,
+                names="Risk_Level",
+                values="Jumlah",
+                hole=0.45,
+                title="Komposisi risiko",
+                color="Risk_Level",
+                color_discrete_map={"Low": "#16a34a", "Medium": "#ca8a04", "High": "#dc2626"},
+            )
+            fig.update_layout(height=330, margin=dict(l=20, r=20, t=60, b=40))
+            st.plotly_chart(fig, width="stretch")
+        with chart_cols[2]:
+            source_mix = build_source_mix(summary_data)
+            source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Universe_Diff_Status"])].copy()
+            if source_view.empty:
+                st.info("Ringkasan sumber data belum tersedia.")
+            else:
+                fig = px.bar(
+                    source_view,
+                    x="Jumlah",
+                    y="Nilai",
+                    color="Area",
+                    orientation="h",
+                    title="Sumber harga & status kode",
+                )
+                fig.update_layout(height=330, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                st.plotly_chart(fig, width="stretch")
+
+        overview_cols = st.columns([1.2, 1])
+        with overview_cols[0]:
+            st.write("Top kandidat profesional")
+            top_summary_columns = [
+                "Kode",
+                "Nama Perusahaan",
+                "Recommendation",
+                "Risk_Level",
+                "Clean_Data",
+                "Score",
+                "Threshold_Pass_Ratio",
+                "Penutupan",
+                "PER",
+                "PBV",
+                "ROE",
+                "NPM",
+                "Return_52W",
+                "Volume",
+                "Index_Count",
+                "Price_Source",
+                "Universe_Diff_Status",
+            ]
+            top_summary = summary_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
+            st.dataframe(
+                top_summary[[column for column in top_summary_columns if column in top_summary.columns]],
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
+                    "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
+                    "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
+                    "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
+                    "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
+                    "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
+                },
+            )
+        with overview_cols[1]:
+            st.write("Matriks faktor top score")
+            factor_columns = ["Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Index_Score"]
+            factor_matrix = summary_data.sort_values("Score", ascending=False).head(12).set_index("Kode")[
+                [column for column in factor_columns if column in summary_data.columns]
+            ]
+            if factor_matrix.empty:
+                st.info("Matriks faktor belum tersedia.")
+            else:
+                fig = px.imshow(
+                    factor_matrix,
+                    aspect="auto",
+                    text_auto=".0f",
+                    color_continuous_scale="RdYlGn",
+                    zmin=0,
+                    zmax=100,
+                    title="Skor komponen 0-100",
+                )
+                fig.update_layout(height=460, xaxis_title="", yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                st.plotly_chart(fig, width="stretch")
 
 with tab_reco:
     if filtered.empty:
@@ -2244,7 +2423,7 @@ with tab_reco:
                 "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
                 "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
                 "Index_Count": st.column_config.NumberColumn("Index Count", format="%.0f", help=HELP_TEXT["index_strength"]),
-                "Index_Count_Sigma": st.column_config.NumberColumn("Sigma i", format="%.0f", help="Nilai coverage indeks dari kolom `∑i ≥ 7` di Excel fallback bila tersedia."),
+                "Index_Count_Sigma": st.column_config.NumberColumn("Sigma i", format="%.0f", help="Nilai coverage indeks dari kolom Sigma i >= 7 di Excel fallback bila tersedia."),
                 "Price_Source": st.column_config.TextColumn("Sumber Harga", help="Menunjukkan apakah harga berasal dari yfinance/cache atau Excel fallback."),
                 "Volume_Original": st.column_config.NumberColumn("Volume Excel", format="%.0f", help="Volume dari Excel fallback bila tersedia."),
                 "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari yfinance/cache."),
@@ -2668,6 +2847,53 @@ with tab_quality:
             st.warning(f"Ada {len(diff_codes):,} kode yang tidak match dengan daftar resmi BEI/IDX dan tetap dipertahankan dari fallback.")
             st.dataframe(diff_codes, width="stretch", hide_index=True)
 
+    with st.expander("Kelengkapan kolom & sumber data", expanded=True):
+        completeness_report = build_completeness_report(scored_df)
+        completeness_metric = completeness_report.groupby("Grup", as_index=False)["Coverage"].mean().sort_values("Coverage")
+        source_mix = build_source_mix(scored_df)
+        data_health_cols = st.columns([1, 1])
+        with data_health_cols[0]:
+            fig = px.bar(
+                completeness_metric,
+                x="Coverage",
+                y="Grup",
+                orientation="h",
+                text="Coverage",
+                title="Coverage rata-rata per grup data",
+                color="Coverage",
+                color_continuous_scale="RdYlGn",
+                range_color=[0, 100],
+            )
+            fig.update_traces(texttemplate="%{text:.0f}%", textposition="outside", cliponaxis=False)
+            fig.update_layout(height=360, xaxis_title="Coverage", yaxis_title="", margin=dict(l=20, r=70, t=60, b=40))
+            st.plotly_chart(fig, width="stretch")
+        with data_health_cols[1]:
+            if source_mix.empty:
+                st.info("Ringkasan sumber data belum tersedia.")
+            else:
+                source_focus = source_mix[source_mix["Area"].isin(["Price_Source", "Volume_Source", "Universe_Diff_Status"])]
+                fig = px.bar(
+                    source_focus,
+                    x="Jumlah",
+                    y="Nilai",
+                    color="Area",
+                    orientation="h",
+                    title="Campuran sumber data utama",
+                )
+                fig.update_layout(height=360, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                st.plotly_chart(fig, width="stretch")
+
+        st.dataframe(
+            completeness_report.sort_values(["Coverage", "Grup", "Kolom"]),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Coverage": st.column_config.ProgressColumn("Coverage", min_value=0, max_value=100, format="%.0f%%"),
+                "Terisi": st.column_config.NumberColumn("Terisi", format="%d"),
+                "Kosong": st.column_config.NumberColumn("Kosong", format="%d"),
+            },
+        )
+
     with st.expander("Audit Kode Saham: alasan lolos/gagal filter", expanded=True):
         audit_scope = st.radio(
             "Cakupan audit",
@@ -2840,7 +3066,7 @@ with tab_method:
         - Risiko: non-bank memakai DER rendah dan intraday range rendah; Banking memakai CAR, NPL, BOPO, dan LDR bila tersedia.
         - Likuiditas: volume dan turnover harga x volume.
         - Momentum: kombinasi histori online 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem, dengan Excel Metrik sebagai fallback.
-        - Kekuatan indeks: nilai kolom sigma `∑i ≥ 7` dari Excel bila tersedia, atau jumlah indeks/tempat kemunculan dari fallback; bila hanya universe BEI/IDX tersedia, minimal dihitung sebagai saham listed.
+        - Kekuatan indeks: nilai kolom Sigma i >= 7 dari Excel bila tersedia, atau jumlah indeks/tempat kemunculan dari fallback; bila hanya universe BEI/IDX tersedia, minimal dihitung sebagai saham listed.
         - Threshold sheet: rasio dibandingkan dengan batas dari sheet NonBank atau Banking sebagai cadangan metodologi fundamental.
 
         Penalti diterapkan untuk PER/PBV negatif, profitabilitas negatif, NPM negatif, volume rendah, harga nol, pergerakan harian ekstrem, dan kelulusan threshold yang terlalu rendah.

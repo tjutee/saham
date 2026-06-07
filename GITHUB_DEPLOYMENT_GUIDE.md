@@ -61,9 +61,11 @@ Pastikan koneksi internet Streamlit Cloud aktif dan dependency di
 4. cache lokal,
 5. `Ringkasan.xlsx` untuk kolom yang masih kosong.
 
-Setelah deploy, cek tab `Data Quality` -> `Audit sumber kode saham`. Di sana
-akan terlihat jumlah kode yang match daftar resmi BEI/IDX dan kode yang hanya
-berasal dari fallback.
+Setelah deploy, cek tab `Ringkasan` untuk memastikan sumber harga, status kode,
+dan distribusi rekomendasi terbaca wajar. Lalu cek tab `Data Quality` ->
+`Audit sumber kode saham` dan `Kelengkapan kolom & sumber data`. Di sana akan
+terlihat jumlah kode yang match daftar resmi BEI/IDX, kode yang hanya berasal
+dari fallback, serta kolom fundamental/histori yang masih kosong.
 
 Jika fallback Excel ingin dipakai, pastikan `Ringkasan.xlsx` ada di root
 repository, satu folder dengan `streamlit_app.py`. Nama file harus sama persis

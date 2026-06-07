@@ -18,7 +18,9 @@ sektor, serta data yang belum tersedia online.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
 - Bobot scoring bisa diatur langsung dari sidebar.
-- Dashboard dinamis dengan tab Rekomendasi, Explorer, Histori Harga, Sektor, dan Metodologi.
+- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Explorer, Histori Harga, Sektor, Data Quality, dan Metodologi.
+- Ringkasan eksekutif berisi distribusi rekomendasi, komposisi risiko, sumber data, top kandidat, dan heatmap faktor.
+- Data Quality menampilkan audit sumber kode, audit filter, coverage kolom, serta campuran sumber harga/volume.
 - Tabel hasil bisa di-download sebagai CSV.
 
 ## File Utama
@@ -87,7 +89,7 @@ Faktor yang dihitung:
 - Risiko: DER rendah dan intraday range rendah.
 - Likuiditas: volume dan turnover harga x volume.
 - Momentum: histori online 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem, dengan sheet `Metrik` sebagai fallback.
-- Kekuatan indeks: nilai kolom sigma `∑i ≥ 7` dari Excel bila tersedia, lalu jumlah indeks/tempat kemunculan dari fallback, atau minimal satu untuk kode yang hanya tersedia dari universe resmi.
+- Kekuatan indeks: nilai kolom Sigma i >= 7 dari Excel bila tersedia, lalu jumlah indeks/tempat kemunculan dari fallback, atau minimal satu untuk kode yang hanya tersedia dari universe resmi.
 - Threshold: batas rasio dari sheet `NonBank` atau `Banking`.
 
 Penalti diterapkan untuk data yang kurang sehat, seperti PER/PBV negatif,
