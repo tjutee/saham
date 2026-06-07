@@ -1354,6 +1354,33 @@ def build_excel_fallback_summary():
     return summary, raw
 
 
+def merge_universe_with_excel_fallback(universe, excel_summary):
+    if excel_summary.empty or "Kode" not in excel_summary.columns:
+        return universe
+
+    fallback_columns = [column for column in ["Kode", "Nama Perusahaan", "Sektor", "Industry"] if column in excel_summary.columns]
+    excel_universe = excel_summary[fallback_columns].copy()
+    for column, default in [("Nama Perusahaan", "-"), ("Sektor", "No Sector"), ("Industry", "No Industry")]:
+        if column not in excel_universe.columns:
+            excel_universe[column] = default
+    excel_universe["Universe_Source"] = "Excel fallback"
+
+    if universe.empty:
+        return excel_universe.drop_duplicates("Kode")
+
+    online_lookup = universe.drop_duplicates("Kode").set_index("Kode")
+    output = excel_universe.drop_duplicates("Kode").copy()
+    online_codes = output["Kode"].isin(online_lookup.index)
+    output.loc[online_codes, "Universe_Source"] = output.loc[online_codes, "Kode"].map(online_lookup["Universe_Source"])
+
+    for column in ["Nama Perusahaan", "Sektor", "Industry"]:
+        online_values = output["Kode"].map(online_lookup[column]) if column in online_lookup.columns else pd.Series(np.nan, index=output.index)
+        missing = output[column].isna() | output[column].astype(str).str.strip().isin(["", "-", "No Sector", "No Industry", "nan"])
+        output.loc[missing & online_values.notna(), column] = online_values[missing & online_values.notna()]
+
+    return output.reset_index(drop=True)
+
+
 def is_banking_row(row):
     industry_text = f"{row.get('Industry', '')} {row.get('Industri', '')} {row.get('Subindustri', '')}".lower()
     name_text = str(row.get("Nama Perusahaan", "")).lower()
@@ -1411,6 +1438,8 @@ def load_data():
     if universe.empty:
         universe = excel_summary[["Kode", "Nama Perusahaan", "Sektor", "Industry"]].copy()
         universe["Universe_Source"] = "Excel fallback"
+    else:
+        universe = merge_universe_with_excel_fallback(universe, excel_summary)
 
     online_market = build_online_market_frame(universe["Kode"].tolist(), period=ONLINE_LOAD_PERIOD)
     market_source = online_market.attrs.get("market_source", "empty")
