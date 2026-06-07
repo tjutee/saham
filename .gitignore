@@ -1,0 +1,53 @@
+# Ignore Python
+__pycache__/
+*.py[cod]
+history_cache/
+repo_meta/
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Streamlit
+.streamlit/
+*.streamlit.app
+
+# Data files (optional - uncomment jika tidak ingin push data ke GitHub)
+# *.xlsx
+# *.csv
+
+# Cache
+.cache/
+.pytest_cache/
+
+# Environment variables
+.env
+.env.local

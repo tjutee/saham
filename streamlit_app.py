@@ -1,0 +1,2367 @@
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+import os
+import re
+from pathlib import Path
+
+
+DATA_FILE = "Ringkasan.xlsx"
+HISTORY_CACHE_DIR = Path("history_cache")
+BLOCKING_PROXY_VALUES = {"http://127.0.0.1:9", "https://127.0.0.1:9", "127.0.0.1:9"}
+
+NUMERIC_COLUMNS = [
+    "Penutupan",
+    "PER",
+    "PBV",
+    "ROE",
+    "ROA",
+    "DER",
+    "NPM",
+    "Sebelumnya",
+    "%Change",
+    "Open",
+    "High",
+    "Low",
+    "Volume",
+    "NIM",
+    "CAR",
+    "LDR",
+    "NPL",
+    "BOPO",
+    "CIR",
+    "LAR",
+    "Index_Count_Raw",
+]
+
+BASE_WEIGHTS = {
+    "valuation": 25,
+    "quality": 30,
+    "risk": 15,
+    "liquidity": 15,
+    "momentum": 10,
+    "index_strength": 5,
+}
+
+HISTORY_COLUMNS = {
+    "4-wk %Pr. Chg.": "Return_4W",
+    "13-wk %Pr. Chg.": "Return_13W",
+    "26-wk %Pr. Chg.": "Return_26W",
+    "52-wk %Pr. Chg.": "Return_52W",
+    "MTD": "Return_MTD",
+    "YTD": "Return_YTD",
+}
+
+NONBANK_THRESHOLDS = {
+    "PER": ("<=", 15.0),
+    "PBV": ("<=", 3.0),
+    "ROE": (">=", 12.0),
+    "ROA": (">=", 7.0),
+    "DER": ("<=", 1.5),
+    "NPM": (">=", 7.0),
+}
+
+BANKING_THRESHOLDS = {
+    "PER": ("<=", 15.0),
+    "PBV": ("<=", 3.0),
+    "ROE": (">=", 12.0),
+    "ROA": (">=", 1.0),
+    "DER": ("<=", 1.5),
+    "NPM": (">=", 7.0),
+    "NIM": (">=", 3.5),
+    "CAR": (">=", 15.0),
+    "LDR": (">=", 75.0),
+    "NPL": ("<=", 3.5),
+    "BOPO": ("<=", 80.0),
+    "CIR": ("<=", 65.0),
+    "LAR": ("<=", 11.0),
+}
+
+PROFILE_WEIGHTS = {
+    "Balanced": BASE_WEIGHTS,
+    "Defensive": {
+        "valuation": 22,
+        "quality": 32,
+        "risk": 22,
+        "liquidity": 14,
+        "momentum": 5,
+        "index_strength": 5,
+    },
+    "Growth": {
+        "valuation": 18,
+        "quality": 34,
+        "risk": 10,
+        "liquidity": 14,
+        "momentum": 18,
+        "index_strength": 6,
+    },
+    "Value": {
+        "valuation": 38,
+        "quality": 25,
+        "risk": 14,
+        "liquidity": 12,
+        "momentum": 6,
+        "index_strength": 5,
+    },
+}
+
+HELP_TEXT = {
+    "profile": "Profil scoring hanya mengatur bobot faktor Score. Balanced seimbang, Defensive menekankan kualitas/risiko, Growth menekankan pertumbuhan dan momentum, Value menekankan valuasi.",
+    "filter_preset": "Preset filter hanya mengatur ketat/longgarnya penyaringan dan tidak mengubah bobot Score. Konservatif Aman mengetatkan harga minimal 50, volume minimal 10 juta, PER 0.1-25, PBV <= 3.5, ROE >= 8%, NPM >= 3%, DER <= 1.5, Score >= 60, Threshold >= 65%, wajib inti valuasi/profit, dan Data Bersih saja.",
+    "valuation": "Valuation_Score dihitung dari PER dan PBV yang valid. Skor tinggi berarti valuasi relatif lebih murah di antara kandidat, bukan berarti harga pasti akan naik.",
+    "quality": "Quality_Score dihitung dari ROE, ROA, NPM, dan metrik bank bila tersedia. Skor tinggi berarti profitabilitas dan efisiensi historis lebih baik.",
+    "risk": "Risk_Score adalah skor risiko relatif. Non-bank memakai DER dan volatilitas/pergerakan harga; bank memakai NIM, CAR, LDR, NPL, BOPO, serta CIR/LAR bila ada. Skor tinggi berarti risiko model lebih rendah, bukan bebas risiko.",
+    "liquidity": "Liquidity_Score dihitung dari volume dan turnover. Skor tinggi berarti saham lebih aktif diperdagangkan, tetapi tetap tidak menjamin order besar bisa dieksekusi tanpa slippage.",
+    "momentum": "Momentum_Score memakai %Change dan return historis 4W, 13W, 26W, 52W, serta YTD bila tersedia. Ini membaca tren historis, bukan prediksi harga.",
+    "index_strength": "Index_Score memakai jumlah kemunculan saham pada indeks/sumber data. Ini sinyal visibilitas dan coverage data, bukan jaminan kualitas perusahaan.",
+    "sector": "Menyaring berdasarkan sektor bisnis dari file Ringkasan. Tidak mengubah rumus score, hanya membatasi saham yang dianalisis.",
+    "industry": "Menyaring berdasarkan industri yang lebih spesifik di dalam sektor. Tidak mengubah score dasar.",
+    "price": "Penutupan adalah harga terakhir dari file Ringkasan. Filter ini membatasi rentang harga nominal, bukan valuasi murah/mahal.",
+    "volume": "Volume adalah jumlah saham yang diperdagangkan pada data Ringkasan. Volume minimum membantu membuang saham sangat tidak likuid.",
+    "per": "PER = harga saham / laba per saham. PER rendah sering terlihat murah jika laba positif; PER nol, negatif, atau ekstrem diberi penalti/dianggap tidak sehat.",
+    "pbv": "PBV = harga saham / nilai buku per saham. PBV rendah berarti harga lebih dekat ke nilai buku, tetapi perlu dibaca bersama ROE, kualitas aset, dan sektor.",
+    "roe": "ROE = laba bersih / ekuitas. Semakin tinggi semakin efisien modal pemegang saham menghasilkan laba, selama tidak didorong leverage berlebihan.",
+    "npm": "NPM = laba bersih / pendapatan. Semakin tinggi berarti margin laba bersih lebih kuat; nilai negatif menunjukkan rugi bersih.",
+    "der": "DER = total utang / ekuitas. Untuk non-bank, makin rendah umumnya lebih konservatif. Untuk bank, DER tidak otomatis buruk sehingga default tidak diterapkan ke Banking.",
+    "score": "Score akhir = rata-rata tertimbang Valuasi, Kualitas, Risiko, Likuiditas, Momentum, dan Indeks, lalu dikurangi Penalty dan dibatasi 0-100.",
+    "threshold_source": "Sumber aturan threshold. Auto memakai Banking untuk saham bank dan NonBank untuk saham selain bank; pilihan manual memaksa semua saham memakai satu set aturan.",
+    "threshold_ratio": "Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable x 100. Rasio yang kolomnya ada tetapi nilainya kosong/tidak memenuhi batas dihitung tidak lolos.",
+    "core_thresholds": "Jika aktif, saham wajib memenuhi inti konservatif: PER <= 15, PBV <= 3, ROE >= 12%, dan NPM >= 7%. Ini tambahan di luar slider umum.",
+    "der_banking": "Jika aktif, filter DER maksimum juga diterapkan ke saham Banking. Default mati karena struktur neraca bank berbeda dari non-bank.",
+    "history_source": "Excel Metrik memakai return 4W, 13W, 26W, 52W dari file Ringkasan. Online memakai yfinance ticker KODE.JK, dengan fallback/cache lokal bila sumber online gagal.",
+    "history_scope": "Saham pilihan memakai kode yang dipilih manual. All/top N memakai saham teratas dari hasil filter saat ini, biasanya berdasarkan ranking Score setelah filter.",
+    "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
+    "history_codes": "Masukkan kode IDX tanpa akhiran .JK, misalnya BBCA atau BBRI. Dashboard otomatis memanggil format online BBCA.JK.",
+    "history_period": "Rentang data online: 1 minggu = sekitar 5 hari bursa terakhir, 1/3/6 bulan, 1/2/5/10 tahun, atau All sepanjang data tersedia dari sumber.",
+    "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
+    "risk_level": "Risk_Level adalah kategori risiko relatif dari model berdasarkan rasio, volatilitas, likuiditas, dan penalti. Tetap perlu validasi berita dan laporan keuangan.",
+    "turnover": "Turnover = Penutupan x Volume. Ini estimasi nilai transaksi kasar dari data Ringkasan.",
+    "return": "Return = harga akhir / harga awal - 1. Nilai ditampilkan dalam persen dan hanya menjelaskan performa periode historis.",
+    "reco_sort": "Metrik untuk mengurutkan grafik dan tabel rekomendasi. Mengubah urutan tampilan saja, bukan rumus Score.",
+    "reco_limit": "Jumlah saham yang ditampilkan setelah seluruh filter sidebar, label rekomendasi, dan sort diterapkan.",
+    "reco_ascending": "Aktifkan untuk mengurutkan dari nilai terendah ke tertinggi pada metrik pilihan. Berguna untuk audit saham lemah atau rasio rendah.",
+    "table_columns": "Pilih kolom tabel yang ingin ditampilkan. Ini hanya mengatur tampilan, tidak mengubah data, filter, atau scoring.",
+    "explorer_axis": "Pilih rasio atau skor untuk sumbu grafik eksplorasi. Pilihan sumbu hanya mengubah visual scatter, bukan rekomendasi.",
+    "explore_color": "Warna titik menunjukkan dimensi tambahan seperti Score, risiko, rekomendasi, atau sektor agar pola lebih mudah dibaca.",
+    "explore_size": "Ukuran bubble memakai metrik seperti Volume, Turnover, Score, Liquidity_Score, atau Index_Count. Ini hanya encoding visual.",
+    "explore_limit": "Membatasi jumlah titik scatter agar grafik tetap cepat dan mudah dibaca. Data rekomendasi utama tidak dipotong.",
+    "histogram": "Pilih sampai tiga metrik untuk melihat distribusi nilai. Berguna untuk mendeteksi outlier dan sebaran rasio.",
+    "history_chart_type": "Line cocok untuk perbandingan presisi banyak saham. Area lebih enak untuk satu atau sedikit saham karena area bisa menumpuk secara visual.",
+    "history_table": "Menampilkan ringkasan angka histori seperti tanggal terakhir, harga awal/akhir, dan return total di bawah grafik.",
+    "sector_group": "Pilih agregasi berdasarkan Sektor luas atau Industry yang lebih rinci. Ringkasan dihitung dari seluruh scored_df.",
+    "sector_min": "Sembunyikan kelompok dengan jumlah saham terlalu sedikit agar median dan ranking kelompok tidak mudah bias.",
+    "sector_sort": "Metrik untuk ranking kelompok sektor/industri, misalnya median score, jumlah Strong Buy, turnover, rata-rata ROE, atau jumlah saham.",
+    "sector_chart": "Bar untuk ranking, Treemap untuk komposisi turnover, Scatter untuk membaca hubungan kualitas dan aktivitas kelompok.",
+    "factor_inspect": "Pilih faktor untuk melihat distribusi dan contoh saham teratas. Ini alat audit metodologi, bukan filter baru.",
+    "factor_top_n": "Jumlah contoh saham teratas yang ditampilkan untuk faktor yang sedang diinspeksi.",
+    "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai rekomendasi.",
+    "audit_code": "Pilih satu atau beberapa kode saham untuk melihat alasan lolos/gagal pada filter aktif dan preset pembanding.",
+    "audit_scope": "Cakupan audit. Semua saham mengecek seluruh universe, Hasil filter aktif hanya saham yang sedang lolos filter sidebar, Kode pilihan untuk investigasi manual.",
+    "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih lebih panjang untuk analisis historis, lebih pendek untuk refresh cepat.",
+    "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
+    "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
+}
+
+ANALYSIS_COLUMNS = [
+    "Score",
+    "Valuation_Score",
+    "Quality_Score",
+    "Risk_Score",
+    "Liquidity_Score",
+    "Momentum_Score",
+    "History_Momentum_Score",
+    "Threshold_Pass_Ratio",
+    "Penutupan",
+    "PER",
+    "PBV",
+    "ROE",
+    "ROA",
+    "DER",
+    "NPM",
+    "%Change",
+    "Return_4W",
+    "Return_13W",
+    "Return_26W",
+    "Return_52W",
+    "Return_YTD",
+    "Volume",
+    "Turnover",
+    "Index_Count",
+]
+
+
+st.set_page_config(
+    page_title="Dashboard Rekomendasi Saham IDX",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 1.25rem; }
+    div[data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 14px 16px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .small-note {
+        color: #64748b;
+        font-size: 0.86rem;
+        line-height: 1.35;
+    }
+    .recommendation-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 14px 16px;
+        background: #ffffff;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def clean_text(value, default="-"):
+    if pd.isna(value):
+        return default
+    value = str(value).strip()
+    return value if value else default
+
+
+def format_number(value, digits=1):
+    if pd.isna(value):
+        return "-"
+    return f"{value:,.{digits}f}"
+
+
+def format_rupiah(value):
+    if pd.isna(value):
+        return "-"
+    return f"Rp {value:,.0f}"
+
+
+def prepare_chart_frame(data, metric, limit=None):
+    chart = data.copy()
+    chart["Kode"] = chart["Kode"].astype(str).str.strip().str.upper()
+    chart = chart[chart["Kode"].notna() & ~chart["Kode"].isin(["", "-", "NAN", "NONE"])]
+    if metric in chart.columns:
+        chart[metric] = pd.to_numeric(chart[metric], errors="coerce")
+        chart = chart[chart[metric].notna() & np.isfinite(chart[metric])]
+    if limit is not None:
+        chart = chart.head(limit)
+    chart["Chart_Label"] = chart["Kode"]
+    return chart
+
+
+def get_file_status(path):
+    file_path = Path(path)
+    if not file_path.exists():
+        return {"File": str(path), "Status": "Tidak ditemukan", "Ukuran": "-", "Last Modified": "-"}
+    stat = file_path.stat()
+    modified = pd.Timestamp.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+    return {
+        "File": str(path),
+        "Status": "OK",
+        "Ukuran": f"{stat.st_size / 1024 / 1024:.2f} MB",
+        "Last Modified": modified,
+    }
+
+
+def get_data_update_label(raw, file_status):
+    last_update_column = next((column for column in raw.columns if str(column).lower().startswith("last update")), None)
+    if last_update_column:
+        label = str(last_update_column).replace("Last Update:", "", 1).strip()
+        match = re.search(r"(\d{8})\s+(\d{1,2}:\d{2})", label)
+        if match:
+            prefix = label[: match.start()].strip(" ,")
+            date_text = pd.to_datetime(match.group(1), format="%Y%m%d", errors="coerce")
+            if pd.notna(date_text):
+                formatted = f"{date_text:%Y-%m-%d} {match.group(2)}"
+                return f"{prefix}, {formatted}" if prefix else formatted
+        if label:
+            return label
+    modified = file_status.get("Last Modified", "-")
+    return f"file modified {modified}" if modified != "-" else "belum tersedia"
+
+
+def get_history_cache_status():
+    if not HISTORY_CACHE_DIR.exists():
+        return pd.DataFrame(columns=["Cache File", "Kode", "Period", "Rows", "Last Date", "Modified"])
+    rows = []
+    for cache_file in sorted(HISTORY_CACHE_DIR.glob("*.csv")):
+        parts = cache_file.stem.rsplit("_", 1)
+        code = parts[0] if parts else cache_file.stem
+        period = parts[1] if len(parts) > 1 else "-"
+        try:
+            cached = pd.read_csv(cache_file)
+            last_date = pd.to_datetime(cached.get("Date"), errors="coerce").max()
+            rows_count = len(cached)
+            last_date_text = last_date.strftime("%Y-%m-%d") if pd.notna(last_date) else "-"
+        except Exception:
+            rows_count = 0
+            last_date_text = "Rusak/tidak terbaca"
+        modified = pd.Timestamp.fromtimestamp(cache_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        rows.append(
+            {
+                "Cache File": cache_file.name,
+                "Kode": code,
+                "Period": period,
+                "Rows": rows_count,
+                "Last Date": last_date_text,
+                "Modified": modified,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def load_latest_history_cache_snapshot():
+    if not HISTORY_CACHE_DIR.exists():
+        return pd.DataFrame(columns=["Kode", "Online_Last_Date", "Close_Online", "Volume_Online_Latest"])
+    frames = []
+    for cache_file in HISTORY_CACHE_DIR.glob("*.csv"):
+        try:
+            cached = pd.read_csv(cache_file)
+        except Exception:
+            continue
+        if not {"Kode", "Date", "Close", "Volume_Online"}.issubset(cached.columns):
+            continue
+        cached = cached[["Kode", "Date", "Close", "Volume_Online"]].copy()
+        cached["Date"] = pd.to_datetime(cached["Date"], errors="coerce")
+        cached["Close"] = pd.to_numeric(cached["Close"], errors="coerce")
+        cached["Volume_Online"] = pd.to_numeric(cached["Volume_Online"], errors="coerce")
+        cached["Kode"] = cached["Kode"].astype(str).str.strip().str.upper()
+        cached = cached.dropna(subset=["Kode", "Date", "Close"])
+        if not cached.empty:
+            frames.append(cached)
+    if not frames:
+        return pd.DataFrame(columns=["Kode", "Online_Last_Date", "Close_Online", "Volume_Online_Latest"])
+    snapshot = pd.concat(frames, ignore_index=True).sort_values(["Kode", "Date"])
+    snapshot = snapshot.groupby("Kode", as_index=False).tail(1)
+    return snapshot.rename(
+        columns={"Date": "Online_Last_Date", "Close": "Close_Online", "Volume_Online": "Volume_Online_Latest"}
+    )[["Kode", "Online_Last_Date", "Close_Online", "Volume_Online_Latest"]]
+
+
+def apply_online_volume_fallback(df):
+    snapshot = load_latest_history_cache_snapshot()
+    output = df.copy()
+    output["Volume_Original"] = output["Volume"]
+    output["Volume_Source"] = "Excel"
+    if snapshot.empty:
+        output["Close_Online"] = np.nan
+        output["Volume_Online_Latest"] = np.nan
+        output["Online_Last_Date"] = pd.NaT
+        return output
+
+    output = output.merge(snapshot, on="Kode", how="left")
+    close_match = (
+        output["Penutupan"].gt(0)
+        & output["Close_Online"].gt(0)
+        & ((output["Close_Online"] - output["Penutupan"]).abs() / output["Penutupan"]).le(0.05)
+    )
+    use_online_volume = (
+        output["Volume"].fillna(0).lt(1_000_000)
+        & output["Volume_Online_Latest"].fillna(0).ge(1_000_000)
+        & close_match
+    )
+    output.loc[use_online_volume, "Volume"] = output.loc[use_online_volume, "Volume_Online_Latest"]
+    output.loc[use_online_volume, "Volume_Source"] = "Online cache"
+    return output
+
+
+def build_data_quality_report(scored, raw):
+    invalid_code = scored["Kode"].isna() | scored["Kode"].astype(str).str.strip().str.upper().isin(["", "-", "NAN", "NONE"])
+    invalid_price = scored["Penutupan"].isna() | scored["Penutupan"].le(0)
+    invalid_volume = scored["Volume"].isna() | scored["Volume"].le(0)
+    invalid_per = scored["PER"].isna() | scored["PER"].le(0)
+    invalid_pbv = scored["PBV"].isna() | scored["PBV"].le(0)
+    missing_profit = scored[["ROE", "ROA", "NPM"]].isna().any(axis=1)
+    bank_metric_columns = [column for column in ["NIM", "CAR", "LDR", "NPL", "BOPO"] if column in scored.columns]
+    bank_missing_metrics = scored["Threshold_Mode"].eq("Banking") & scored[bank_metric_columns].isna().any(axis=1) if bank_metric_columns else pd.Series(False, index=scored.index)
+    low_threshold = scored["Threshold_Pass_Ratio"].lt(40)
+    missing_history = scored["Return_52W"].isna()
+    checks = [
+        {
+            "Area": "Kode",
+            "Check": "Kode kosong/tidak valid",
+            "Rows": int(invalid_code.sum()),
+            "Severity": "High",
+            "Action": "Perbaiki kode saham di sumber data sebelum scoring.",
+        },
+        {
+            "Area": "Kode",
+            "Check": "Kode duplikat setelah deduplikasi",
+            "Rows": int(scored["Kode"].duplicated().sum()),
+            "Severity": "Medium",
+            "Action": "Cek proses deduplikasi jika nilai tidak nol.",
+        },
+        {
+            "Area": "Harga",
+            "Check": "Harga penutupan kosong atau <= 0",
+            "Rows": int(invalid_price.sum()),
+            "Severity": "High",
+            "Action": "Update harga penutupan agar chart dan turnover valid.",
+        },
+        {
+            "Area": "Likuiditas",
+            "Check": "Volume kosong atau <= 0",
+            "Rows": int(invalid_volume.sum()),
+            "Severity": "High",
+            "Action": "Update volume karena memengaruhi likuiditas dan penalti.",
+        },
+        {
+            "Area": "Valuasi",
+            "Check": "PER negatif atau kosong",
+            "Rows": int(invalid_per.sum()),
+            "Severity": "Medium",
+            "Action": "PER negatif bisa berarti rugi; tetap tampil tapi diberi penalti.",
+        },
+        {
+            "Area": "Valuasi",
+            "Check": "PBV negatif atau kosong",
+            "Rows": int(invalid_pbv.sum()),
+            "Severity": "Medium",
+            "Action": "Cek nilai buku atau sumber rasio.",
+        },
+        {
+            "Area": "Profit",
+            "Check": "ROE/ROA/NPM ada yang kosong",
+            "Rows": int(missing_profit.sum()),
+            "Severity": "Medium",
+            "Action": "Lengkapi rasio profit agar kualitas score lebih akurat.",
+        },
+        {
+            "Area": "Threshold",
+            "Check": "Threshold lolos < 40 persen",
+            "Rows": int(low_threshold.sum()),
+            "Severity": "Medium",
+            "Action": "Cek saham yang banyak gagal threshold; jangan jadi prioritas tanpa alasan kuat.",
+        },
+        {
+            "Area": "Banking",
+            "Check": "Metrik khusus bank ada yang kosong",
+            "Rows": int(bank_missing_metrics.sum()),
+            "Severity": "Medium",
+            "Action": "Lengkapi NIM/CAR/LDR/NPL/BOPO untuk menilai bank lebih adil.",
+        },
+        {
+            "Area": "Histori",
+            "Check": "Return 52 minggu kosong",
+            "Rows": int(missing_history.sum()),
+            "Severity": "Low",
+            "Action": "Gunakan tab Histori Harga online untuk melengkapi konteks tren.",
+        },
+        {
+            "Area": "Sumber",
+            "Check": "Baris sumber duplikat per kode",
+            "Rows": int(len(raw) - raw["Kode"].astype(str).str.strip().str.upper().nunique()) if "Kode" in raw.columns else 0,
+            "Severity": "Info",
+            "Action": "Normal jika saham muncul di beberapa indeks; dashboard melakukan deduplikasi.",
+        },
+    ]
+    report = pd.DataFrame(checks)
+    report["Status"] = np.where(report["Rows"].eq(0), "OK", "Review")
+    return report[["Status", "Severity", "Area", "Check", "Rows", "Action"]]
+
+
+def get_quality_detail(scored, issue_key):
+    if issue_key == "Harga penutupan kosong atau <= 0":
+        mask = scored["Penutupan"].isna() | scored["Penutupan"].fillna(0).le(0)
+    elif issue_key == "Volume kosong atau <= 0":
+        mask = scored["Volume"].isna() | scored["Volume"].fillna(0).le(0)
+    elif issue_key == "PER negatif atau kosong":
+        mask = scored["PER"].isna() | scored["PER"].fillna(0).le(0)
+    elif issue_key == "PBV negatif atau kosong":
+        mask = scored["PBV"].isna() | scored["PBV"].fillna(0).le(0)
+    elif issue_key == "ROE/ROA/NPM ada yang kosong":
+        mask = scored[["ROE", "ROA", "NPM"]].isna().any(axis=1)
+    elif issue_key == "Threshold lolos < 40 persen":
+        mask = scored["Threshold_Pass_Ratio"].lt(40)
+    elif issue_key == "Metrik khusus bank ada yang kosong":
+        bank_metric_columns = [column for column in ["NIM", "CAR", "LDR", "NPL", "BOPO"] if column in scored.columns]
+        mask = scored["Threshold_Mode"].eq("Banking") & scored[bank_metric_columns].isna().any(axis=1) if bank_metric_columns else pd.Series(False, index=scored.index)
+    elif issue_key == "Return 52 minggu kosong":
+        mask = scored["Return_52W"].isna()
+    else:
+        mask = pd.Series(False, index=scored.index)
+    columns = ["Kode", "Nama Perusahaan", "Sektor", "Industry", "Score", "Recommendation", "Penutupan", "Volume", "PER", "PBV", "ROE", "ROA", "NPM", "NIM", "CAR", "LDR", "NPL", "BOPO", "Threshold_Pass_Ratio", "Return_52W"]
+    return scored.loc[mask, [column for column in columns if column in scored.columns]].copy()
+
+
+def add_safety_flags(scored):
+    output = scored.copy()
+    banking_mask = output["Threshold_Mode"].eq("Banking")
+    valid_core = (
+        output["Kode"].notna()
+        & output["Kode"].astype(str).str.strip().ne("")
+        & output["Penutupan"].gt(0)
+        & output["Volume"].ge(10_000_000)
+        & output["PER"].between(0.1, 35, inclusive="both")
+        & output["PBV"].between(0.05, 8, inclusive="both")
+        & output["ROE"].ge(5)
+        & output["ROA"].notna()
+        & output["NPM"].ge(0)
+        & output["Threshold_Pass_Ratio"].ge(55)
+        & output["Risk_Level"].ne("High")
+        & output["Penalty"].le(10)
+    )
+    bank_metrics = [column for column in ["NIM", "CAR", "LDR", "NPL", "BOPO"] if column in output.columns]
+    bank_ok = pd.Series(True, index=output.index)
+    if bank_metrics:
+        bank_ok = ~banking_mask | output[bank_metrics].notna().all(axis=1)
+    nonbank_ok = banking_mask | output["DER"].fillna(np.inf).le(2.5)
+    output["Clean_Data"] = valid_core & bank_ok & nonbank_ok
+    output["Safety_Recommendation"] = np.where(
+        output["Clean_Data"] & output["Score"].ge(78),
+        "Bersih - Strong",
+        np.where(output["Clean_Data"] & output["Score"].ge(68), "Bersih - Buy", np.where(output["Clean_Data"], "Bersih - Watch", "Review Data/Risiko")),
+    )
+
+    reasons = []
+    for _, row in output.iterrows():
+        row_reasons = []
+        if pd.isna(row.get("Penutupan")) or row.get("Penutupan", 0) <= 0:
+            row_reasons.append("harga tidak valid")
+        if pd.isna(row.get("Volume")) or row.get("Volume", 0) < 10_000_000:
+            row_reasons.append("volume rendah/kosong")
+        if pd.isna(row.get("PER")) or row.get("PER", 0) <= 0:
+            row_reasons.append("PER tidak sehat")
+        if pd.isna(row.get("PBV")) or row.get("PBV", 0) <= 0:
+            row_reasons.append("PBV tidak sehat")
+        if pd.isna(row.get("ROE")) or row.get("ROE", 0) < 5:
+            row_reasons.append("ROE rendah/kosong")
+        if pd.isna(row.get("NPM")) or row.get("NPM", 0) < 0:
+            row_reasons.append("NPM negatif/kosong")
+        if row.get("Threshold_Pass_Ratio", 0) < 55:
+            row_reasons.append("threshold rendah")
+        if row.get("Risk_Level") == "High":
+            row_reasons.append("risiko High")
+        if row.get("Threshold_Mode") == "Banking":
+            missing_bank = [metric for metric in bank_metrics if pd.isna(row.get(metric))]
+            if missing_bank:
+                row_reasons.append("metrik bank kosong")
+        elif row.get("DER", np.inf) > 2.5:
+            row_reasons.append("DER tinggi")
+        reasons.append(", ".join(row_reasons) if row_reasons else "OK")
+    output["Safety_Notes"] = reasons
+    return output
+
+
+def make_filter_criteria(
+    name,
+    price_range,
+    min_volume,
+    per_range,
+    pbv_max,
+    roe_min,
+    npm_min,
+    der_max,
+    apply_der_to_banking,
+    min_score,
+    min_threshold_ratio,
+    require_core_thresholds,
+    clean_data_only,
+    sector_filter="Semua Sektor",
+    industry_filter="Semua Industri",
+):
+    return {
+        "name": name,
+        "price_range": price_range,
+        "min_volume": min_volume,
+        "per_range": per_range,
+        "pbv_max": pbv_max,
+        "roe_min": roe_min,
+        "npm_min": npm_min,
+        "der_max": der_max,
+        "apply_der_to_banking": apply_der_to_banking,
+        "min_score": min_score,
+        "min_threshold_ratio": min_threshold_ratio,
+        "require_core_thresholds": require_core_thresholds,
+        "clean_data_only": clean_data_only,
+        "sector_filter": sector_filter,
+        "industry_filter": industry_filter,
+    }
+
+
+def default_filter_criteria(name, conservative, price_min, price_max):
+    if conservative:
+        return make_filter_criteria(
+            name=name,
+            price_range=(max(price_min, 50), min(price_max, 50_000)),
+            min_volume=10_000_000,
+            per_range=(0.1, 25.0),
+            pbv_max=3.5,
+            roe_min=8.0,
+            npm_min=3.0,
+            der_max=1.5,
+            apply_der_to_banking=False,
+            min_score=60,
+            min_threshold_ratio=65,
+            require_core_thresholds=True,
+            clean_data_only=True,
+        )
+    return make_filter_criteria(
+        name=name,
+        price_range=(price_min, min(price_max, 50_000)),
+        min_volume=5_000_000,
+        per_range=(0.0, 35.0),
+        pbv_max=5.0,
+        roe_min=5.0,
+        npm_min=0.0,
+        der_max=2.5,
+        apply_der_to_banking=False,
+        min_score=45,
+        min_threshold_ratio=50,
+        require_core_thresholds=False,
+        clean_data_only=False,
+    )
+
+
+def audit_row_against_criteria(row, criteria):
+    checks = []
+
+    def add_check(area, ok, actual, required):
+        checks.append(
+            {
+                "Area": area,
+                "Status": "Lolos" if bool(ok) else "Gagal",
+                "Actual": actual,
+                "Required": required,
+            }
+        )
+
+    if criteria["sector_filter"] != "Semua Sektor":
+        add_check("Sektor", row.get("Sektor") == criteria["sector_filter"], row.get("Sektor"), criteria["sector_filter"])
+    if criteria["industry_filter"] != "Semua Industri":
+        add_check("Industri", row.get("Industry") == criteria["industry_filter"], row.get("Industry"), criteria["industry_filter"])
+
+    price_low, price_high = criteria["price_range"]
+    add_check("Harga", price_low <= row.get("Penutupan", np.nan) <= price_high, format_rupiah(row.get("Penutupan")), f"{format_rupiah(price_low)} - {format_rupiah(price_high)}")
+    add_check("Volume", row.get("Volume", 0) >= criteria["min_volume"], format_volume(row.get("Volume")), f">= {format_volume(criteria['min_volume'])}")
+
+    per_low, per_high = criteria["per_range"]
+    add_check("PER", per_low <= row.get("PER", np.nan) <= per_high, format_number(row.get("PER"), 2), f"{per_low:g} - {per_high:g}")
+    add_check("PBV", row.get("PBV", np.inf) <= criteria["pbv_max"], format_number(row.get("PBV"), 2), f"<= {criteria['pbv_max']:g}")
+    add_check("ROE", row.get("ROE", -np.inf) >= criteria["roe_min"], f"{format_number(row.get('ROE'))}%", f">= {criteria['roe_min']:g}%")
+    add_check("NPM", row.get("NPM", -np.inf) >= criteria["npm_min"], f"{format_number(row.get('NPM'))}%", f">= {criteria['npm_min']:g}%")
+
+    is_banking = row.get("Threshold_Mode") == "Banking"
+    der_ok = row.get("DER", np.inf) <= criteria["der_max"] or (is_banking and not criteria["apply_der_to_banking"])
+    der_required = "Tidak diterapkan ke Banking" if is_banking and not criteria["apply_der_to_banking"] else f"<= {criteria['der_max']:g}"
+    add_check("DER", der_ok, format_number(row.get("DER"), 2), der_required)
+
+    add_check("Score", row.get("Score", 0) >= criteria["min_score"], format_number(row.get("Score")), f">= {criteria['min_score']:g}")
+    add_check("Threshold", row.get("Threshold_Pass_Ratio", 0) >= criteria["min_threshold_ratio"], f"{format_number(row.get('Threshold_Pass_Ratio'), 0)}%", f">= {criteria['min_threshold_ratio']:g}%")
+
+    if criteria["require_core_thresholds"]:
+        core_ok = (
+            row.get("PER", np.inf) <= 15
+            and row.get("PBV", np.inf) <= 3
+            and row.get("ROE", -np.inf) >= 12
+            and row.get("NPM", -np.inf) >= 7
+        )
+        add_check("Core valuasi/profit", core_ok, f"PER {format_number(row.get('PER'), 2)}, PBV {format_number(row.get('PBV'), 2)}, ROE {format_number(row.get('ROE'))}%, NPM {format_number(row.get('NPM'))}%", "PER<=15, PBV<=3, ROE>=12%, NPM>=7%")
+
+    if criteria["clean_data_only"]:
+        add_check("Clean_Data", bool(row.get("Clean_Data")), row.get("Safety_Notes", "-"), "Clean_Data=True")
+
+    check_df = pd.DataFrame(checks)
+    failed = check_df[check_df["Status"] == "Gagal"]["Area"].tolist()
+    return {
+        "Filter": criteria["name"],
+        "Status": "Lolos" if not failed else "Gagal",
+        "Gagal": len(failed),
+        "Alasan Utama": ", ".join(failed[:5]) if failed else "OK",
+        "Detail": check_df,
+    }
+
+
+def build_filter_audit(data, selected_codes, criteria_list):
+    rows = []
+    details = []
+    for code in selected_codes:
+        matches = data[data["Kode"].eq(code)]
+        if matches.empty:
+            rows.append({"Kode": code, "Filter": "-", "Status": "Tidak ditemukan", "Gagal": "-", "Alasan Utama": "Kode tidak ada di data"})
+            continue
+        row = matches.iloc[0]
+        for criteria in criteria_list:
+            audit = audit_row_against_criteria(row, criteria)
+            rows.append(
+                {
+                    "Kode": code,
+                    "Nama Perusahaan": row.get("Nama Perusahaan"),
+                    "Filter": audit["Filter"],
+                    "Status": audit["Status"],
+                    "Gagal": audit["Gagal"],
+                    "Alasan Utama": audit["Alasan Utama"],
+                    "Score": row.get("Score"),
+                    "Recommendation": row.get("Recommendation"),
+                    "Clean_Data": row.get("Clean_Data"),
+                    "Safety_Notes": row.get("Safety_Notes"),
+                    "Volume_Source": row.get("Volume_Source", "Excel"),
+                }
+            )
+            detail = audit["Detail"].copy()
+            detail.insert(0, "Kode", code)
+            detail.insert(1, "Filter", audit["Filter"])
+            details.append(detail)
+    detail_df = pd.concat(details, ignore_index=True) if details else pd.DataFrame()
+    return pd.DataFrame(rows), detail_df
+
+
+def format_volume(value):
+    if pd.isna(value):
+        return "-"
+    if value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return f"{value:,.0f}"
+
+
+def cache_file_for_history(code, period):
+    safe_code = str(code).strip().upper().replace("/", "_").replace("\\", "_")
+    safe_period = str(period).strip().lower().replace("/", "_").replace("\\", "_")
+    return HISTORY_CACHE_DIR / f"{safe_code}_{safe_period}.csv"
+
+
+def read_history_cache(codes, period):
+    frames = []
+    for code in codes:
+        cache_file = cache_file_for_history(code, period)
+        if cache_file.exists():
+            try:
+                cached = pd.read_csv(cache_file)
+                cached["Kode"] = str(code).strip().upper()
+                frames.append(cached)
+            except Exception:
+                continue
+    if not frames:
+        return pd.DataFrame()
+    return normalize_history_frame(pd.concat(frames, ignore_index=True))
+
+
+def write_history_cache(history, period):
+    if history.empty:
+        return
+    HISTORY_CACHE_DIR.mkdir(exist_ok=True)
+    for code, group in history.groupby("Kode"):
+        cache_file = cache_file_for_history(code, period)
+        group[["Date", "Kode", "Close", "Volume_Online"]].to_csv(cache_file, index=False)
+
+
+def yahoo_period_to_dates(period):
+    end = pd.Timestamp.today().normalize()
+    days_by_period = {
+        "5d": 7,
+        "1mo": 31,
+        "3mo": 92,
+        "6mo": 183,
+        "1y": 365,
+        "2y": 365 * 2,
+        "5y": 365 * 5,
+        "10y": 365 * 10,
+    }
+    if period == "max":
+        return None, None
+    return end - pd.Timedelta(days=days_by_period.get(period, 365)), end
+
+
+def remove_blocking_proxy_env():
+    removed = {}
+    for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]:
+        value = os.environ.get(key)
+        if value and value.strip().lower() in BLOCKING_PROXY_VALUES:
+            removed[key] = value
+            os.environ.pop(key, None)
+    return removed
+
+
+def restore_proxy_env(removed):
+    for key, value in removed.items():
+        os.environ[key] = value
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_yahoo_history(codes, period="max"):
+    cleaned_codes = [str(code).strip().upper() for code in codes if str(code).strip()]
+    if not cleaned_codes:
+        return pd.DataFrame(), "Pilih minimal satu kode saham.", "empty"
+
+    try:
+        import yfinance as yf
+    except Exception as exc:
+        cached = read_history_cache(cleaned_codes, period)
+        if not cached.empty:
+            return cached, f"Library yfinance belum tersedia, memakai cache lokal. Detail: {exc}", "cache"
+        return pd.DataFrame(), f"Library yfinance belum tersedia: {exc}", "empty"
+
+    tickers = [f"{code}.JK" for code in cleaned_codes]
+    error_messages = []
+    removed_proxy = remove_blocking_proxy_env()
+    try:
+        downloaded = yf.download(
+            tickers=tickers,
+            period=period,
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+            group_by="ticker",
+        )
+    except Exception as exc:
+        downloaded = pd.DataFrame()
+        error_messages.append(f"yfinance gagal: {exc}")
+    finally:
+        restore_proxy_env(removed_proxy)
+
+    if downloaded.empty:
+        fallback_history, fallback_error = fetch_history_pandas_datareader(cleaned_codes, period)
+        if not fallback_history.empty:
+            write_history_cache(fallback_history, period)
+            return fallback_history, None, "pandas-datareader"
+        if fallback_error:
+            error_messages.append(fallback_error)
+
+        cached = read_history_cache(cleaned_codes, period)
+        if not cached.empty:
+            return cached, "Data live kosong/gagal, memakai cache lokal terakhir.", "cache"
+        return pd.DataFrame(), "Data online kosong. Cek koneksi atau ticker IDX. " + " ".join(error_messages), "empty"
+
+    records = []
+    if isinstance(downloaded.columns, pd.MultiIndex):
+        for code, ticker in zip(cleaned_codes, tickers):
+            if ticker not in downloaded.columns.get_level_values(0):
+                continue
+            ticker_data = downloaded[ticker].reset_index()
+            if "Close" not in ticker_data.columns:
+                continue
+            for _, row in ticker_data.iterrows():
+                close = row.get("Close")
+                if pd.isna(close):
+                    continue
+                records.append(
+                    {
+                        "Date": row.get("Date"),
+                        "Kode": code,
+                        "Close": close,
+                        "Volume_Online": row.get("Volume", np.nan),
+                    }
+                )
+    else:
+        ticker_data = downloaded.reset_index()
+        code = cleaned_codes[0]
+        for _, row in ticker_data.iterrows():
+            close = row.get("Close")
+            if pd.isna(close):
+                continue
+            records.append(
+                {
+                    "Date": row.get("Date"),
+                    "Kode": code,
+                    "Close": close,
+                    "Volume_Online": row.get("Volume", np.nan),
+                }
+            )
+
+    history = pd.DataFrame(records)
+    if history.empty:
+        cached = read_history_cache(cleaned_codes, period)
+        if not cached.empty:
+            return cached, "Data live tidak menemukan harga penutupan, memakai cache lokal terakhir.", "cache"
+        return history, "Data online tidak menemukan harga penutupan.", "empty"
+
+    history = normalize_history_frame(history)
+    write_history_cache(history, period)
+    return history, None, "yfinance"
+
+
+def fetch_history_pandas_datareader(codes, period="max"):
+    try:
+        from pandas_datareader import data as pdr
+    except Exception as exc:
+        return pd.DataFrame(), f"pandas-datareader belum tersedia: {exc}"
+
+    start, end = yahoo_period_to_dates(period)
+    if start is None:
+        start = pd.Timestamp("1990-01-01")
+        end = pd.Timestamp.today().normalize()
+
+    frames = []
+    errors = []
+    removed_proxy = remove_blocking_proxy_env()
+    try:
+        for code in codes:
+            ticker = f"{code}.JK"
+            try:
+                data = pdr.DataReader(ticker, "yahoo", start, end).reset_index()
+            except Exception as exc:
+                errors.append(f"{code}: {exc}")
+                continue
+            if data.empty or "Close" not in data.columns:
+                continue
+            frame = pd.DataFrame(
+                {
+                    "Date": data["Date"],
+                    "Kode": code,
+                    "Close": data["Close"],
+                    "Volume_Online": data["Volume"] if "Volume" in data.columns else np.nan,
+                }
+            )
+            frames.append(frame)
+    finally:
+        restore_proxy_env(removed_proxy)
+
+    if not frames:
+        return pd.DataFrame(), "Fallback pandas-datareader kosong. " + "; ".join(errors[:3])
+    return normalize_history_frame(pd.concat(frames, ignore_index=True)), None
+
+
+def normalize_history_frame(history):
+    if history.empty:
+        return history
+    history = history.copy()
+    history["Date"] = pd.to_datetime(history["Date"], errors="coerce")
+    history["Close"] = pd.to_numeric(history["Close"], errors="coerce")
+    if "Volume_Online" in history.columns:
+        history["Volume_Online"] = pd.to_numeric(history["Volume_Online"], errors="coerce")
+    history["Kode"] = history["Kode"].astype(str).str.strip().str.upper()
+    history = history.dropna(subset=["Date", "Close"]).sort_values(["Kode", "Date"])
+    history["Normalized"] = history.groupby("Kode")["Close"].transform(
+        lambda series: series / series.iloc[0] * 100 if len(series) else series
+    )
+    return history
+
+
+def score_percentile(series, higher_is_better=True, valid_mask=None):
+    values = pd.to_numeric(series, errors="coerce")
+    if valid_mask is None:
+        valid_mask = values.notna()
+    valid_mask = valid_mask & values.notna()
+
+    output = pd.Series(0.0, index=series.index)
+    valid_values = values[valid_mask]
+    if valid_values.empty:
+        return output
+
+    lower = valid_values.quantile(0.03)
+    upper = valid_values.quantile(0.97)
+    clipped = values.clip(lower, upper)
+    ranks = clipped[valid_mask].rank(pct=True, method="average")
+    if not higher_is_better:
+        ranks = 1 - ranks
+    output.loc[valid_mask] = ranks * 100
+    return output.clip(0, 100)
+
+
+def score_target_range(series, low, high, center=None):
+    values = pd.to_numeric(series, errors="coerce")
+    if center is None:
+        center = (low + high) / 2
+    width = max(high - low, 1)
+    distance = (values - center).abs()
+    score = 100 - (distance / width * 100)
+    return score.clip(0, 100).fillna(0)
+
+
+def read_sheet(sheet_name):
+    df_sheet = pd.read_excel(DATA_FILE, sheet_name=sheet_name)
+    df_sheet.columns = df_sheet.columns.str.strip()
+    return df_sheet
+
+
+def normalize_ratio_columns(df_sheet):
+    rename_map = {}
+    for column in df_sheet.columns:
+        normalized = column.strip().upper()
+        for metric in ["PER", "PBV", "ROE", "ROA", "DER", "NPM", "NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"]:
+            if normalized.startswith(metric):
+                rename_map[column] = metric
+                break
+    return df_sheet.rename(columns=rename_map)
+
+
+def aggregate_threshold_sheet(sheet_name):
+    threshold_raw = normalize_ratio_columns(read_sheet(sheet_name))
+    for column in NUMERIC_COLUMNS:
+        if column in threshold_raw.columns:
+            threshold_raw[column] = pd.to_numeric(threshold_raw[column], errors="coerce")
+    threshold_raw["Kode"] = threshold_raw["Kode"].astype(str).str.strip().str.upper()
+    ratio_columns = [
+        column
+        for column in ["PER", "PBV", "ROE", "ROA", "DER", "NPM", "NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"]
+        if column in threshold_raw.columns
+    ]
+    aggregations = {column: "median" for column in ratio_columns}
+    aggregations.update(
+        {
+            "Nama Perusahaan": lambda x: clean_text(x.dropna().iloc[0]) if x.dropna().size else "-",
+            "Sektor": lambda x: clean_text(x.dropna().iloc[0], "No Sector") if x.dropna().size else "No Sector",
+            "Industry": lambda x: clean_text(x.dropna().iloc[0], "No Industry") if x.dropna().size else "No Industry",
+        }
+    )
+    return threshold_raw.groupby("Kode", as_index=False).agg(aggregations)
+
+
+def load_history_metrics():
+    history = read_sheet("Metrik")
+    history["Kode"] = history["Kode Saham"].astype(str).str.strip().str.upper()
+    keep_columns = ["Kode", "Mkt Cap", "Total Rev", "Industri", "Subindustri"] + list(HISTORY_COLUMNS)
+    keep_columns = [column for column in keep_columns if column in history.columns]
+    history = history[keep_columns].rename(columns=HISTORY_COLUMNS)
+    for column in ["Mkt Cap", "Total Rev", "Return_4W", "Return_13W", "Return_26W", "Return_52W", "Return_MTD", "Return_YTD"]:
+        if column in history.columns:
+            history[column] = pd.to_numeric(history[column], errors="coerce")
+    return history.drop_duplicates("Kode")
+
+
+def is_banking_row(row):
+    industry_text = f"{row.get('Industry', '')} {row.get('Industri', '')} {row.get('Subindustri', '')}".lower()
+    name_text = str(row.get("Nama Perusahaan", "")).lower()
+    return "bank" in industry_text or name_text.startswith("bank ") or " bank " in f" {name_text} "
+
+
+def threshold_pass(value, operator, threshold):
+    if pd.isna(value):
+        return False
+    if operator == "<=":
+        return value <= threshold
+    if operator == ">=":
+        return value >= threshold
+    return False
+
+
+def apply_threshold_profile(df_input, forced_mode=None):
+    output = df_input.copy()
+    modes = []
+    pass_counts = []
+    applicable_counts = []
+
+    for _, row in output.iterrows():
+        is_bank = is_banking_row(row) if forced_mode is None else forced_mode == "Banking"
+        thresholds = BANKING_THRESHOLDS if is_bank else NONBANK_THRESHOLDS
+        passed = 0
+        applicable = 0
+        for metric, (operator, threshold) in thresholds.items():
+            if metric not in output.columns:
+                continue
+            applicable += 1
+            if threshold_pass(row.get(metric), operator, threshold):
+                passed += 1
+        modes.append("Banking" if is_bank else "NonBank")
+        pass_counts.append(passed)
+        applicable_counts.append(applicable)
+
+    output["Threshold_Mode"] = modes
+    output["Threshold_Pass_Count"] = pass_counts
+    output["Threshold_Applicable"] = applicable_counts
+    output["Threshold_Pass_Ratio"] = np.where(
+        output["Threshold_Applicable"] > 0,
+        output["Threshold_Pass_Count"] / output["Threshold_Applicable"] * 100,
+        0,
+    )
+    return output
+
+
+@st.cache_data(show_spinner=False)
+def load_data():
+    raw = read_sheet("Ringkasan")
+
+    index_count_column = next((column for column in raw.columns if "7" in column and "Index" not in column), None)
+    raw["Index_Count_Raw"] = raw[index_count_column] if index_count_column else np.nan
+
+    for column in NUMERIC_COLUMNS:
+        if column in raw.columns:
+            raw[column] = pd.to_numeric(raw[column], errors="coerce")
+
+    raw["Kode"] = raw["Kode"].astype(str).str.strip().str.upper()
+    raw = raw[raw["Kode"].notna() & (raw["Kode"] != "") & (raw["Kode"] != "NAN")]
+
+    aggregations = {
+        "Nama Perusahaan": lambda x: clean_text(x.dropna().iloc[0]) if x.dropna().size else "-",
+        "Sektor": lambda x: clean_text(x.dropna().iloc[0], "No Sector") if x.dropna().size else "No Sector",
+        "Industry": lambda x: clean_text(x.dropna().iloc[0], "No Industry") if x.dropna().size else "No Industry",
+        "Index": lambda x: ", ".join(sorted({clean_text(v) for v in x.dropna()})),
+        "Penutupan": "median",
+        "PER": "median",
+        "PBV": "median",
+        "ROE": "median",
+        "ROA": "median",
+        "DER": "median",
+        "NPM": "median",
+        "NIM": "median",
+        "CAR": "median",
+        "LDR": "median",
+        "NPL": "median",
+        "BOPO": "median",
+        "CIR": "median",
+        "LAR": "median",
+        "Sebelumnya": "median",
+        "%Change": "median",
+        "Open": "median",
+        "High": "median",
+        "Low": "median",
+        "Volume": "median",
+        "Index_Count_Raw": "max",
+    }
+
+    existing = {key: value for key, value in aggregations.items() if key in raw.columns}
+    df = raw.groupby("Kode", as_index=False).agg(existing)
+    df["Index_Count"] = df["Index"].apply(lambda text: 0 if not text else len(text.split(", ")))
+    df["Index_Count"] = df[["Index_Count", "Index_Count_Raw"]].max(axis=1).fillna(0)
+    df = apply_online_volume_fallback(df)
+    df["Turnover"] = df["Penutupan"].fillna(0) * df["Volume"].fillna(0)
+    df["Intraday_Range_%"] = np.where(
+        df["Penutupan"] > 0,
+        (df["High"].fillna(df["Penutupan"]) - df["Low"].fillna(df["Penutupan"]))
+        / df["Penutupan"]
+        * 100,
+        np.nan,
+    )
+    df["Valid_Data"] = (
+        (df["Penutupan"] > 0)
+        & (df["Volume"] > 0)
+        & df[["PER", "PBV", "ROE", "ROA", "DER", "NPM"]].notna().any(axis=1)
+    )
+    df["Source_Rows"] = raw.groupby("Kode").size().reindex(df["Kode"]).to_numpy()
+    history = load_history_metrics()
+    df = df.merge(history, on="Kode", how="left")
+    threshold_bank = aggregate_threshold_sheet("Banking")
+    threshold_nonbank = aggregate_threshold_sheet("NonBank")
+    threshold_values = pd.concat([threshold_bank, threshold_nonbank], ignore_index=True)
+    threshold_values = threshold_values.groupby("Kode", as_index=False).median(numeric_only=True)
+    fill_columns = ["NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"]
+    merge_columns = ["Kode"] + [column for column in fill_columns if column in threshold_values.columns]
+    df = df.merge(threshold_values[merge_columns], on="Kode", how="left", suffixes=("", "_Threshold"))
+    for column in fill_columns:
+        threshold_column = f"{column}_Threshold"
+        if threshold_column in df.columns:
+            df[column] = df[column].fillna(df[threshold_column])
+            df = df.drop(columns=[threshold_column])
+    df = apply_threshold_profile(df)
+    return df, raw
+
+
+def calculate_scores(df, weights):
+    scored = df.copy()
+
+    positive_per = scored["PER"].between(0.1, scored["PER"].quantile(0.95), inclusive="both")
+    positive_pbv = scored["PBV"].between(0.05, scored["PBV"].quantile(0.95), inclusive="both")
+    positive_der = scored["DER"].between(0, scored["DER"].quantile(0.97), inclusive="both")
+
+    scored["PER_Score"] = score_percentile(scored["PER"], higher_is_better=False, valid_mask=positive_per)
+    scored["PBV_Score"] = score_percentile(scored["PBV"], higher_is_better=False, valid_mask=positive_pbv)
+    scored["Valuation_Score"] = (scored["PER_Score"] * 0.58) + (scored["PBV_Score"] * 0.42)
+
+    scored["ROE_Score"] = score_percentile(scored["ROE"], higher_is_better=True, valid_mask=scored["ROE"] > 0)
+    scored["ROA_Score"] = score_percentile(scored["ROA"], higher_is_better=True, valid_mask=scored["ROA"] > 0)
+    scored["NPM_Score"] = score_percentile(scored["NPM"], higher_is_better=True, valid_mask=scored["NPM"] > 0)
+    scored["Quality_Score"] = (
+        scored["ROE_Score"] * 0.45 + scored["ROA_Score"] * 0.30 + scored["NPM_Score"] * 0.25
+    )
+
+    scored["DER_Score"] = score_percentile(scored["DER"], higher_is_better=False, valid_mask=positive_der)
+    scored["Volatility_Score"] = score_percentile(
+        scored["Intraday_Range_%"], higher_is_better=False, valid_mask=scored["Intraday_Range_%"] >= 0
+    )
+    scored["Risk_Score"] = scored["DER_Score"] * 0.72 + scored["Volatility_Score"] * 0.28
+    banking_mask = scored.get("Threshold_Mode", pd.Series("", index=scored.index)).eq("Banking")
+    scored["CAR_Score"] = score_percentile(scored.get("CAR", pd.Series(index=scored.index)), higher_is_better=True, valid_mask=scored.get("CAR", pd.Series(index=scored.index)).gt(0))
+    scored["NPL_Score"] = score_percentile(scored.get("NPL", pd.Series(index=scored.index)), higher_is_better=False, valid_mask=scored.get("NPL", pd.Series(index=scored.index)).ge(0))
+    scored["BOPO_Score"] = score_percentile(scored.get("BOPO", pd.Series(index=scored.index)), higher_is_better=False, valid_mask=scored.get("BOPO", pd.Series(index=scored.index)).gt(0))
+    scored["LDR_Score"] = score_target_range(scored.get("LDR", pd.Series(index=scored.index)), low=70, high=100, center=85)
+    scored["Banking_Risk_Score"] = (
+        scored["CAR_Score"] * 0.30
+        + scored["NPL_Score"] * 0.30
+        + scored["BOPO_Score"] * 0.25
+        + scored["LDR_Score"] * 0.15
+    )
+    scored["Risk_Score"] = np.where(
+        banking_mask,
+        scored["Banking_Risk_Score"].fillna(scored["Risk_Score"]),
+        scored["Risk_Score"],
+    )
+
+    scored["Volume_Score"] = score_percentile(scored["Volume"], higher_is_better=True, valid_mask=scored["Volume"] > 0)
+    scored["Turnover_Score"] = score_percentile(scored["Turnover"], higher_is_better=True, valid_mask=scored["Turnover"] > 0)
+    scored["Liquidity_Score"] = scored["Volume_Score"] * 0.55 + scored["Turnover_Score"] * 0.45
+
+    scored["Trend_Score"] = score_target_range(scored["%Change"], low=-7, high=9, center=2)
+    scored["Return_4W_Score"] = score_target_range(scored.get("Return_4W", pd.Series(index=scored.index)), low=-20, high=35, center=8)
+    scored["Return_13W_Score"] = score_target_range(scored.get("Return_13W", pd.Series(index=scored.index)), low=-25, high=45, center=12)
+    scored["Return_26W_Score"] = score_target_range(scored.get("Return_26W", pd.Series(index=scored.index)), low=-35, high=70, center=18)
+    scored["Return_52W_Score"] = score_target_range(scored.get("Return_52W", pd.Series(index=scored.index)), low=-45, high=100, center=25)
+    scored["History_Momentum_Score"] = (
+        scored["Return_4W_Score"] * 0.25
+        + scored["Return_13W_Score"] * 0.30
+        + scored["Return_26W_Score"] * 0.25
+        + scored["Return_52W_Score"] * 0.20
+    )
+    scored["Momentum_Score"] = (
+        scored["History_Momentum_Score"] * 0.60
+        + scored["Trend_Score"] * 0.20
+        + score_percentile(scored["%Change"], higher_is_better=True, valid_mask=scored["%Change"].between(-15, 20))
+        * 0.20
+    )
+
+    scored["Index_Score"] = score_percentile(
+        scored["Index_Count"], higher_is_better=True, valid_mask=scored["Index_Count"] > 0
+    )
+
+    weighted_score = (
+        scored["Valuation_Score"] * weights["valuation"]
+        + scored["Quality_Score"] * weights["quality"]
+        + scored["Risk_Score"] * weights["risk"]
+        + scored["Liquidity_Score"] * weights["liquidity"]
+        + scored["Momentum_Score"] * weights["momentum"]
+        + scored["Index_Score"] * weights["index_strength"]
+    ) / sum(weights.values())
+
+    penalty = np.zeros(len(scored))
+    penalty += np.where(scored["PER"].le(0) | scored["PBV"].le(0), 10, 0)
+    penalty += np.where(scored["ROE"].le(0) | scored["ROA"].le(0), 9, 0)
+    penalty += np.where(scored["NPM"].le(0), 6, 0)
+    penalty += np.where(scored["Volume"].lt(1_000_000), 6, 0)
+    penalty += np.where(scored["Penutupan"].le(0), 25, 0)
+    penalty += np.where(scored["%Change"].abs().gt(25), 6, 0)
+    if "Threshold_Pass_Ratio" in scored.columns:
+        penalty += np.where(scored["Threshold_Pass_Ratio"].lt(40), 5, 0)
+
+    scored["Penalty"] = penalty
+    scored["Score"] = (weighted_score - scored["Penalty"]).clip(0, 100)
+
+    conditions = [
+        scored["Score"] >= 78,
+        scored["Score"] >= 68,
+        scored["Score"] >= 55,
+        scored["Score"] >= 42,
+    ]
+    labels = ["Strong Buy", "Buy", "Watchlist", "Speculative"]
+    scored["Recommendation"] = np.select(conditions, labels, default="Avoid")
+
+    banking_high_risk = banking_mask & (
+        (scored.get("NPL", pd.Series(index=scored.index)) > 5)
+        | (scored.get("BOPO", pd.Series(index=scored.index)) > 90)
+        | (scored.get("CAR", pd.Series(index=scored.index)) < 12)
+        | (scored["ROE"] < 0)
+        | (scored["NPM"] < 0)
+        | (scored["Volume"] < 1_000_000)
+    )
+    banking_medium_risk = banking_mask & (
+        (scored.get("NPL", pd.Series(index=scored.index)) > 3.5)
+        | (scored.get("BOPO", pd.Series(index=scored.index)) > 80)
+        | (scored.get("LDR", pd.Series(index=scored.index)) > 100)
+        | (scored["Volume"] < 10_000_000)
+        | (scored["%Change"].abs() > 10)
+    )
+    nonbank_mask = ~banking_mask
+    high_risk = banking_high_risk | (
+        nonbank_mask
+        & (
+            (scored["DER"] > 2.5)
+            | (scored["ROE"] < 0)
+            | (scored["NPM"] < 0)
+            | (scored["Volume"] < 1_000_000)
+            | (scored["Intraday_Range_%"] > 12)
+        )
+    )
+    medium_risk = banking_medium_risk | (
+        nonbank_mask
+        & (
+            (scored["DER"] > 1.2)
+            | (scored["Volume"] < 10_000_000)
+            | (scored["Intraday_Range_%"] > 7)
+            | (scored["%Change"].abs() > 10)
+        )
+    )
+    scored["Risk_Level"] = np.select([high_risk, medium_risk], ["High", "Medium"], default="Low")
+    return scored.sort_values("Score", ascending=False)
+
+
+df, raw_df = load_data()
+data_file_status = get_file_status(DATA_FILE)
+data_update_label = get_data_update_label(raw_df, data_file_status)
+
+st.title("Dashboard Rekomendasi Saham IDX")
+st.caption(
+    f"Data {DATA_FILE}, update {data_update_label}. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
+)
+
+with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=False):
+    st.markdown(
+        """
+        Arahkan kursor ke ikon bantuan pada menu/filter untuk melihat penjelasan singkat langsung di tempatnya.
+
+        **Menu utama**
+        - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
+        - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
+        - **Histori Harga**: grafik return dari sheet `Metrik` atau harga historis online via yfinance dengan format `KODE.JK`.
+        - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
+        - **Data Quality**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
+        - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
+
+        **Istilah penting**
+        - **PER**: Price to Earnings Ratio. Lebih rendah umumnya lebih murah, selama laba positif.
+        - **PBV**: Price to Book Value. Lebih rendah berarti harga lebih dekat ke nilai buku.
+        - **ROE / ROA**: kemampuan menghasilkan laba dari ekuitas/aset. Lebih tinggi lebih baik.
+        - **DER**: Debt to Equity Ratio. Dipakai untuk non-bank; untuk bank tidak menjadi filter utama karena struktur bisnis bank memang leverage tinggi.
+        - **NPM**: Net Profit Margin. Margin laba bersih terhadap pendapatan.
+        - **NIM, CAR, LDR, NPL, BOPO**: metrik khusus bank. CAR tinggi, NPL rendah, BOPO rendah, dan LDR sehat lebih baik.
+        - **CIR / LAR**: metrik efisiensi dan risiko aset bank bila tersedia pada sheet Banking.
+        - **Volume**: jumlah saham yang diperdagangkan.
+        - **Turnover**: estimasi nilai transaksi dari harga penutupan dikali volume.
+        - **Momentum**: sinyal tren dari `%Change`, return 4W, 13W, 26W, 52W, dan YTD bila tersedia.
+        - **Index Count / Kekuatan indeks**: jumlah kemunculan saham pada indeks/sumber data; ini sinyal visibilitas, bukan jaminan kualitas.
+        - **Threshold**: persentase rasio yang lolos batas dari sheet `NonBank` atau `Banking`.
+        - **Threshold Mode**: sumber batas rasio yang dipakai, yaitu `NonBank` atau `Banking`.
+        - **Threshold Pass Count / Applicable**: jumlah rasio yang lolos dibanding jumlah rasio yang bisa dinilai.
+        - **Score**: nilai akhir 0-100 dari bobot faktor dikurangi penalti. Semakin tinggi semakin menarik sebagai kandidat screening.
+        - **Recommendation**: label dari score akhir: Strong Buy, Buy, Watchlist, Speculative, atau Avoid.
+        - **Clean_Data**: penanda bahwa data dan rasio utama lolos filter kebersihan minimum.
+        - **Safety_Recommendation**: ringkasan kelayakan data seperti `Bersih - Strong`; di kartu utama ditampilkan sebagai `Data`, bukan jaminan aman investasi.
+        - **Safety_Notes**: alasan saham perlu direview, misalnya volume rendah, rasio kosong, threshold rendah, atau risiko tinggi.
+        - **Risk Level**: estimasi risiko relatif berdasarkan rasio, volatilitas, penalti, dan likuiditas, bukan jaminan keamanan.
+        - **KODE.JK**: format ticker saham Indonesia di Yahoo Finance/yfinance, misalnya `BBCA.JK`.
+        - **All / top N**: grafik histori untuk saham teratas dari hasil filter/ranking saat ini.
+
+        **Rumus ringkas**
+        - `Score = weighted average(Valuation, Quality, Risk, Liquidity, Momentum, Index) - Penalty`, lalu dibatasi 0-100.
+        - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable * 100`.
+        - `Turnover = Penutupan * Volume`.
+        - `Return Total = Harga Akhir / Harga Awal - 1`.
+        - Jika `Wajib lolos valuasi & profit inti` aktif: `PER <= 15`, `PBV <= 3`, `ROE >= 12%`, dan `NPM >= 7%`.
+
+        **Profil scoring vs preset filter**
+        - **Profil scoring** mengubah bobot Score, misalnya lebih condong ke valuasi, kualitas, risiko, likuiditas, atau momentum.
+        - **Preset filter** mengubah batas minimum/maksimum yang dipakai untuk menyaring hasil. Preset `Konservatif Aman` tidak mengubah bobot Score.
+        - Kombinasi yang rapi: pilih profil `Defensive` bila ingin bobot lebih hati-hati, lalu pilih preset filter `Konservatif Aman` bila ingin hasil yang lolos data dan rasio lebih ketat.
+
+        Gunakan hasil ini sebagai screener awal. Keputusan investasi tetap perlu cek berita, laporan keuangan, aksi korporasi, dan diversifikasi portofolio.
+        """
+    )
+
+with st.sidebar:
+    st.header("Filter & Strategi")
+    profile = st.selectbox("Profil scoring", list(PROFILE_WEIGHTS), index=0, help=HELP_TEXT["profile"])
+    weights = PROFILE_WEIGHTS[profile].copy()
+    filter_preset = st.selectbox("Preset filter", ["Normal", "Konservatif Aman"], index=0, help=HELP_TEXT["filter_preset"])
+    safe_preset = filter_preset == "Konservatif Aman"
+    if safe_preset:
+        st.info("Preset filter konservatif aktif: filter dibuat lebih ketat. Bobot Score tetap mengikuti Profil scoring yang dipilih.")
+
+    with st.expander("Sesuaikan bobot", expanded=False):
+        weights["valuation"] = st.slider("Valuasi", 0, 50, weights["valuation"], help=HELP_TEXT["valuation"])
+        weights["quality"] = st.slider("Kualitas profit", 0, 50, weights["quality"], help=HELP_TEXT["quality"])
+        weights["risk"] = st.slider("Risiko relatif", 0, 40, weights["risk"], help=HELP_TEXT["risk"])
+        weights["liquidity"] = st.slider("Likuiditas", 0, 40, weights["liquidity"], help=HELP_TEXT["liquidity"])
+        weights["momentum"] = st.slider("Momentum", 0, 40, weights["momentum"], help=HELP_TEXT["momentum"])
+        weights["index_strength"] = st.slider("Kekuatan indeks", 0, 25, weights["index_strength"], help=HELP_TEXT["index_strength"])
+        if sum(weights.values()) == 0:
+            st.warning("Minimal satu bobot harus lebih dari 0.")
+            weights = BASE_WEIGHTS.copy()
+
+    sectors = ["Semua Sektor"] + sorted(df["Sektor"].dropna().unique().tolist())
+    industries = ["Semua Industri"] + sorted(df["Industry"].dropna().unique().tolist())
+    sector_filter = st.selectbox("Sektor", sectors, help=HELP_TEXT["sector"])
+    industry_filter = st.selectbox("Industri", industries, help=HELP_TEXT["industry"])
+
+    price_min, price_max = int(df["Penutupan"].min()), int(df["Penutupan"].max())
+    default_price_range = (max(price_min, 50), min(price_max, 50_000)) if safe_preset else (price_min, min(price_max, 50_000))
+    price_range = st.slider("Harga penutupan", price_min, price_max, default_price_range, help=HELP_TEXT["price"])
+    min_volume = st.select_slider(
+        "Minimum volume",
+        options=[0, 1_000_000, 5_000_000, 10_000_000, 50_000_000, 100_000_000, 500_000_000],
+        value=10_000_000 if safe_preset else 5_000_000,
+        format_func=format_volume,
+        help=HELP_TEXT["volume"],
+    )
+
+    per_range = st.slider("PER", 0.0, 80.0, (0.1, 25.0) if safe_preset else (0.0, 35.0), step=0.5, help=HELP_TEXT["per"])
+    pbv_max = st.slider("PBV maksimum", 0.0, 15.0, 3.5 if safe_preset else 5.0, step=0.1, help=HELP_TEXT["pbv"])
+    roe_min = st.slider("ROE minimum (%)", -50.0, 100.0, 8.0 if safe_preset else 5.0, step=0.5, help=HELP_TEXT["roe"])
+    npm_min = st.slider("NPM minimum (%)", -50.0, 100.0, 3.0 if safe_preset else 0.0, step=0.5, help=HELP_TEXT["npm"])
+    der_max = st.slider("DER maksimum", 0.0, 8.0, 1.5 if safe_preset else 2.5, step=0.1, help=HELP_TEXT["der"])
+    apply_der_to_banking = st.checkbox("Terapkan DER juga ke Banking", value=False, help=HELP_TEXT["der_banking"])
+    min_score = st.slider("Score minimum", 0, 100, 60 if safe_preset else 45, help=HELP_TEXT["score"])
+    st.divider()
+    st.subheader("Threshold Sheet")
+    threshold_source = st.selectbox("Sumber threshold", ["Auto: Banking untuk bank, NonBank untuk lainnya", "NonBank", "Banking"], help=HELP_TEXT["threshold_source"])
+    min_threshold_ratio = st.slider("Minimum lolos threshold (%)", 0, 100, 65 if safe_preset else 50, step=5, help=HELP_TEXT["threshold_ratio"])
+    require_core_thresholds = st.checkbox("Wajib lolos valuasi & profit inti", value=safe_preset, help=HELP_TEXT["core_thresholds"])
+    clean_data_only = st.checkbox("Data bersih saja", value=safe_preset, help=HELP_TEXT["clean_data"])
+
+    st.divider()
+    with st.expander("Workflow Update", expanded=False):
+        file_status = data_file_status
+        st.caption(f"Data: {file_status['Status']} | Update: {data_update_label} | Modified: {file_status['Last Modified']} | Size: {file_status['Ukuran']}")
+        cache_status_sidebar = get_history_cache_status()
+        st.caption(f"Cache histori: {len(cache_status_sidebar):,} file di `{HISTORY_CACHE_DIR}`")
+        refresh_period = st.selectbox(
+            "Periode refresh cache",
+            ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"],
+            index=4,
+            format_func=lambda value: {
+                "5d": "1 minggu",
+                "1mo": "1 bulan",
+                "3mo": "3 bulan",
+                "6mo": "6 bulan",
+                "1y": "1 tahun",
+                "2y": "2 tahun",
+                "5y": "5 tahun",
+                "10y": "10 tahun",
+                "max": "All / sepanjang masa",
+            }.get(value, value),
+            help=HELP_TEXT["refresh_period"],
+        )
+        refresh_top_n = st.slider("Jumlah top saham untuk refresh", 5, 50, 10, step=5, help=HELP_TEXT["refresh_top_n"])
+        if st.button("Refresh cache histori top saham"):
+            with st.spinner("Mengambil data histori online..."):
+                fetch_yahoo_history.clear()
+                top_codes_for_refresh = df.sort_values("Index_Count", ascending=False)["Kode"].head(refresh_top_n).tolist()
+                refreshed_history, refresh_error, refresh_source = fetch_yahoo_history(top_codes_for_refresh, period=refresh_period)
+            if refresh_error and refreshed_history.empty:
+                st.error(refresh_error)
+            else:
+                st.success(f"Cache diperbarui dari {refresh_source}: {len(refreshed_history):,} baris histori.")
+        if st.button("Clear cache aplikasi"):
+            st.cache_data.clear()
+            st.success("Cache aplikasi dibersihkan. Dashboard akan dimuat ulang.")
+            st.rerun()
+
+active_filter_criteria = make_filter_criteria(
+    name="Filter aktif",
+    price_range=price_range,
+    min_volume=min_volume,
+    per_range=per_range,
+    pbv_max=pbv_max,
+    roe_min=roe_min,
+    npm_min=npm_min,
+    der_max=der_max,
+    apply_der_to_banking=apply_der_to_banking,
+    min_score=min_score,
+    min_threshold_ratio=min_threshold_ratio,
+    require_core_thresholds=require_core_thresholds,
+    clean_data_only=clean_data_only,
+    sector_filter=sector_filter,
+    industry_filter=industry_filter,
+)
+preset_filter_criteria = [
+    active_filter_criteria,
+    default_filter_criteria("Preset Normal", conservative=False, price_min=price_min, price_max=price_max),
+    default_filter_criteria("Preset Konservatif Aman", conservative=True, price_min=price_min, price_max=price_max),
+]
+
+forced_threshold_mode = None if threshold_source.startswith("Auto") else threshold_source
+threshold_df = apply_threshold_profile(df, forced_mode=forced_threshold_mode)
+scored_df = calculate_scores(threshold_df, weights)
+scored_df = add_safety_flags(scored_df)
+filtered = scored_df.copy()
+
+if sector_filter != "Semua Sektor":
+    filtered = filtered[filtered["Sektor"] == sector_filter]
+if industry_filter != "Semua Industri":
+    filtered = filtered[filtered["Industry"] == industry_filter]
+
+der_filter = filtered["DER"].fillna(np.inf) <= der_max
+if not apply_der_to_banking:
+    der_filter = der_filter | filtered["Threshold_Mode"].eq("Banking")
+
+filtered = filtered[
+    (filtered["Penutupan"].between(price_range[0], price_range[1]))
+    & (filtered["Volume"].fillna(0) >= min_volume)
+    & (filtered["PER"].between(per_range[0], per_range[1]))
+    & (filtered["PBV"].fillna(np.inf) <= pbv_max)
+    & (filtered["ROE"].fillna(-np.inf) >= roe_min)
+    & (filtered["NPM"].fillna(-np.inf) >= npm_min)
+    & der_filter
+    & (filtered["Score"] >= min_score)
+    & (filtered["Threshold_Pass_Ratio"] >= min_threshold_ratio)
+]
+
+if require_core_thresholds:
+    filtered = filtered[
+        (filtered["PER"].fillna(np.inf) <= 15)
+        & (filtered["PBV"].fillna(np.inf) <= 3)
+        & (filtered["ROE"].fillna(-np.inf) >= 12)
+        & (filtered["NPM"].fillna(-np.inf) >= 7)
+    ]
+
+if clean_data_only:
+    filtered = filtered[filtered["Clean_Data"]]
+
+top = filtered.head(20)
+best = top.iloc[0] if not top.empty else None
+
+metric_cols = st.columns(6)
+metric_cols[0].metric("Saham unik", f"{len(df):,}", f"{len(raw_df):,} baris sumber")
+metric_cols[1].metric("Lolos filter", f"{len(filtered):,}")
+metric_cols[2].metric("Median score", f"{filtered['Score'].median():.1f}" if len(filtered) else "-")
+metric_cols[3].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filtered) else "-")
+metric_cols[4].metric("Strong Buy", f"{(filtered['Recommendation'] == 'Strong Buy').sum():,}")
+metric_cols[5].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
+
+if best is not None:
+    st.markdown(
+        f"""
+        <div class="recommendation-card">
+            <b>Rekomendasi teratas saat ini: {best['Kode']} - {best['Nama Perusahaan']}</b><br>
+            Score {best['Score']:.1f} ({best['Recommendation']}) | Risiko {best['Risk_Level']} |
+            Data {best['Safety_Recommendation']} |
+            Threshold {best['Threshold_Pass_Ratio']:.0f}% ({best['Threshold_Mode']}) |
+            Harga {format_rupiah(best['Penutupan'])} | PER {format_number(best['PER'])} |
+            ROE {format_number(best['ROE'])}% | Volume {format_volume(best['Volume'])}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+tab_reco, tab_explore, tab_history, tab_sector, tab_quality, tab_method = st.tabs(
+    ["Rekomendasi", "Explorer", "Histori Harga", "Sektor", "Data Quality", "Metodologi"]
+)
+
+with tab_reco:
+    if filtered.empty:
+        st.warning("Tidak ada saham yang sesuai filter. Longgarkan kriteria di sidebar.")
+    else:
+        reco_controls = st.columns([1, 1, 1, 1])
+        with reco_controls[0]:
+            reco_limit = st.slider("Jumlah tampil", 5, 100, 25, step=5, help=HELP_TEXT["reco_limit"])
+        with reco_controls[1]:
+            reco_sort = st.selectbox(
+                "Urutkan berdasarkan",
+                ["Score", "Threshold_Pass_Ratio", "Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Return_52W", "Volume", "Turnover"],
+                help=HELP_TEXT["reco_sort"],
+            )
+        with reco_controls[2]:
+            reco_ascending = st.toggle("Urut naik", value=False, help=HELP_TEXT["reco_ascending"])
+        with reco_controls[3]:
+            reco_labels = st.multiselect(
+                "Label rekomendasi",
+                ["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"],
+                default=["Strong Buy", "Buy", "Watchlist"],
+                help=HELP_TEXT["recommendation"],
+            )
+
+        reco_view = filtered[filtered["Recommendation"].isin(reco_labels)].copy()
+        if reco_view.empty:
+            st.info("Tidak ada saham pada label rekomendasi yang dipilih.")
+            reco_view = filtered.copy()
+        reco_view = reco_view.sort_values(reco_sort, ascending=reco_ascending, na_position="last").head(reco_limit)
+
+        left, right = st.columns([1.25, 1])
+        with left:
+            chart_data = prepare_chart_frame(reco_view.sort_values(reco_sort), reco_sort)
+            if chart_data.empty:
+                st.warning(f"Tidak ada data valid untuk grafik {reco_sort}. Pilih metrik sort lain.")
+            else:
+                fig = px.bar(
+                    chart_data,
+                    x=reco_sort,
+                    y="Chart_Label",
+                    text="Kode",
+                    orientation="h",
+                    color="Recommendation",
+                    hover_name="Kode",
+                    hover_data={
+                        "Chart_Label": False,
+                        "Nama Perusahaan": True,
+                        "Sektor": True,
+                        "PER": ":.2f",
+                        "PBV": ":.2f",
+                        "ROE": ":.1f",
+                        "DER": ":.2f",
+                        "Threshold_Pass_Ratio": ":.0f",
+                        "Return_52W": ":.1f",
+                        "Volume": ":,.0f",
+                    },
+                    title=f"Top rekomendasi berdasarkan {reco_sort}",
+                    color_discrete_map={
+                        "Strong Buy": "#15803d",
+                        "Buy": "#65a30d",
+                        "Watchlist": "#ca8a04",
+                        "Speculative": "#ea580c",
+                        "Avoid": "#dc2626",
+                    },
+                )
+                fig.update_traces(textposition="outside", cliponaxis=False)
+                fig.update_layout(height=520, xaxis_title=reco_sort, yaxis_title="", margin=dict(l=20, r=80, t=70, b=40))
+                st.plotly_chart(fig, width="stretch")
+
+        with right:
+            component_cols = [
+                "Valuation_Score",
+                "Quality_Score",
+                "Risk_Score",
+                "Liquidity_Score",
+                "Momentum_Score",
+                "Index_Score",
+            ]
+            radar_base = reco_view.head(5)
+            fig = go.Figure()
+            for _, row in radar_base.iterrows():
+                values = [row[col] for col in component_cols]
+                fig.add_trace(
+                    go.Scatterpolar(
+                        r=values + [values[0]],
+                        theta=[
+                            "Valuasi",
+                            "Kualitas",
+                            "Risiko",
+                            "Likuiditas",
+                            "Momentum",
+                            "Indeks",
+                            "Valuasi",
+                        ],
+                        fill="toself",
+                        name=row["Kode"],
+                    )
+                )
+            fig.update_layout(
+                title="Profil faktor top 5",
+                polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+                height=520,
+                margin=dict(l=30, r=30, t=60, b=30),
+            )
+            st.plotly_chart(fig, width="stretch")
+
+        display_columns = [
+            "Kode",
+            "Nama Perusahaan",
+            "Recommendation",
+            "Safety_Recommendation",
+            "Risk_Level",
+            "Clean_Data",
+            "Safety_Notes",
+            "Score",
+            "Valuation_Score",
+            "Quality_Score",
+            "Risk_Score",
+            "Liquidity_Score",
+            "Momentum_Score",
+            "History_Momentum_Score",
+            "Threshold_Mode",
+            "Threshold_Pass_Count",
+            "Threshold_Applicable",
+            "Threshold_Pass_Ratio",
+            "Penutupan",
+            "PER",
+            "PBV",
+            "ROE",
+            "ROA",
+            "DER",
+            "NPM",
+            "%Change",
+            "Return_4W",
+            "Return_13W",
+            "Return_26W",
+            "Return_52W",
+            "Return_YTD",
+            "Volume",
+            "Volume_Source",
+            "Volume_Original",
+            "Volume_Online_Latest",
+            "Online_Last_Date",
+            "Sektor",
+            "Industry",
+            "Index",
+        ]
+        default_table_columns = [
+            "Kode",
+            "Nama Perusahaan",
+            "Recommendation",
+            "Safety_Recommendation",
+            "Risk_Level",
+            "Clean_Data",
+            "Score",
+            "Threshold_Pass_Ratio",
+            "Penutupan",
+            "PER",
+            "PBV",
+            "ROE",
+            "DER",
+            "Return_52W",
+            "Volume",
+            "Volume_Source",
+            "Safety_Notes",
+            "Sektor",
+            "Industry",
+        ]
+        selected_table_columns = st.multiselect(
+            "Kolom tabel",
+            display_columns,
+            default=default_table_columns,
+            help=HELP_TEXT["table_columns"],
+        )
+        if not selected_table_columns:
+            selected_table_columns = default_table_columns
+        table = reco_view[selected_table_columns].copy()
+        st.dataframe(
+            table,
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
+                "Valuation_Score": st.column_config.NumberColumn("Valuasi", format="%.1f", help=HELP_TEXT["valuation"]),
+                "Quality_Score": st.column_config.NumberColumn("Kualitas", format="%.1f", help=HELP_TEXT["quality"]),
+                "Risk_Score": st.column_config.NumberColumn("Risiko", format="%.1f", help=HELP_TEXT["risk"]),
+                "Liquidity_Score": st.column_config.NumberColumn("Likuiditas", format="%.1f", help=HELP_TEXT["liquidity"]),
+                "Momentum_Score": st.column_config.NumberColumn("Momentum", format="%.1f", help=HELP_TEXT["momentum"]),
+                "History_Momentum_Score": st.column_config.NumberColumn("Histori", format="%.1f", help=HELP_TEXT["momentum"]),
+                "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
+                "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
+                "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
+                "Volume_Original": st.column_config.NumberColumn("Volume Excel", format="%.0f", help="Volume asli dari file Ringkasan sebelum fallback online."),
+                "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari cache yfinance yang dipakai hanya bila volume Excel tampak terlalu rendah dan harga cocok."),
+                "Volume_Source": st.column_config.TextColumn("Sumber Volume", help="Excel berarti memakai volume file Ringkasan. Online cache berarti volume Excel rendah dan diganti dengan cache yfinance yang harga terakhirnya cocok."),
+                "Online_Last_Date": st.column_config.DateColumn("Tanggal Online", help="Tanggal data online terakhir yang menjadi pembanding volume."),
+                "Return_4W": st.column_config.NumberColumn("4W", format="%.1f%%", help=HELP_TEXT["return"]),
+                "Return_13W": st.column_config.NumberColumn("13W", format="%.1f%%", help=HELP_TEXT["return"]),
+                "Return_26W": st.column_config.NumberColumn("26W", format="%.1f%%", help=HELP_TEXT["return"]),
+                "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
+                "Return_YTD": st.column_config.NumberColumn("YTD", format="%.1f%%", help=HELP_TEXT["return"]),
+                "Recommendation": st.column_config.TextColumn("Recommendation", help=HELP_TEXT["recommendation"]),
+                "Safety_Recommendation": st.column_config.TextColumn("Data Check", help="Ringkasan Clean_Data dan Score. Label Bersih berarti lolos filter data minimum, bukan jaminan aman investasi."),
+                "Risk_Level": st.column_config.TextColumn("Risk Level", help=HELP_TEXT["risk_level"]),
+                "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
+                "Safety_Notes": st.column_config.TextColumn("Catatan Data", help="Alasan saham perlu direview jika belum lolos Clean_Data."),
+            },
+        )
+
+        csv = reco_view[display_columns].to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download hasil rekomendasi CSV",
+            data=csv,
+            file_name="rekomendasi_saham_multi_factor.csv",
+            mime="text/csv",
+        )
+
+with tab_explore:
+    explorer_data = filtered if not filtered.empty else scored_df
+    explore_controls = st.columns([1, 1, 1, 1])
+    with explore_controls[0]:
+        explore_x = st.selectbox("Sumbu X", ANALYSIS_COLUMNS, index=ANALYSIS_COLUMNS.index("PER"), help=HELP_TEXT["explorer_axis"])
+    with explore_controls[1]:
+        explore_y = st.selectbox("Sumbu Y", ANALYSIS_COLUMNS, index=ANALYSIS_COLUMNS.index("ROE"), help=HELP_TEXT["explorer_axis"])
+    with explore_controls[2]:
+        explore_color = st.selectbox("Warna", ["Score", "Quality_Score", "Risk_Score", "Threshold_Pass_Ratio", "Recommendation", "Risk_Level", "Sektor"], help=HELP_TEXT["explore_color"])
+    with explore_controls[3]:
+        explore_size = st.selectbox("Ukuran bubble", ["Volume", "Turnover", "Score", "Liquidity_Score", "Index_Count"], help=HELP_TEXT["explore_size"])
+
+    explore_max = max(1, min(500, len(explorer_data)))
+    explore_min = min(50, explore_max)
+    explore_default = min(250, explore_max)
+    explore_step = 25 if explore_max >= 50 else 1
+    explore_limit = st.slider("Jumlah titik Explorer", explore_min, explore_max, explore_default, step=explore_step, help=HELP_TEXT["explore_limit"])
+    explore_plot = explorer_data.sort_values("Score", ascending=False).head(explore_limit)
+
+    left, right = st.columns(2)
+    with left:
+        fig = px.scatter(
+            explore_plot,
+            x=explore_x,
+            y=explore_y,
+            size=explore_size,
+            color=explore_color,
+            hover_name="Kode",
+            hover_data=["Nama Perusahaan", "Sektor", "PBV", "DER", "NPM", "Recommendation"],
+            title=f"{explore_x} vs {explore_y}",
+            color_continuous_scale="RdYlGn",
+        )
+        fig.update_layout(height=460)
+        st.plotly_chart(fig, width="stretch")
+
+    with right:
+        pair_x = st.selectbox("Pembanding X", ["PBV", "PER", "DER", "Threshold_Pass_Ratio", "Return_52W"], index=0)
+        pair_y = st.selectbox("Pembanding Y", ["DER", "ROE", "NPM", "Score", "Risk_Score"], index=0)
+        fig = px.scatter(
+            explore_plot,
+            x=pair_x,
+            y=pair_y,
+            color="Quality_Score",
+            size="Turnover",
+            hover_name="Kode",
+            hover_data=["Nama Perusahaan", "Sektor", "Score", "Risk_Level"],
+            title=f"{pair_x} vs {pair_y}, warna = kualitas profit",
+            color_continuous_scale="Viridis",
+        )
+        fig.update_layout(height=460)
+        st.plotly_chart(fig, width="stretch")
+
+    hist_cols = st.columns(3)
+    histogram_columns = st.multiselect(
+        "Histogram",
+        ANALYSIS_COLUMNS,
+        default=["Score", "ROE", "PER"],
+        help=HELP_TEXT["histogram"],
+    )[:3]
+    histogram_colors = ["#2563eb", "#16a34a", "#9333ea"]
+    for index, (column, container) in enumerate(zip(histogram_columns, hist_cols)):
+        with container:
+            fig = px.histogram(
+                explore_plot,
+                x=column,
+                nbins=35,
+                title=f"Distribusi {column}",
+                color_discrete_sequence=[histogram_colors[index]],
+            )
+            fig.update_layout(height=340)
+            st.plotly_chart(fig, width="stretch")
+
+with tab_history:
+    history_source = filtered if not filtered.empty else scored_df
+    history_mode = st.radio(
+        "Sumber grafik histori",
+        ["Excel Metrik 4W-52W", "Online yfinance KODE.JK"],
+        horizontal=True,
+        help=HELP_TEXT["history_source"],
+    )
+    chart_scope = st.radio(
+        "Cakupan grafik",
+        ["Saham pilihan", "All/top N hasil filter"],
+        horizontal=True,
+        help=HELP_TEXT["history_scope"],
+    )
+    top_n_history = st.slider("Jumlah saham untuk grafik all/top N", 5, 100, 25, step=5, help=HELP_TEXT["history_top_n"])
+    history_chart_type = st.segmented_control(
+        "Tipe grafik histori",
+        ["Line", "Area"],
+        default="Line",
+        help=HELP_TEXT["history_chart_type"],
+    )
+    show_history_table = st.toggle("Tampilkan tabel ringkasan histori", value=True, help=HELP_TEXT["history_table"])
+
+    if chart_scope == "All/top N hasil filter":
+        selected_codes = history_source.head(top_n_history)["Kode"].tolist()
+        st.caption(f"Mode all memakai top {len(selected_codes)} saham dari hasil filter/ranking saat ini.")
+    else:
+        default_codes = history_source.head(5)["Kode"].tolist()
+        selected_codes = st.multiselect(
+            "Pilih saham untuk grafik histori",
+            options=scored_df["Kode"].tolist(),
+            default=default_codes,
+            help=HELP_TEXT["history_codes"],
+        )
+
+    if history_mode == "Online yfinance KODE.JK":
+        period = st.selectbox(
+            "Rentang data online",
+            ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"],
+            index=4,
+            format_func=lambda value: {
+                "5d": "1 minggu",
+                "1mo": "1 bulan",
+                "3mo": "3 bulan",
+                "6mo": "6 bulan",
+                "1y": "1 tahun",
+                "2y": "2 tahun",
+                "5y": "5 tahun",
+                "10y": "10 tahun",
+                "max": "All / sepanjang masa",
+            }.get(value, value),
+            help=HELP_TEXT["history_period"],
+        )
+        online_history, online_error, online_source = fetch_yahoo_history(selected_codes, period=period)
+        if online_error:
+            st.warning(online_error)
+            st.caption("Dashboard tetap memakai data Excel untuk rekomendasi utama.")
+        elif online_history.empty:
+            st.warning("Data online kosong.")
+        else:
+            st.caption(f"Sumber histori aktif: {online_source}")
+            last_dates = online_history.groupby("Kode")["Date"].max().reset_index()
+            last_dates["Last Update Online"] = last_dates["Date"].dt.strftime("%Y-%m-%d")
+            if show_history_table:
+                st.dataframe(last_dates[["Kode", "Last Update Online"]], width="stretch", hide_index=True)
+
+            chart_func = px.area if history_chart_type == "Area" else px.line
+            fig = chart_func(online_history, x="Date", y="Close", color="Kode", title="Harga penutupan historis online", labels={"Close": "Harga penutupan", "Date": "Tanggal"})
+            fig.update_layout(height=480)
+            st.plotly_chart(fig, width="stretch")
+
+            fig = chart_func(online_history, x="Date", y="Normalized", color="Kode", title="Perbandingan performa, indeks awal = 100", labels={"Normalized": "Indeks performa", "Date": "Tanggal"})
+            fig.add_hline(y=100, line_dash="dash", line_color="#64748b")
+            fig.update_layout(height=440)
+            st.plotly_chart(fig, width="stretch")
+
+            summary = (
+                online_history.groupby("Kode")
+                .agg(
+                    Start=("Date", "min"),
+                    End=("Date", "max"),
+                    Start_Close=("Close", "first"),
+                    Last_Close=("Close", "last"),
+                    Days=("Date", "count"),
+                )
+                .reset_index()
+            )
+            summary["Return_Total_%"] = (summary["Last_Close"] / summary["Start_Close"] - 1) * 100
+            if show_history_table:
+                st.dataframe(
+                    summary.sort_values("Return_Total_%", ascending=False),
+                    width="stretch",
+                    hide_index=True,
+                    column_config={
+                        "Start": st.column_config.DateColumn("Awal"),
+                        "End": st.column_config.DateColumn("Akhir"),
+                        "Start_Close": st.column_config.NumberColumn("Harga Awal", format="%.0f"),
+                        "Last_Close": st.column_config.NumberColumn("Harga Terakhir", format="%.0f"),
+                        "Return_Total_%": st.column_config.NumberColumn("Return Total", format="%.1f%%", help=HELP_TEXT["return"]),
+                    },
+                )
+
+        st.caption("Sumber online memakai ticker IDX format KODE.JK, misalnya BBCA.JK. Jika data live gagal, dashboard mencoba fallback dan cache lokal.")
+    else:
+        history_columns = ["Return_4W", "Return_13W", "Return_26W", "Return_52W"]
+        available_history = [column for column in history_columns if column in history_source.columns]
+
+        if not available_history:
+            st.warning("Kolom histori belum tersedia di sheet Metrik.")
+        else:
+            selected_history = scored_df[scored_df["Kode"].isin(selected_codes)].copy()
+
+            if selected_history.empty:
+                st.info("Pilih minimal satu saham untuk menampilkan grafik histori.")
+            else:
+                long_history = selected_history.melt(
+                    id_vars=["Kode", "Nama Perusahaan", "Score", "Threshold_Pass_Ratio", "Return_YTD"],
+                    value_vars=available_history,
+                    var_name="Periode",
+                    value_name="Return",
+                )
+                period_order = {
+                    "Return_4W": "4 minggu",
+                    "Return_13W": "13 minggu",
+                    "Return_26W": "26 minggu",
+                    "Return_52W": "52 minggu",
+                }
+                long_history["Periode"] = long_history["Periode"].map(period_order)
+
+                chart_func = px.area if history_chart_type == "Area" else px.line
+                fig = chart_func(
+                    long_history,
+                    x="Periode",
+                    y="Return",
+                    color="Kode",
+                    hover_data=["Nama Perusahaan", "Score", "Threshold_Pass_Ratio"],
+                    title="Histori return sampai 1 tahun",
+                    category_orders={"Periode": ["4 minggu", "13 minggu", "26 minggu", "52 minggu"]},
+                )
+                fig.add_hline(y=0, line_dash="dash", line_color="#64748b")
+                fig.update_layout(height=480, yaxis_title="Return (%)", xaxis_title="")
+                st.plotly_chart(fig, width="stretch")
+
+                compare = selected_history[
+                    [
+                        "Kode",
+                        "Nama Perusahaan",
+                        "Score",
+                        "Threshold_Pass_Ratio",
+                        "Return_4W",
+                        "Return_13W",
+                        "Return_26W",
+                        "Return_52W",
+                        "Return_YTD",
+                    ]
+                ].sort_values("Return_52W", ascending=False)
+                if show_history_table:
+                    st.dataframe(
+                        compare,
+                        width="stretch",
+                        hide_index=True,
+                        column_config={
+                            "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
+                            "Threshold_Pass_Ratio": st.column_config.NumberColumn("Threshold", format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
+                            "Return_4W": st.column_config.NumberColumn("4W", format="%.1f%%", help=HELP_TEXT["return"]),
+                            "Return_13W": st.column_config.NumberColumn("13W", format="%.1f%%", help=HELP_TEXT["return"]),
+                            "Return_26W": st.column_config.NumberColumn("26W", format="%.1f%%", help=HELP_TEXT["return"]),
+                            "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
+                            "Return_YTD": st.column_config.NumberColumn("YTD", format="%.1f%%", help=HELP_TEXT["return"]),
+                        },
+                    )
+
+            top_history = history_source.dropna(subset=["Return_52W"]).head(25)
+            if not top_history.empty:
+                fig = px.scatter(
+                    top_history,
+                    x="Return_52W",
+                    y="Score",
+                    size="Volume",
+                    color="Threshold_Pass_Ratio",
+                    hover_name="Kode",
+                    hover_data=["Nama Perusahaan", "Sektor", "Return_26W", "Return_YTD"],
+                    title="Score vs return 52 minggu pada saham terfilter",
+                    color_continuous_scale="RdYlGn",
+                )
+                fig.add_vline(x=0, line_dash="dash", line_color="#64748b")
+                fig.update_layout(height=440, xaxis_title="Return 52 minggu (%)", yaxis_title="Score")
+                st.plotly_chart(fig, width="stretch")
+
+with tab_sector:
+    sector_controls = st.columns([1, 1, 1, 1])
+    with sector_controls[0]:
+        sector_group = st.selectbox("Kelompok", ["Sektor", "Industry"], help=HELP_TEXT["sector_group"])
+    with sector_controls[1]:
+        sector_min_count = st.slider("Minimum saham per kelompok", 1, 25, 3, help=HELP_TEXT["sector_min"])
+    with sector_controls[2]:
+        sector_sort = st.selectbox("Urutkan sektor", ["Median_Score", "Strong_Buy", "Total_Turnover", "Avg_ROE", "Saham"], help=HELP_TEXT["sector_sort"])
+    with sector_controls[3]:
+        sector_chart = st.selectbox("Visual utama", ["Bar", "Treemap", "Scatter"], help=HELP_TEXT["sector_chart"])
+
+    sector_summary = (
+        scored_df.groupby(sector_group, dropna=False)
+        .agg(
+            Saham=("Kode", "count"),
+            Median_Score=("Score", "median"),
+            Avg_ROE=("ROE", "mean"),
+            Median_PER=("PER", "median"),
+            Median_PBV=("PBV", "median"),
+            Total_Turnover=("Turnover", "sum"),
+            Strong_Buy=("Recommendation", lambda x: (x == "Strong Buy").sum()),
+        )
+        .reset_index()
+    )
+    sector_summary_all = sector_summary.sort_values(sector_sort, ascending=False)
+    sector_summary = sector_summary_all[sector_summary_all["Saham"] >= sector_min_count]
+    if sector_summary.empty:
+        st.warning("Tidak ada kelompok yang memenuhi minimum saham. Menampilkan semua kelompok sementara.")
+        sector_summary = sector_summary_all
+
+    left, right = st.columns([1.1, 1])
+    with left:
+        if sector_chart == "Scatter":
+            fig = px.scatter(
+                sector_summary,
+                x="Total_Turnover",
+                y="Median_Score",
+                size="Saham",
+                color="Strong_Buy",
+                hover_name=sector_group,
+                title=f"{sector_group}: turnover vs median score",
+                color_continuous_scale="Greens",
+            )
+        elif sector_chart == "Treemap":
+            fig = px.treemap(
+                sector_summary,
+                path=[sector_group],
+                values="Total_Turnover",
+                color="Median_Score",
+                title=f"Peta turnover dan score {sector_group.lower()}",
+                color_continuous_scale="RdYlGn",
+            )
+        else:
+            fig = px.bar(
+                sector_summary,
+                x=sector_sort,
+                y=sector_group,
+                orientation="h",
+                color="Strong_Buy",
+                title=f"Ranking {sector_group.lower()} berdasarkan {sector_sort}",
+                color_continuous_scale="Greens",
+            )
+            fig.update_layout(yaxis={"categoryorder": "total ascending"})
+        fig.update_layout(height=520)
+        st.plotly_chart(fig, width="stretch")
+
+    with right:
+        fig = px.treemap(
+            sector_summary,
+            path=[sector_group],
+            values="Total_Turnover",
+            color="Median_Score",
+            title=f"Peta turnover dan score {sector_group.lower()}",
+            color_continuous_scale="RdYlGn",
+        )
+        fig.update_layout(height=520)
+        st.plotly_chart(fig, width="stretch")
+
+    st.dataframe(
+        sector_summary,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Median_Score": st.column_config.NumberColumn("Median Score", format="%.1f"),
+            "Avg_ROE": st.column_config.NumberColumn("Avg ROE", format="%.1f%%"),
+            "Median_PER": st.column_config.NumberColumn("Median PER", format="%.1f"),
+            "Median_PBV": st.column_config.NumberColumn("Median PBV", format="%.1f"),
+            "Total_Turnover": st.column_config.NumberColumn("Total Turnover", format="Rp %.0f"),
+        },
+    )
+
+with tab_quality:
+    st.subheader("Data Quality & Workflow Update")
+    quality_report = build_data_quality_report(scored_df, raw_df)
+    review_count = int(quality_report["Rows"].gt(0).sum())
+    high_count = int(((quality_report["Rows"] > 0) & quality_report["Severity"].eq("High")).sum())
+    quality_cols = st.columns(4)
+    quality_cols[0].metric("Status check", f"{len(quality_report) - review_count}/{len(quality_report)} OK")
+    quality_cols[1].metric("Perlu review", f"{review_count}")
+    quality_cols[2].metric("High severity", f"{high_count}")
+    quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
+
+    with st.expander("Audit Kode Saham: alasan lolos/gagal filter", expanded=True):
+        audit_scope = st.radio(
+            "Cakupan audit",
+            ["Semua saham", "Hasil filter aktif", "Kode pilihan"],
+            horizontal=True,
+            help=HELP_TEXT["audit_scope"],
+        )
+        if audit_scope == "Semua saham":
+            audit_codes = scored_df["Kode"].tolist()
+            st.caption(f"Mengaudit seluruh universe: {len(audit_codes):,} saham x {len(preset_filter_criteria)} skenario filter.")
+        elif audit_scope == "Hasil filter aktif":
+            audit_codes = filtered["Kode"].tolist()
+            st.caption(f"Mengaudit saham yang lolos filter sidebar saat ini: {len(audit_codes):,} saham.")
+        else:
+            default_audit_codes = [code for code in ["BBCA", "BBRI", "BMRI", "BBNI"] if code in scored_df["Kode"].values]
+            audit_codes = st.multiselect(
+                "Pilih kode untuk diaudit",
+                options=scored_df["Kode"].tolist(),
+                default=default_audit_codes,
+                help=HELP_TEXT["audit_code"],
+            )
+        if audit_codes:
+            audit_summary, audit_detail = build_filter_audit(scored_df, audit_codes, preset_filter_criteria)
+            audit_metric_cols = st.columns(4)
+            audit_metric_cols[0].metric("Kode diaudit", f"{len(audit_codes):,}")
+            audit_metric_cols[1].metric("Baris audit", f"{len(audit_summary):,}")
+            audit_metric_cols[2].metric("Lolos", f"{audit_summary['Status'].eq('Lolos').sum():,}")
+            audit_metric_cols[3].metric("Gagal", f"{audit_summary['Status'].eq('Gagal').sum():,}")
+
+            audit_filter_cols = st.columns([1, 1, 2])
+            with audit_filter_cols[0]:
+                audit_filter_view = st.selectbox(
+                    "Tampilkan skenario",
+                    ["Semua"] + [criteria["name"] for criteria in preset_filter_criteria],
+                    help="Batasi ringkasan audit ke satu skenario filter.",
+                )
+            with audit_filter_cols[1]:
+                audit_status_view = st.selectbox(
+                    "Tampilkan status",
+                    ["Semua", "Lolos", "Gagal"],
+                    help="Batasi ringkasan audit berdasarkan status lolos/gagal.",
+                )
+            with audit_filter_cols[2]:
+                audit_search = st.text_input(
+                    "Cari kode/nama/alasan",
+                    value="",
+                    help="Cari kode, nama perusahaan, atau alasan gagal pada ringkasan audit.",
+                ).strip().upper()
+
+            audit_view = audit_summary.copy()
+            if audit_filter_view != "Semua":
+                audit_view = audit_view[audit_view["Filter"].eq(audit_filter_view)]
+            if audit_status_view != "Semua":
+                audit_view = audit_view[audit_view["Status"].eq(audit_status_view)]
+            if audit_search:
+                search_text = (
+                    audit_view["Kode"].astype(str)
+                    + " "
+                    + audit_view["Nama Perusahaan"].astype(str)
+                    + " "
+                    + audit_view["Alasan Utama"].astype(str)
+                ).str.upper()
+                audit_view = audit_view[search_text.str.contains(audit_search, na=False)]
+
+            st.dataframe(
+                audit_view,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
+                    "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
+                    "Volume_Source": st.column_config.TextColumn("Sumber Volume"),
+                },
+            )
+            if audit_view.empty:
+                st.info("Tidak ada baris audit yang cocok dengan filter tampilan.")
+            detail_cols = st.columns([1, 1])
+            with detail_cols[0]:
+                detail_options = audit_view["Kode"].drop_duplicates().tolist() if not audit_view.empty else audit_codes
+                detail_code = st.selectbox("Detail kode", detail_options, help="Pilih kode untuk melihat checklist filter satu per satu.")
+            with detail_cols[1]:
+                detail_filter = st.selectbox(
+                    "Detail filter",
+                    [criteria["name"] for criteria in preset_filter_criteria],
+                    help="Pilih skenario filter yang ingin dibedah.",
+                )
+            selected_detail = audit_detail[
+                audit_detail["Kode"].eq(detail_code) & audit_detail["Filter"].eq(detail_filter)
+            ]
+            st.dataframe(
+                selected_detail,
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "Status": st.column_config.TextColumn("Status"),
+                    "Actual": st.column_config.TextColumn("Nilai Saat Ini"),
+                    "Required": st.column_config.TextColumn("Kriteria"),
+                },
+            )
+        else:
+            st.info("Pilih minimal satu kode saham untuk audit.")
+
+    st.dataframe(
+        quality_report,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Rows": st.column_config.NumberColumn("Rows", format="%d"),
+        },
+    )
+
+    issue_options = quality_report.loc[quality_report["Rows"].gt(0), "Check"].tolist()
+    if issue_options:
+        selected_issue = st.selectbox("Lihat detail masalah", issue_options, help=HELP_TEXT["quality_issue"])
+        detail = get_quality_detail(scored_df, selected_issue)
+        st.dataframe(
+            detail.head(200),
+            width="stretch",
+            hide_index=True,
+            column_config={
+                "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
+                "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
+                "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
+                "PER": st.column_config.NumberColumn("PER", format="%.2f", help=HELP_TEXT["per"]),
+                "PBV": st.column_config.NumberColumn("PBV", format="%.2f", help=HELP_TEXT["pbv"]),
+                "ROE": st.column_config.NumberColumn("ROE", format="%.1f%%", help=HELP_TEXT["roe"]),
+                "ROA": st.column_config.NumberColumn("ROA", format="%.1f%%", help=HELP_TEXT["quality"]),
+                "NPM": st.column_config.NumberColumn("NPM", format="%.1f%%", help=HELP_TEXT["npm"]),
+                "Threshold_Pass_Ratio": st.column_config.NumberColumn("Threshold", format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
+                "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
+            },
+        )
+    else:
+        st.success("Tidak ada issue data quality pada check utama.")
+
+    status_left, status_right = st.columns([1, 1])
+    with status_left:
+        st.write("Status file utama")
+        st.dataframe(pd.DataFrame([get_file_status(DATA_FILE)]), width="stretch", hide_index=True)
+    with status_right:
+        st.write("Status cache histori")
+        cache_status = get_history_cache_status()
+        if cache_status.empty:
+            st.info("Belum ada cache histori online.")
+        else:
+            st.dataframe(cache_status.sort_values("Modified", ascending=False).head(50), width="stretch", hide_index=True)
+
+    with st.expander("Workflow rutin yang disarankan", expanded=True):
+        st.markdown(
+            """
+            1. Update file `Ringkasan.xlsx` dari sumber utama.
+            2. Buka dashboard dan cek tab `Data Quality`.
+            3. Jika data harga/volume/rasio banyak bermasalah, perbaiki sumber sebelum memakai rekomendasi.
+            4. Jalankan `Refresh cache histori top saham` di sidebar untuk memperbarui grafik online.
+            5. Cek Top Rekomendasi, terutama saham dengan score tinggi tetapi volume rendah, PER negatif, atau threshold rendah.
+            6. Simpan/export hasil rekomendasi hanya setelah check High severity terkendali.
+            """
+        )
+
+with tab_method:
+    st.subheader("Formula scoring multi-factor")
+    st.markdown(
+        """
+        Score akhir memakai normalisasi percentile yang dipotong di persentil 3 dan 97 agar outlier ekstrem tidak mendominasi.
+
+        Faktor yang dihitung:
+        - Valuasi: PER rendah dan PBV rendah, hanya untuk nilai positif yang masuk akal.
+        - Kualitas profit: ROE, ROA, dan NPM positif.
+        - Risiko: non-bank memakai DER rendah dan intraday range rendah; Banking memakai CAR, NPL, BOPO, dan LDR bila tersedia.
+        - Likuiditas: volume dan turnover harga x volume.
+        - Momentum: kombinasi histori 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem.
+        - Kekuatan indeks: jumlah indeks tempat saham tersebut masuk.
+        - Threshold sheet: rasio dibandingkan dengan batas dari sheet NonBank atau Banking.
+
+        Penalti diterapkan untuk PER/PBV negatif, profitabilitas negatif, NPM negatif, volume rendah, harga nol, pergerakan harian ekstrem, dan kelulusan threshold yang terlalu rendah.
+        """
+    )
+
+    st.info(f"Profil scoring aktif: {profile}. Preset filter aktif: {filter_preset}. Profil scoring mengubah bobot, preset filter mengubah batas penyaringan.")
+
+    method_cols = st.columns(5)
+    method_cols[0].metric("Baris sumber", f"{len(raw_df):,}")
+    method_cols[1].metric("Saham unik setelah deduplikasi", f"{len(df):,}")
+    method_cols[2].metric("Duplikasi indeks dibersihkan", f"{len(raw_df) - len(df):,}")
+    method_cols[3].metric("Histori 52W tersedia", f"{df['Return_52W'].notna().sum():,}")
+    method_cols[4].metric("Update data", data_update_label)
+
+    st.write("Bobot aktif:")
+    weight_df = pd.DataFrame(
+        [{"Faktor": key.replace("_", " ").title(), "Bobot": value} for key, value in weights.items()]
+    )
+    st.dataframe(weight_df, width="stretch", hide_index=True)
+
+    method_view_cols = st.columns([1, 1])
+    with method_view_cols[0]:
+        factor_to_inspect = st.selectbox(
+            "Inspeksi faktor",
+            ["Score", "Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Index_Score", "Penalty"],
+            help=HELP_TEXT["factor_inspect"],
+        )
+    with method_view_cols[1]:
+        factor_top_n = st.slider("Jumlah contoh faktor", 5, 50, 15, step=5, help=HELP_TEXT["factor_top_n"])
+
+    factor_examples = scored_df.sort_values(factor_to_inspect, ascending=False).head(factor_top_n)
+    fig = px.histogram(scored_df, x=factor_to_inspect, nbins=40, title=f"Distribusi {factor_to_inspect}", color_discrete_sequence=["#2563eb"])
+    fig.update_layout(height=320)
+    st.plotly_chart(fig, width="stretch")
+    factor_example_columns = list(
+        dict.fromkeys(
+            ["Kode", "Nama Perusahaan", "Recommendation", "Risk_Level", factor_to_inspect, "Score", "Threshold_Pass_Ratio", "Sektor"]
+        )
+    )
+    st.dataframe(
+        factor_examples[factor_example_columns],
+        width="stretch",
+        hide_index=True,
+    )
+
+    threshold_info = pd.DataFrame(
+        [
+            {"Mode": "NonBank", "Metric": metric, "Rule": f"{operator} {threshold:g}"}
+            for metric, (operator, threshold) in NONBANK_THRESHOLDS.items()
+        ]
+        + [
+            {"Mode": "Banking", "Metric": metric, "Rule": f"{operator} {threshold:g}"}
+            for metric, (operator, threshold) in BANKING_THRESHOLDS.items()
+        ]
+    )
+    threshold_mode_view = st.segmented_control("Tampilkan threshold", ["Semua", "NonBank", "Banking"], default="Semua")
+    if threshold_mode_view != "Semua":
+        threshold_info = threshold_info[threshold_info["Mode"] == threshold_mode_view]
+    st.write("Threshold aktif dari sheet:")
+    st.dataframe(threshold_info, width="stretch", hide_index=True)
+
+    penalty_info = pd.DataFrame(
+        [
+            {"Penalti": "PER atau PBV negatif/tidak sehat", "Dampak": "-10"},
+            {"Penalti": "ROE atau ROA negatif", "Dampak": "-9"},
+            {"Penalti": "NPM negatif", "Dampak": "-6"},
+            {"Penalti": "Volume di bawah 1 juta", "Dampak": "-6"},
+            {"Penalti": "Harga penutupan nol/tidak valid", "Dampak": "-25"},
+            {"Penalti": "Perubahan harian ekstrem", "Dampak": "-6"},
+            {"Penalti": "Threshold lolos di bawah 40 persen", "Dampak": "-5"},
+        ]
+    )
+    with st.expander("Daftar penalti scoring"):
+        st.dataframe(penalty_info, width="stretch", hide_index=True)
+
+    with st.expander("Catatan risiko"):
+        st.markdown(
+            """
+            Dashboard ini adalah alat screening kuantitatif awal. Hasil terbaik tetap perlu dicek manual:
+            laporan keuangan terbaru, aksi korporasi, kualitas manajemen, valuasi historis, berita material,
+            dan rencana alokasi portofolio. Satu hari data harga juga tidak cukup untuk menyimpulkan tren jangka panjang.
+            """
+        )
+
+st.caption("Built with Streamlit + Plotly. Gunakan sebagai screener, bukan pengganti keputusan investasi.")
