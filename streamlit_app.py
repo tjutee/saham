@@ -5,12 +5,23 @@ import plotly.graph_objects as go
 import streamlit as st
 import os
 import re
+import json
 from pathlib import Path
+from io import StringIO
+from urllib.request import Request, urlopen
 
 
 DATA_FILE = "Ringkasan.xlsx"
 HISTORY_CACHE_DIR = Path("history_cache")
 BLOCKING_PROXY_VALUES = {"http://127.0.0.1:9", "https://127.0.0.1:9", "127.0.0.1:9"}
+IDX_COMPANY_PROFILE_URLS = [
+    "https://www.idx.co.id/primary/ListedCompany/GetCompanyProfiles?emitenType=s",
+    "https://www.idx.co.id/umbraco/Surface/ListedCompany/GetCompanyProfiles?emitenType=s",
+]
+TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/indonesia/scan"
+STOCKANALYSIS_IDX_URL = "https://stockanalysis.com/list/indonesia-stock-exchange/"
+ONLINE_LOAD_PERIOD = "1y"
+ONLINE_REFRESH_TTL = 6 * 60 * 60
 
 NUMERIC_COLUMNS = [
     "Penutupan",
@@ -52,6 +63,13 @@ HISTORY_COLUMNS = {
     "52-wk %Pr. Chg.": "Return_52W",
     "MTD": "Return_MTD",
     "YTD": "Return_YTD",
+}
+
+ONLINE_RETURN_WINDOWS = {
+    "Return_4W": 20,
+    "Return_13W": 65,
+    "Return_26W": 130,
+    "Return_52W": 260,
 }
 
 NONBANK_THRESHOLDS = {
@@ -116,10 +134,10 @@ HELP_TEXT = {
     "liquidity": "Liquidity_Score dihitung dari volume dan turnover. Skor tinggi berarti saham lebih aktif diperdagangkan, tetapi tetap tidak menjamin order besar bisa dieksekusi tanpa slippage.",
     "momentum": "Momentum_Score memakai %Change dan return historis 4W, 13W, 26W, 52W, serta YTD bila tersedia. Ini membaca tren historis, bukan prediksi harga.",
     "index_strength": "Index_Score memakai jumlah kemunculan saham pada indeks/sumber data. Ini sinyal visibilitas dan coverage data, bukan jaminan kualitas perusahaan.",
-    "sector": "Menyaring berdasarkan sektor bisnis dari file Ringkasan. Tidak mengubah rumus score, hanya membatasi saham yang dianalisis.",
+    "sector": "Menyaring berdasarkan sektor bisnis dari sumber online atau Excel fallback. Tidak mengubah rumus score, hanya membatasi saham yang dianalisis.",
     "industry": "Menyaring berdasarkan industri yang lebih spesifik di dalam sektor. Tidak mengubah score dasar.",
-    "price": "Penutupan adalah harga terakhir dari file Ringkasan. Filter ini membatasi rentang harga nominal, bukan valuasi murah/mahal.",
-    "volume": "Volume adalah jumlah saham yang diperdagangkan pada data Ringkasan. Volume minimum membantu membuang saham sangat tidak likuid.",
+    "price": "Penutupan diprioritaskan dari yfinance online, lalu diisi Excel bila online kosong. Filter ini membatasi rentang harga nominal, bukan valuasi murah/mahal.",
+    "volume": "Volume diprioritaskan dari yfinance online, lalu diisi Excel bila online kosong. Volume minimum membantu membuang saham sangat tidak likuid.",
     "per": "PER = harga saham / laba per saham. PER rendah sering terlihat murah jika laba positif; PER nol, negatif, atau ekstrem diberi penalti/dianggap tidak sehat.",
     "pbv": "PBV = harga saham / nilai buku per saham. PBV rendah berarti harga lebih dekat ke nilai buku, tetapi perlu dibaca bersama ROE, kualitas aset, dan sektor.",
     "roe": "ROE = laba bersih / ekuitas. Semakin tinggi semakin efisien modal pemegang saham menghasilkan laba, selama tidak didorong leverage berlebihan.",
@@ -130,14 +148,14 @@ HELP_TEXT = {
     "threshold_ratio": "Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable x 100. Rasio yang kolomnya ada tetapi nilainya kosong/tidak memenuhi batas dihitung tidak lolos.",
     "core_thresholds": "Jika aktif, saham wajib memenuhi inti konservatif: PER <= 15, PBV <= 3, ROE >= 12%, dan NPM >= 7%. Ini tambahan di luar slider umum.",
     "der_banking": "Jika aktif, filter DER maksimum juga diterapkan ke saham Banking. Default mati karena struktur neraca bank berbeda dari non-bank.",
-    "history_source": "Excel Metrik memakai return 4W, 13W, 26W, 52W dari file Ringkasan. Online memakai yfinance ticker KODE.JK, dengan fallback/cache lokal bila sumber online gagal.",
+    "history_source": "Online yfinance memakai ticker KODE.JK sebagai sumber histori utama. Excel Metrik tetap tersedia sebagai cadangan/pembanding bila data online kosong.",
     "history_scope": "Saham pilihan memakai kode yang dipilih manual. All/top N memakai saham teratas dari hasil filter saat ini, biasanya berdasarkan ranking Score setelah filter.",
     "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
     "history_codes": "Masukkan kode IDX tanpa akhiran .JK, misalnya BBCA atau BBRI. Dashboard otomatis memanggil format online BBCA.JK.",
     "history_period": "Rentang data online: 1 minggu = sekitar 5 hari bursa terakhir, 1/3/6 bulan, 1/2/5/10 tahun, atau All sepanjang data tersedia dari sumber.",
     "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
     "risk_level": "Risk_Level adalah kategori risiko relatif dari model berdasarkan rasio, volatilitas, likuiditas, dan penalti. Tetap perlu validasi berita dan laporan keuangan.",
-    "turnover": "Turnover = Penutupan x Volume. Ini estimasi nilai transaksi kasar dari data Ringkasan.",
+    "turnover": "Turnover = Penutupan x Volume. Ini estimasi nilai transaksi kasar dari data online atau Excel fallback.",
     "return": "Return = harga akhir / harga awal - 1. Nilai ditampilkan dalam persen dan hanya menjelaskan performa periode historis.",
     "reco_sort": "Metrik untuk mengurutkan grafik dan tabel rekomendasi. Mengubah urutan tampilan saja, bukan rumus Score.",
     "reco_limit": "Jumlah saham yang ditampilkan setelah seluruh filter sidebar, label rekomendasi, dan sort diterapkan.",
@@ -274,6 +292,11 @@ def get_file_status(path):
 
 
 def get_data_update_label(raw, file_status):
+    source = raw.attrs.get("data_source") if hasattr(raw, "attrs") else None
+    online_update = raw.attrs.get("online_update") if hasattr(raw, "attrs") else None
+    if online_update:
+        return f"{source or 'online'}, {online_update}"
+
     last_update_column = next((column for column in raw.columns if str(column).lower().startswith("last update")), None)
     if last_update_column:
         label = str(last_update_column).replace("Last Update:", "", 1).strip()
@@ -288,6 +311,163 @@ def get_data_update_label(raw, file_status):
             return label
     modified = file_status.get("Last Modified", "-")
     return f"file modified {modified}" if modified != "-" else "belum tersedia"
+
+
+def clean_stock_code(value):
+    code = str(value).strip().upper()
+    code = re.sub(r"\.JK$", "", code)
+    code = re.sub(r"[^A-Z0-9-]", "", code)
+    if code in {"", "-", "NAN", "NONE", "NULL"}:
+        return ""
+    return code
+
+
+def first_existing_column(dataframe, candidates):
+    normalized_lookup = {str(column).strip().lower(): column for column in dataframe.columns}
+    for candidate in candidates:
+        found = normalized_lookup.get(candidate.strip().lower())
+        if found is not None:
+            return found
+    return None
+
+
+def normalize_universe_frame(dataframe, source):
+    if dataframe is None or dataframe.empty:
+        return pd.DataFrame(columns=["Kode", "Nama Perusahaan", "Sektor", "Industry", "Universe_Source"])
+
+    code_column = first_existing_column(
+        dataframe,
+        ["Kode", "Code", "Stock Code", "StockCode", "Ticker", "Symbol", "EmitenCode"],
+    )
+    if code_column is None:
+        return pd.DataFrame(columns=["Kode", "Nama Perusahaan", "Sektor", "Industry", "Universe_Source"])
+
+    name_column = first_existing_column(
+        dataframe,
+        ["Nama Perusahaan", "Company Name", "Name", "Company", "EmitenName", "SecurityName"],
+    )
+    sector_column = first_existing_column(dataframe, ["Sektor", "Sector"])
+    industry_column = first_existing_column(dataframe, ["Industry", "Subsector", "Sub Sector", "SubSektor"])
+
+    universe = pd.DataFrame()
+    universe["Kode"] = dataframe[code_column].map(clean_stock_code)
+    universe["Nama Perusahaan"] = dataframe[name_column].map(clean_text) if name_column else "-"
+    universe["Sektor"] = dataframe[sector_column].map(lambda value: clean_text(value, "No Sector")) if sector_column else "No Sector"
+    universe["Industry"] = dataframe[industry_column].map(lambda value: clean_text(value, "No Industry")) if industry_column else "No Industry"
+    universe["Universe_Source"] = source
+    universe = universe[universe["Kode"].ne("")]
+    universe = universe.drop_duplicates("Kode")
+    return universe
+
+
+def read_url_text(url):
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+        },
+    )
+    removed_proxy = remove_blocking_proxy_env()
+    try:
+        with urlopen(request, timeout=25) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            return response.read().decode(charset, errors="replace")
+    finally:
+        restore_proxy_env(removed_proxy)
+
+
+def post_json(url, payload):
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json,text/plain,*/*",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    removed_proxy = remove_blocking_proxy_env()
+    try:
+        with urlopen(request, timeout=25) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            return json.loads(response.read().decode(charset, errors="replace"))
+    finally:
+        restore_proxy_env(removed_proxy)
+
+
+def load_tradingview_universe():
+    payload = {
+        "columns": ["name", "description", "sector", "industry"],
+        "filter": [{"left": "exchange", "operation": "equal", "right": "IDX"}],
+        "options": {"lang": "en"},
+        "range": [0, 1200],
+        "sort": {"sortBy": "name", "sortOrder": "asc"},
+        "markets": ["indonesia"],
+        "symbols": {"query": {"types": []}, "tickers": []},
+    }
+    response = post_json(TRADINGVIEW_SCAN_URL, payload)
+    rows = []
+    for item in response.get("data", []):
+        values = item.get("d", [])
+        rows.append(
+            {
+                "Kode": values[0] if len(values) > 0 else item.get("s", "").split(":")[-1],
+                "Nama Perusahaan": values[1] if len(values) > 1 else "-",
+                "Sektor": values[2] if len(values) > 2 else "No Sector",
+                "Industry": values[3] if len(values) > 3 else "No Industry",
+            }
+        )
+    return normalize_universe_frame(pd.DataFrame(rows), "TradingView online")
+
+
+@st.cache_data(ttl=ONLINE_REFRESH_TTL, show_spinner=False)
+def load_idx_universe_online():
+    errors = []
+
+    try:
+        universe = load_tradingview_universe()
+        if not universe.empty:
+            universe.attrs["universe_error"] = None
+            return universe
+    except Exception as exc:
+        errors.append(f"TradingView: {exc}")
+
+    for url in IDX_COMPANY_PROFILE_URLS:
+        try:
+            payload = pd.read_json(StringIO(read_url_text(url)))
+            if isinstance(payload, pd.DataFrame) and not payload.empty:
+                if "data" in payload.columns and payload["data"].apply(lambda value: isinstance(value, dict)).any():
+                    payload = pd.DataFrame(payload["data"].dropna().tolist())
+                universe = normalize_universe_frame(payload, "IDX online")
+                if not universe.empty:
+                    universe.attrs["universe_error"] = None
+                    return universe
+        except Exception as exc:
+            errors.append(f"IDX: {exc}")
+
+    try:
+        tables = pd.read_html(StringIO(read_url_text(STOCKANALYSIS_IDX_URL)))
+        for table in tables:
+            universe = normalize_universe_frame(table, "StockAnalysis online")
+            if not universe.empty:
+                universe.attrs["universe_error"] = "; ".join(errors) if errors else None
+                return universe
+    except Exception as exc:
+        errors.append(f"StockAnalysis: {exc}")
+
+    fallback = pd.DataFrame(columns=["Kode", "Nama Perusahaan", "Sektor", "Industry", "Universe_Source"])
+    fallback.attrs["universe_error"] = "; ".join(errors) if errors else "Sumber universe online kosong."
+    return fallback
+
+
+def ensure_expected_columns(dataframe, columns):
+    output = dataframe.copy()
+    for column in columns:
+        if column not in output.columns:
+            output[column] = np.nan
+    return output
 
 
 def get_history_cache_status():
@@ -754,9 +934,10 @@ def write_history_cache(history, period):
     if history.empty:
         return
     HISTORY_CACHE_DIR.mkdir(exist_ok=True)
+    cache_columns = [column for column in ["Date", "Kode", "Open", "High", "Low", "Close", "Volume_Online"] if column in history.columns]
     for code, group in history.groupby("Kode"):
         cache_file = cache_file_for_history(code, period)
-        group[["Date", "Kode", "Close", "Volume_Online"]].to_csv(cache_file, index=False)
+        group[cache_columns].to_csv(cache_file, index=False)
 
 
 def yahoo_period_to_dates(period):
@@ -853,6 +1034,9 @@ def fetch_yahoo_history(codes, period="max"):
                     {
                         "Date": row.get("Date"),
                         "Kode": code,
+                        "Open": row.get("Open", np.nan),
+                        "High": row.get("High", np.nan),
+                        "Low": row.get("Low", np.nan),
                         "Close": close,
                         "Volume_Online": row.get("Volume", np.nan),
                     }
@@ -866,11 +1050,14 @@ def fetch_yahoo_history(codes, period="max"):
                 continue
             records.append(
                 {
-                    "Date": row.get("Date"),
-                    "Kode": code,
-                    "Close": close,
-                    "Volume_Online": row.get("Volume", np.nan),
-                }
+                "Date": row.get("Date"),
+                "Kode": code,
+                "Open": row.get("Open", np.nan),
+                "High": row.get("High", np.nan),
+                "Low": row.get("Low", np.nan),
+                "Close": close,
+                "Volume_Online": row.get("Volume", np.nan),
+            }
             )
 
     history = pd.DataFrame(records)
@@ -913,6 +1100,9 @@ def fetch_history_pandas_datareader(codes, period="max"):
                 {
                     "Date": data["Date"],
                     "Kode": code,
+                    "Open": data["Open"] if "Open" in data.columns else np.nan,
+                    "High": data["High"] if "High" in data.columns else np.nan,
+                    "Low": data["Low"] if "Low" in data.columns else np.nan,
                     "Close": data["Close"],
                     "Volume_Online": data["Volume"] if "Volume" in data.columns else np.nan,
                 }
@@ -932,6 +1122,9 @@ def normalize_history_frame(history):
     history = history.copy()
     history["Date"] = pd.to_datetime(history["Date"], errors="coerce")
     history["Close"] = pd.to_numeric(history["Close"], errors="coerce")
+    for column in ["Open", "High", "Low"]:
+        if column in history.columns:
+            history[column] = pd.to_numeric(history[column], errors="coerce")
     if "Volume_Online" in history.columns:
         history["Volume_Online"] = pd.to_numeric(history["Volume_Online"], errors="coerce")
     history["Kode"] = history["Kode"].astype(str).str.strip().str.upper()
@@ -940,6 +1133,81 @@ def normalize_history_frame(history):
         lambda series: series / series.iloc[0] * 100 if len(series) else series
     )
     return history
+
+
+def calculate_window_return(group, days):
+    if group.empty:
+        return np.nan
+    group = group.sort_values("Date")
+    latest = group.iloc[-1]
+    target_date = latest["Date"] - pd.Timedelta(days=int(days * 1.45))
+    candidates = group[group["Date"].le(target_date)]
+    start_row = candidates.iloc[-1] if not candidates.empty else group.iloc[0]
+    start_close = start_row.get("Close")
+    latest_close = latest.get("Close")
+    if pd.isna(start_close) or pd.isna(latest_close) or start_close <= 0:
+        return np.nan
+    return (latest_close / start_close - 1) * 100
+
+
+def calculate_ytd_return(group):
+    if group.empty:
+        return np.nan
+    group = group.sort_values("Date")
+    latest = group.iloc[-1]
+    year_start = pd.Timestamp(year=latest["Date"].year, month=1, day=1)
+    candidates = group[group["Date"].ge(year_start)]
+    start_row = candidates.iloc[0] if not candidates.empty else group.iloc[0]
+    start_close = start_row.get("Close")
+    latest_close = latest.get("Close")
+    if pd.isna(start_close) or pd.isna(latest_close) or start_close <= 0:
+        return np.nan
+    return (latest_close / start_close - 1) * 100
+
+
+def build_online_market_frame(codes, period=ONLINE_LOAD_PERIOD):
+    history, error, source = fetch_yahoo_history(codes, period=period)
+    if history.empty:
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["market_source"] = source
+        output.attrs["market_error"] = error
+        return output
+
+    history = normalize_history_frame(history)
+    rows = []
+    for code, group in history.groupby("Kode"):
+        group = group.sort_values("Date")
+        latest = group.iloc[-1]
+        previous = group.iloc[-2] if len(group) > 1 else latest
+        close = latest.get("Close")
+        previous_close = previous.get("Close")
+        daily_change = np.nan
+        if pd.notna(close) and pd.notna(previous_close) and previous_close > 0:
+            daily_change = (close / previous_close - 1) * 100
+        row = {
+            "Kode": code,
+            "Penutupan": close,
+            "Sebelumnya": previous_close,
+            "%Change": daily_change,
+            "Open": latest.get("Open", np.nan),
+            "High": latest.get("High", np.nan),
+            "Low": latest.get("Low", np.nan),
+            "Volume": latest.get("Volume_Online", np.nan),
+            "Online_Last_Date": latest.get("Date"),
+            "Close_Online": close,
+            "Volume_Online_Latest": latest.get("Volume_Online", np.nan),
+            "Price_Source": source,
+            "Volume_Source": source,
+        }
+        for column, days in ONLINE_RETURN_WINDOWS.items():
+            row[column] = calculate_window_return(group, days)
+        row["Return_YTD"] = calculate_ytd_return(group)
+        rows.append(row)
+
+    output = pd.DataFrame(rows)
+    output.attrs["market_source"] = source
+    output.attrs["market_error"] = error
+    return output
 
 
 def score_percentile(series, higher_is_better=True, valid_mask=None):
@@ -974,7 +1242,10 @@ def score_target_range(series, low, high, center=None):
 
 
 def read_sheet(sheet_name):
-    df_sheet = pd.read_excel(DATA_FILE, sheet_name=sheet_name)
+    try:
+        df_sheet = pd.read_excel(DATA_FILE, sheet_name=sheet_name)
+    except Exception:
+        return pd.DataFrame()
     df_sheet.columns = df_sheet.columns.str.strip()
     return df_sheet
 
@@ -992,6 +1263,8 @@ def normalize_ratio_columns(df_sheet):
 
 def aggregate_threshold_sheet(sheet_name):
     threshold_raw = normalize_ratio_columns(read_sheet(sheet_name))
+    if threshold_raw.empty or "Kode" not in threshold_raw.columns:
+        return pd.DataFrame(columns=["Kode"])
     for column in NUMERIC_COLUMNS:
         if column in threshold_raw.columns:
             threshold_raw[column] = pd.to_numeric(threshold_raw[column], errors="coerce")
@@ -1014,6 +1287,8 @@ def aggregate_threshold_sheet(sheet_name):
 
 def load_history_metrics():
     history = read_sheet("Metrik")
+    if history.empty or "Kode Saham" not in history.columns:
+        return pd.DataFrame(columns=["Kode"])
     history["Kode"] = history["Kode Saham"].astype(str).str.strip().str.upper()
     keep_columns = ["Kode", "Mkt Cap", "Total Rev", "Industri", "Subindustri"] + list(HISTORY_COLUMNS)
     keep_columns = [column for column in keep_columns if column in history.columns]
@@ -1022,6 +1297,61 @@ def load_history_metrics():
         if column in history.columns:
             history[column] = pd.to_numeric(history[column], errors="coerce")
     return history.drop_duplicates("Kode")
+
+
+def build_excel_fallback_summary():
+    raw = read_sheet("Ringkasan")
+    if raw.empty or "Kode" not in raw.columns:
+        return pd.DataFrame(columns=["Kode"]), raw
+
+    index_count_column = next((column for column in raw.columns if "7" in column and "Index" not in column), None)
+    raw["Index_Count_Raw"] = raw[index_count_column] if index_count_column else np.nan
+
+    for column in NUMERIC_COLUMNS:
+        if column in raw.columns:
+            raw[column] = pd.to_numeric(raw[column], errors="coerce")
+
+    raw["Kode"] = raw["Kode"].astype(str).str.strip().str.upper()
+    raw = raw[raw["Kode"].notna() & (raw["Kode"] != "") & (raw["Kode"] != "NAN")]
+
+    aggregations = {
+        "Nama Perusahaan": lambda x: clean_text(x.dropna().iloc[0]) if x.dropna().size else "-",
+        "Sektor": lambda x: clean_text(x.dropna().iloc[0], "No Sector") if x.dropna().size else "No Sector",
+        "Industry": lambda x: clean_text(x.dropna().iloc[0], "No Industry") if x.dropna().size else "No Industry",
+        "Index": lambda x: ", ".join(sorted({clean_text(v) for v in x.dropna()})),
+        "Penutupan": "median",
+        "PER": "median",
+        "PBV": "median",
+        "ROE": "median",
+        "ROA": "median",
+        "DER": "median",
+        "NPM": "median",
+        "NIM": "median",
+        "CAR": "median",
+        "LDR": "median",
+        "NPL": "median",
+        "BOPO": "median",
+        "CIR": "median",
+        "LAR": "median",
+        "Sebelumnya": "median",
+        "%Change": "median",
+        "Open": "median",
+        "High": "median",
+        "Low": "median",
+        "Volume": "median",
+        "Index_Count_Raw": "max",
+    }
+
+    existing = {key: value for key, value in aggregations.items() if key in raw.columns}
+    summary = raw.groupby("Kode", as_index=False).agg(existing)
+    if "Index" in summary.columns:
+        summary["Index_Count"] = summary["Index"].apply(lambda text: 0 if not text else len(text.split(", ")))
+    else:
+        summary["Index"] = ""
+        summary["Index_Count"] = 0
+    if "Index_Count_Raw" in summary.columns:
+        summary["Index_Count"] = summary[["Index_Count", "Index_Count_Raw"]].max(axis=1).fillna(0)
+    return summary, raw
 
 
 def is_banking_row(row):
@@ -1074,51 +1404,113 @@ def apply_threshold_profile(df_input, forced_mode=None):
 
 @st.cache_data(show_spinner=False)
 def load_data():
-    raw = read_sheet("Ringkasan")
+    excel_summary, raw = build_excel_fallback_summary()
+    universe = load_idx_universe_online()
+    universe_error = universe.attrs.get("universe_error")
 
-    index_count_column = next((column for column in raw.columns if "7" in column and "Index" not in column), None)
-    raw["Index_Count_Raw"] = raw[index_count_column] if index_count_column else np.nan
+    if universe.empty:
+        universe = excel_summary[["Kode", "Nama Perusahaan", "Sektor", "Industry"]].copy()
+        universe["Universe_Source"] = "Excel fallback"
 
-    for column in NUMERIC_COLUMNS:
-        if column in raw.columns:
-            raw[column] = pd.to_numeric(raw[column], errors="coerce")
+    online_market = build_online_market_frame(universe["Kode"].tolist(), period=ONLINE_LOAD_PERIOD)
+    market_source = online_market.attrs.get("market_source", "empty")
+    market_error = online_market.attrs.get("market_error")
 
-    raw["Kode"] = raw["Kode"].astype(str).str.strip().str.upper()
-    raw = raw[raw["Kode"].notna() & (raw["Kode"] != "") & (raw["Kode"] != "NAN")]
+    df = universe.merge(online_market, on="Kode", how="left")
+    excel_columns = [
+        "Kode",
+        "Nama Perusahaan",
+        "Sektor",
+        "Industry",
+        "Index",
+        "Index_Count",
+        "Index_Count_Raw",
+        "Penutupan",
+        "PER",
+        "PBV",
+        "ROE",
+        "ROA",
+        "DER",
+        "NPM",
+        "NIM",
+        "CAR",
+        "LDR",
+        "NPL",
+        "BOPO",
+        "CIR",
+        "LAR",
+        "Sebelumnya",
+        "%Change",
+        "Open",
+        "High",
+        "Low",
+        "Volume",
+    ]
+    excel_merge = excel_summary[[column for column in excel_columns if column in excel_summary.columns]].copy()
+    df = df.merge(excel_merge, on="Kode", how="left", suffixes=("", "_Excel"))
 
-    aggregations = {
-        "Nama Perusahaan": lambda x: clean_text(x.dropna().iloc[0]) if x.dropna().size else "-",
-        "Sektor": lambda x: clean_text(x.dropna().iloc[0], "No Sector") if x.dropna().size else "No Sector",
-        "Industry": lambda x: clean_text(x.dropna().iloc[0], "No Industry") if x.dropna().size else "No Industry",
-        "Index": lambda x: ", ".join(sorted({clean_text(v) for v in x.dropna()})),
-        "Penutupan": "median",
-        "PER": "median",
-        "PBV": "median",
-        "ROE": "median",
-        "ROA": "median",
-        "DER": "median",
-        "NPM": "median",
-        "NIM": "median",
-        "CAR": "median",
-        "LDR": "median",
-        "NPL": "median",
-        "BOPO": "median",
-        "CIR": "median",
-        "LAR": "median",
-        "Sebelumnya": "median",
-        "%Change": "median",
-        "Open": "median",
-        "High": "median",
-        "Low": "median",
-        "Volume": "median",
-        "Index_Count_Raw": "max",
-    }
+    text_columns = ["Nama Perusahaan", "Sektor", "Industry", "Index"]
+    numeric_fallback_columns = [
+        "Penutupan",
+        "Sebelumnya",
+        "%Change",
+        "Open",
+        "High",
+        "Low",
+        "Volume",
+        "PER",
+        "PBV",
+        "ROE",
+        "ROA",
+        "DER",
+        "NPM",
+        "NIM",
+        "CAR",
+        "LDR",
+        "NPL",
+        "BOPO",
+        "CIR",
+        "LAR",
+        "Index_Count",
+        "Index_Count_Raw",
+    ]
+    for column in text_columns:
+        excel_column = f"{column}_Excel"
+        if column not in df.columns:
+            df[column] = np.nan
+        if excel_column in df.columns:
+            missing = df[column].isna() | df[column].astype(str).str.strip().isin(["", "-", "No Sector", "No Industry", "nan"])
+            df.loc[missing, column] = df.loc[missing, excel_column]
+            df = df.drop(columns=[excel_column])
+    for column in numeric_fallback_columns:
+        excel_column = f"{column}_Excel"
+        if column not in df.columns:
+            df[column] = np.nan
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+        if excel_column in df.columns:
+            excel_values = pd.to_numeric(df[excel_column], errors="coerce")
+            fill_from_excel = df[column].isna() & excel_values.notna()
+            if column == "Penutupan":
+                if "Price_Source" not in df.columns:
+                    df["Price_Source"] = np.nan
+                df.loc[fill_from_excel, "Price_Source"] = "Excel fallback"
+            if column == "Volume":
+                df["Volume_Original"] = excel_values
+                if "Volume_Source" not in df.columns:
+                    df["Volume_Source"] = np.nan
+                df.loc[fill_from_excel, "Volume_Source"] = "Excel fallback"
+            df[column] = df[column].fillna(excel_values)
+            df = df.drop(columns=[excel_column])
 
-    existing = {key: value for key, value in aggregations.items() if key in raw.columns}
-    df = raw.groupby("Kode", as_index=False).agg(existing)
-    df["Index_Count"] = df["Index"].apply(lambda text: 0 if not text else len(text.split(", ")))
-    df["Index_Count"] = df[["Index_Count", "Index_Count_Raw"]].max(axis=1).fillna(0)
-    df = apply_online_volume_fallback(df)
+    index_missing = df["Index"].isna() | df["Index"].astype(str).str.strip().eq("")
+    df.loc[index_missing, "Index"] = df.loc[index_missing, "Universe_Source"]
+    df["Index_Count"] = pd.to_numeric(df["Index_Count"], errors="coerce").fillna(0)
+    df["Index_Count"] = np.where(df["Index_Count"].le(0), 1, df["Index_Count"])
+    if "Volume_Original" not in df.columns:
+        df["Volume_Original"] = df["Volume"]
+    df["Price_Source"] = df.get("Price_Source", pd.Series(index=df.index)).fillna("Excel fallback")
+    df["Volume_Source"] = df.get("Volume_Source", pd.Series(index=df.index)).fillna("Excel fallback")
+    df["Data_Source"] = np.where(df["Price_Source"].isin(["yfinance", "pandas-datareader", "cache"]), "Online/cache market", "Excel fallback")
     df["Turnover"] = df["Penutupan"].fillna(0) * df["Volume"].fillna(0)
     df["Intraday_Range_%"] = np.where(
         df["Penutupan"] > 0,
@@ -1132,13 +1524,21 @@ def load_data():
         & (df["Volume"] > 0)
         & df[["PER", "PBV", "ROE", "ROA", "DER", "NPM"]].notna().any(axis=1)
     )
-    df["Source_Rows"] = raw.groupby("Kode").size().reindex(df["Kode"]).to_numpy()
+    if "Kode" in raw.columns:
+        df["Source_Rows"] = raw.groupby("Kode").size().reindex(df["Kode"]).fillna(0).to_numpy()
+    else:
+        df["Source_Rows"] = 0
     history = load_history_metrics()
-    df = df.merge(history, on="Kode", how="left")
+    df = df.merge(history, on="Kode", how="left", suffixes=("", "_ExcelHistory"))
+    for column in ["Return_4W", "Return_13W", "Return_26W", "Return_52W", "Return_MTD", "Return_YTD", "Mkt Cap", "Total Rev"]:
+        excel_column = f"{column}_ExcelHistory"
+        if excel_column in df.columns:
+            df[column] = pd.to_numeric(df.get(column), errors="coerce").fillna(pd.to_numeric(df[excel_column], errors="coerce"))
+            df = df.drop(columns=[excel_column])
     threshold_bank = aggregate_threshold_sheet("Banking")
     threshold_nonbank = aggregate_threshold_sheet("NonBank")
     threshold_values = pd.concat([threshold_bank, threshold_nonbank], ignore_index=True)
-    threshold_values = threshold_values.groupby("Kode", as_index=False).median(numeric_only=True)
+    threshold_values = threshold_values.groupby("Kode", as_index=False).median(numeric_only=True) if "Kode" in threshold_values.columns else pd.DataFrame(columns=["Kode"])
     fill_columns = ["NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"]
     merge_columns = ["Kode"] + [column for column in fill_columns if column in threshold_values.columns]
     df = df.merge(threshold_values[merge_columns], on="Kode", how="left", suffixes=("", "_Threshold"))
@@ -1148,6 +1548,10 @@ def load_data():
             df[column] = df[column].fillna(df[threshold_column])
             df = df.drop(columns=[threshold_column])
     df = apply_threshold_profile(df)
+    raw.attrs["data_source"] = f"Universe {universe['Universe_Source'].iloc[0] if not universe.empty else '-'}; Market {market_source}"
+    raw.attrs["online_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    raw.attrs["universe_error"] = universe_error
+    raw.attrs["market_error"] = market_error
     return df, raw
 
 
@@ -1293,8 +1697,12 @@ data_update_label = get_data_update_label(raw_df, data_file_status)
 
 st.title("Dashboard Rekomendasi Saham IDX")
 st.caption(
-    f"Data {DATA_FILE}, update {data_update_label}. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
+    f"Data online-first, update {data_update_label}. yfinance menjadi sumber harga/histori utama; {DATA_FILE} dipakai sebagai cadangan rasio/fundamental. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
 )
+if raw_df.attrs.get("universe_error"):
+    st.warning(f"Daftar kode online memakai fallback. Detail: {raw_df.attrs.get('universe_error')}")
+if raw_df.attrs.get("market_error"):
+    st.warning(f"Sebagian data pasar online memakai fallback/cache. Detail: {raw_df.attrs.get('market_error')}")
 
 with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=False):
     st.markdown(
@@ -1304,7 +1712,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         **Menu utama**
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
-        - **Histori Harga**: grafik return dari sheet `Metrik` atau harga historis online via yfinance dengan format `KODE.JK`.
+        - **Histori Harga**: grafik return dari yfinance online dengan format `KODE.JK`, serta mode Excel Metrik sebagai pembanding/cadangan.
         - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
         - **Data Quality**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
         - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
@@ -1402,7 +1810,8 @@ with st.sidebar:
     st.divider()
     with st.expander("Workflow Update", expanded=False):
         file_status = data_file_status
-        st.caption(f"Data: {file_status['Status']} | Update: {data_update_label} | Modified: {file_status['Last Modified']} | Size: {file_status['Ukuran']}")
+        st.caption(f"Sumber aktif: {data_update_label}")
+        st.caption(f"Excel fallback: {file_status['Status']} | Modified: {file_status['Last Modified']} | Size: {file_status['Ukuran']}")
         cache_status_sidebar = get_history_cache_status()
         st.caption(f"Cache histori: {len(cache_status_sidebar):,} file di `{HISTORY_CACHE_DIR}`")
         refresh_period = st.selectbox(
@@ -1666,7 +2075,9 @@ with tab_reco:
             "Return_52W",
             "Return_YTD",
             "Volume",
+            "Price_Source",
             "Volume_Source",
+            "Data_Source",
             "Volume_Original",
             "Volume_Online_Latest",
             "Online_Last_Date",
@@ -1690,6 +2101,7 @@ with tab_reco:
             "DER",
             "Return_52W",
             "Volume",
+            "Price_Source",
             "Volume_Source",
             "Safety_Notes",
             "Sektor",
@@ -1719,10 +2131,12 @@ with tab_reco:
                 "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
                 "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
                 "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
-                "Volume_Original": st.column_config.NumberColumn("Volume Excel", format="%.0f", help="Volume asli dari file Ringkasan sebelum fallback online."),
-                "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari cache yfinance yang dipakai hanya bila volume Excel tampak terlalu rendah dan harga cocok."),
-                "Volume_Source": st.column_config.TextColumn("Sumber Volume", help="Excel berarti memakai volume file Ringkasan. Online cache berarti volume Excel rendah dan diganti dengan cache yfinance yang harga terakhirnya cocok."),
-                "Online_Last_Date": st.column_config.DateColumn("Tanggal Online", help="Tanggal data online terakhir yang menjadi pembanding volume."),
+                "Price_Source": st.column_config.TextColumn("Sumber Harga", help="Menunjukkan apakah harga berasal dari yfinance/cache atau Excel fallback."),
+                "Volume_Original": st.column_config.NumberColumn("Volume Excel", format="%.0f", help="Volume dari Excel fallback bila tersedia."),
+                "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari yfinance/cache."),
+                "Volume_Source": st.column_config.TextColumn("Sumber Volume", help="Menunjukkan apakah volume berasal dari yfinance/cache atau Excel fallback."),
+                "Data_Source": st.column_config.TextColumn("Sumber Data", help="Ringkasan sumber data pasar utama untuk baris ini."),
+                "Online_Last_Date": st.column_config.DateColumn("Tanggal Online", help="Tanggal data online terakhir dari yfinance/cache."),
                 "Return_4W": st.column_config.NumberColumn("4W", format="%.1f%%", help=HELP_TEXT["return"]),
                 "Return_13W": st.column_config.NumberColumn("13W", format="%.1f%%", help=HELP_TEXT["return"]),
                 "Return_26W": st.column_config.NumberColumn("26W", format="%.1f%%", help=HELP_TEXT["return"]),
@@ -1872,7 +2286,7 @@ with tab_history:
         online_history, online_error, online_source = fetch_yahoo_history(selected_codes, period=period)
         if online_error:
             st.warning(online_error)
-            st.caption("Dashboard tetap memakai data Excel untuk rekomendasi utama.")
+            st.caption("Dashboard memakai cache atau Excel fallback untuk bagian data yang tidak tersedia online.")
         elif online_history.empty:
             st.warning("Data online kosong.")
         else:
@@ -2244,7 +2658,7 @@ with tab_quality:
 
     status_left, status_right = st.columns([1, 1])
     with status_left:
-        st.write("Status file utama")
+        st.write("Status Excel fallback")
         st.dataframe(pd.DataFrame([get_file_status(DATA_FILE)]), width="stretch", hide_index=True)
     with status_right:
         st.write("Status cache histori")
@@ -2257,10 +2671,10 @@ with tab_quality:
     with st.expander("Workflow rutin yang disarankan", expanded=True):
         st.markdown(
             """
-            1. Update file `Ringkasan.xlsx` dari sumber utama.
-            2. Buka dashboard dan cek tab `Data Quality`.
-            3. Jika data harga/volume/rasio banyak bermasalah, perbaiki sumber sebelum memakai rekomendasi.
-            4. Jalankan `Refresh cache histori top saham` di sidebar untuk memperbarui grafik online.
+            1. Biarkan dashboard mengambil universe kode saham online, lalu harga/histori dari yfinance.
+            2. Jalankan `Refresh cache histori top saham` di sidebar untuk memperbarui cache online.
+            3. Buka tab `Data Quality` dan cek apakah banyak harga/volume/return yang jatuh ke fallback.
+            4. Update `Ringkasan.xlsx` hanya bila rasio fundamental, metrik bank, sektor, atau fallback perlu diperbaiki.
             5. Cek Top Rekomendasi, terutama saham dengan score tinggi tetapi volume rendah, PER negatif, atau threshold rendah.
             6. Simpan/export hasil rekomendasi hanya setelah check High severity terkendali.
             """
@@ -2277,9 +2691,9 @@ with tab_method:
         - Kualitas profit: ROE, ROA, dan NPM positif.
         - Risiko: non-bank memakai DER rendah dan intraday range rendah; Banking memakai CAR, NPL, BOPO, dan LDR bila tersedia.
         - Likuiditas: volume dan turnover harga x volume.
-        - Momentum: kombinasi histori 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem.
-        - Kekuatan indeks: jumlah indeks tempat saham tersebut masuk.
-        - Threshold sheet: rasio dibandingkan dengan batas dari sheet NonBank atau Banking.
+        - Momentum: kombinasi histori online 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem, dengan Excel Metrik sebagai fallback.
+        - Kekuatan indeks: jumlah indeks/tempat kemunculan dari fallback; bila hanya universe online tersedia, minimal dihitung sebagai saham listed.
+        - Threshold sheet: rasio dibandingkan dengan batas dari sheet NonBank atau Banking sebagai cadangan metodologi fundamental.
 
         Penalti diterapkan untuk PER/PBV negatif, profitabilitas negatif, NPM negatif, volume rendah, harga nol, pergerakan harian ekstrem, dan kelulusan threshold yang terlalu rendah.
         """

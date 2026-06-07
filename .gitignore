@@ -39,6 +39,8 @@ env/
 # Streamlit
 .streamlit/
 *.streamlit.app
+streamlit_stdout.log
+streamlit_stderr.log
 
 # Data files (optional - uncomment jika tidak ingin push data ke GitHub)
 # *.xlsx

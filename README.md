@@ -1,16 +1,19 @@
 # Dashboard Rekomendasi Saham IDX
 
 Dashboard Streamlit interaktif untuk screening dan rekomendasi awal saham Indonesia
-berdasarkan file data `Ringkasan.xlsx`.
+dengan alur data online-first. Daftar kode saham diambil online, harga/histori
+diprioritaskan dari `yfinance`, dan `Ringkasan.xlsx` dipakai sebagai fallback
+untuk rasio fundamental, metrik bank, sektor, dan data yang belum tersedia online.
 
 ## Fitur
 
+- Universe kode saham online dari TradingView IDX scanner, dengan fallback IDX/StockAnalysis/Excel.
 - Deduplikasi saham berdasarkan `Kode`, karena saham yang sama bisa muncul di beberapa indeks.
 - Scoring multi-factor: valuasi, kualitas profit, risiko, likuiditas, momentum, dan kekuatan indeks.
 - Filter threshold dari sheet `NonBank` dan `Banking`.
-- Histori return 4, 13, 26, dan 52 minggu dari sheet `Metrik`.
+- Histori return 4, 13, 26, 52 minggu, dan YTD dihitung dari yfinance bila tersedia.
 - Grafik histori online fleksibel untuk saham IDX dengan ticker `KODE.JK`.
-- Sumber histori online utama: `yfinance`, fallback: `pandas-datareader`, lalu cache lokal.
+- Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
 - Bobot scoring bisa diatur langsung dari sidebar.
 - Dashboard dinamis dengan tab Rekomendasi, Explorer, Histori Harga, Sektor, dan Metodologi.
@@ -20,7 +23,7 @@ berdasarkan file data `Ringkasan.xlsx`.
 
 ```text
 streamlit_app.py      # Aplikasi utama Streamlit
-Ringkasan.xlsx        # Data saham yang dibaca aplikasi
+Ringkasan.xlsx        # Fallback rasio/fundamental dan cadangan data
 requirements.txt      # Dependency Python
 README.md             # Dokumentasi singkat
 ```
@@ -44,15 +47,15 @@ Jika command `streamlit` tidak tersedia di PATH:
 python -m streamlit run streamlit_app.py
 ```
 
-Fitur histori online membutuhkan koneksi internet. Jika sumber online gagal,
-dashboard mencoba cache lokal di `history_cache/`; jika cache belum ada,
-dashboard tetap memakai data Excel untuk rekomendasi utama.
+Fitur online membutuhkan koneksi internet. Jika sumber online gagal, dashboard
+mencoba cache lokal di `history_cache/`; jika cache belum ada, kolom yang kosong
+diisi dari `Ringkasan.xlsx` bila file tersedia.
 
 ## Histori Harga
 
 Tab `Histori Harga` menyediakan dua mode:
 
-- `Excel Metrik 4W-52W`: memakai return historis dari sheet `Metrik` untuk grafik ringkas 4, 13, 26, dan 52 minggu.
+- `Excel Metrik 4W-52W`: memakai return historis dari sheet `Metrik` sebagai mode pembanding/cadangan.
 - `Online yfinance KODE.JK`: mengambil harga historis IDX secara online dengan format ticker seperti `BBCA.JK`, `BMRI.JK`, atau `TLKM.JK`.
 
 Mode online mendukung rentang 6 bulan, 1 tahun, 2 tahun, 5 tahun, 10 tahun,
