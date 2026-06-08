@@ -279,6 +279,7 @@ STOCK_LINE_COLORS = [
     "#65a30d",
 ]
 SCORE_SCALE = "RdYlGn"
+COUNT_SCALE = "Blues"
 CHART_AXIS_COLOR = "#64748b"
 
 
@@ -373,7 +374,24 @@ def show_table(data=None, *args, **kwargs):
 def show_chart(fig, *args, **kwargs):
     kwargs.pop("width", None)
     kwargs.pop("use_container_width", None)
+    fig.update_layout(
+        font=dict(color="#0f172a"),
+        hoverlabel=dict(bgcolor="#ffffff", font_size=12),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
     return st.plotly_chart(fig, *args, **PLOTLY_STRETCH, **kwargs)
+
+
+def chart_color_kwargs(color_field):
+    if color_field == "Recommendation":
+        return {"color_discrete_map": RECOMMENDATION_COLORS}
+    if color_field == "Risk_Level":
+        return {"color_discrete_map": RISK_COLORS}
+    if color_field in ["Sektor", "Industry", "Kode"]:
+        return {"color_discrete_sequence": STOCK_LINE_COLORS}
+    if color_field in ["Score", "Quality_Score", "Risk_Score", "Threshold_Pass_Ratio", "Valuation_Score", "Liquidity_Score", "Momentum_Score", "History_Momentum_Score"]:
+        return {"color_continuous_scale": SCORE_SCALE, "range_color": [0, 100]}
+    return {"color_discrete_sequence": STOCK_LINE_COLORS}
 
 
 def safe_slider(label, min_value, max_value, value, *, step=None, help=None, format=None):
@@ -2263,7 +2281,8 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - Hijau: kondisi lebih kuat atau risiko rendah.
         - Kuning/oranye: area watchlist, medium, atau perlu dicermati.
         - Merah: avoid, risiko tinggi, atau kondisi paling lemah.
-        - Biru/ungu: sumber data, likuiditas, momentum, atau dimensi netral/non-keputusan.
+        - Biru/ungu: sumber data, seri saham, likuiditas, momentum, atau dimensi netral/non-keputusan.
+        - Grafik jumlah/coverage memakai skala netral; grafik score memakai skala 0-100 agar tidak tercampur dengan warna kategori.
         """
     )
 
@@ -2886,7 +2905,7 @@ with tab_explore:
             hover_name="Kode",
             hover_data=["Nama Perusahaan", "Sektor", "PBV", "DER", "NPM", "Recommendation"],
             title=f"{explore_x} vs {explore_y}",
-            color_continuous_scale=SCORE_SCALE,
+            **chart_color_kwargs(explore_color),
         )
         fig.update_layout(height=460)
         show_chart(fig)
@@ -2903,7 +2922,7 @@ with tab_explore:
             hover_name="Kode",
             hover_data=["Nama Perusahaan", "Sektor", "Score", "Risk_Level"],
             title=f"{pair_x} vs {pair_y}, warna = kualitas profit",
-            color_continuous_scale=SCORE_SCALE,
+            **chart_color_kwargs("Quality_Score"),
         )
         fig.update_layout(height=460)
         show_chart(fig)
@@ -3186,7 +3205,7 @@ with tab_sector:
                 color="Strong_Buy",
                 hover_name=sector_group,
                 title=f"{sector_group}: market cap vs median score",
-                color_continuous_scale=SCORE_SCALE,
+                color_continuous_scale=COUNT_SCALE,
             )
         elif sector_chart == "Treemap":
             fig = px.treemap(
@@ -3196,6 +3215,7 @@ with tab_sector:
                 color="Median_Score",
                 title=f"Peta market cap dan score {sector_group.lower()}",
                 color_continuous_scale=SCORE_SCALE,
+                range_color=[0, 100],
             )
         else:
             fig = px.bar(
@@ -3205,7 +3225,7 @@ with tab_sector:
                 orientation="h",
                 color="Strong_Buy",
                 title=f"Ranking {sector_group.lower()} berdasarkan {sector_sort}",
-                color_continuous_scale=SCORE_SCALE,
+                color_continuous_scale=COUNT_SCALE,
             )
             fig.update_layout(yaxis={"categoryorder": "total ascending"})
         fig.update_layout(height=520)
@@ -3221,6 +3241,7 @@ with tab_sector:
             color="Median_Score",
             title=f"Kontribusi market cap {sector_group.lower()}",
             color_continuous_scale=SCORE_SCALE,
+            range_color=[0, 100],
         )
         fig.update_layout(xaxis_title="Total market cap", yaxis_title="")
         fig.update_layout(height=520)
