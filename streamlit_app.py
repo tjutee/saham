@@ -220,7 +220,7 @@ HELP_TEXT = {
     "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih lebih panjang untuk analisis historis, lebih pendek untuk refresh cepat.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
-    "technical_period": "Rentang OHLCV online, sama seperti Histori Harga. Periode pendek cocok untuk RSI/MACD cepat; minimal 1-2 tahun disarankan agar MA200 dan 52W lebih stabil.",
+    "technical_period": "Rentang OHLCV online, sama seperti bagian histori pada tab Harga & Teknikal. Periode pendek cocok untuk RSI/MACD cepat; minimal 1-2 tahun disarankan agar MA200 dan 52W lebih stabil.",
     "technical_code": "Pilih satu kode saham untuk candlestick dan indikator detail. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif. Kosongkan pilihan untuk menampilkan semua sinyal.",
@@ -1039,7 +1039,7 @@ def build_data_quality_report(scored, raw):
             "Check": "Return 52 minggu kosong",
             "Rows": int(missing_history.sum()),
             "Severity": "Low",
-            "Action": "Gunakan tab Histori Harga online untuk melengkapi konteks tren.",
+            "Action": "Gunakan tab Harga & Teknikal untuk melengkapi konteks tren.",
         },
         {
             "Area": "Sumber",
@@ -2552,7 +2552,7 @@ st.title("Dashboard Rekomendasi Saham IDX")
 st.caption(
     f"Data online-first, update {data_update_label}. Universe kode diprioritaskan dari BEI/IDX; yfinance mengisi harga/histori; TradingView scanner mengisi fundamental online; {DATA_FILE} menjadi fallback dan acuan metodologi. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
 )
-st.caption(f"Build UI: `{APP_BUILD}`. Tab **Teknikal** berada tepat setelah tab **Rekomendasi**.")
+st.caption(f"Build UI: `{APP_BUILD}`. Histori dan teknikal digabung di tab **Harga & Teknikal**.")
 if raw_df.attrs.get("universe_error"):
     st.warning(f"Daftar kode online memakai fallback. Detail: {raw_df.attrs.get('universe_error')}")
 if raw_df.attrs.get("market_error"):
@@ -2568,9 +2568,8 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         **Menu utama**
         - **Ringkasan**: snapshot eksekutif berisi kondisi universe, sumber data, distribusi rekomendasi, top kandidat, dan matriks faktor.
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
-        - **Teknikal**: candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
-        - **Histori Harga**: grafik return dari yfinance online dengan format `KODE.JK`, serta mode Excel Metrik sebagai pembanding/cadangan.
+        - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
         - **Kualitas Data**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
         - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
@@ -2798,8 +2797,8 @@ status_cols[1].metric("Lolos filter", f"{len(filtered):,}")
 status_cols[2].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filtered) else "-")
 status_cols[3].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
 
-tab_summary, tab_reco, tab_technical, tab_explore, tab_history, tab_sector, tab_quality, tab_method = st.tabs(
-    ["Ringkasan", "Rekomendasi", "Teknikal", "Explorer", "Histori Harga", "Sektor", "Kualitas Data", "Metodologi"]
+tab_summary, tab_reco, tab_history, tab_explore, tab_sector, tab_quality, tab_method = st.tabs(
+    ["Ringkasan", "Rekomendasi", "Harga & Teknikal", "Explorer", "Sektor", "Kualitas Data", "Metodologi"]
 )
 
 with tab_summary:
@@ -3285,6 +3284,7 @@ with tab_explore:
             show_chart(fig)
 
 with tab_history:
+    st.subheader("Histori harga")
     history_source = filtered if not filtered.empty else scored_df
     history_mode = st.radio(
         "Sumber grafik histori",
@@ -3485,7 +3485,7 @@ with tab_history:
                 fig.update_layout(height=440, xaxis_title="Return 52 minggu (%)", yaxis_title="Score")
                 show_chart(fig)
 
-with tab_technical:
+with tab_history:
     st.subheader("Analisa teknikal")
     st.caption("Teknikal memakai OHLCV yfinance/cache sebagai konfirmasi timing. Score fundamental utama tidak berubah.")
     technical_source = filtered if not filtered.empty else scored_df

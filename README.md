@@ -23,7 +23,7 @@ belum stabil tersedia online.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
 - Bobot scoring bisa diatur langsung dari sidebar.
-- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Teknikal, Explorer, Histori Harga, Sektor, Kualitas Data, dan Metodologi.
+- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Harga & Teknikal, Explorer, Sektor, Kualitas Data, dan Metodologi.
 - Ringkasan eksekutif berisi distribusi rekomendasi, komposisi risiko, sumber data, top kandidat, dan heatmap faktor.
 - Kualitas Data menampilkan audit sumber kode, audit filter, coverage kolom, serta campuran sumber harga/volume.
 - Tabel hasil bisa di-download sebagai CSV.
@@ -73,21 +73,22 @@ Tab `Kualitas Data` menampilkan audit sumber kode agar perbedaan antara daftar
 resmi BEI/IDX, sumber online pelengkap, dan fallback Excel tetap terlihat,
 bukan diabaikan.
 
-## Histori Harga
+## Harga & Teknikal
 
-Tab `Histori Harga` menyediakan dua mode:
+Tab `Harga & Teknikal` menggabungkan histori harga dan analisa teknikal karena
+keduanya memakai OHLCV online/cache dari yfinance.
+
+Bagian histori menyediakan dua mode:
 
 - `Online yfinance KODE.JK`: mengambil harga historis IDX secara online dengan format ticker seperti `BBCA.JK`, `BMRI.JK`, atau `TLKM.JK`.
 - `Excel Metrik 4W-52W`: memakai return historis dari sheet `Metrik` hanya sebagai mode pembanding/cadangan.
 
-Mode online mendukung rentang 6 bulan, 1 tahun, 2 tahun, 5 tahun, 10 tahun,
+Mode online mendukung rentang 1 minggu, 2 minggu, 1/3/6 bulan, 1/2/5/10 tahun,
 dan all/sepanjang masa. Jika koneksi live gagal, dashboard mencoba fallback
 `pandas-datareader` dan cache lokal di folder `history_cache/`.
 
-## Analisa Teknikal
-
-Tab `Teknikal` memakai OHLCV online/cache dari yfinance untuk membaca timing,
-bukan untuk mengganti score fundamental utama.
+Bagian teknikal membaca timing dari OHLCV online/cache, bukan untuk mengganti
+score fundamental utama.
 
 - `Technical_Score`: trend MA20/50/200, RSI, MACD, volume ratio, dan ATR.
 - `Entry_Action`: rekomendasi untuk calon pembelian, misalnya `Buy Candidate`, `Wait Confirmation`, `Wait Pullback`, atau `Avoid Entry`.

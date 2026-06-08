@@ -66,7 +66,7 @@ Pastikan koneksi internet Streamlit Cloud aktif dan dependency di
 
 Grafik utama memakai harga/volume yfinance atau cache online lebih dulu. Excel
 hanya menjadi fallback bila online/cache tidak tersedia, atau mode pembanding
-manual pada tab `Histori Harga`.
+manual pada tab `Harga & Teknikal`.
 
 Setelah deploy, cek tab `Ringkasan` untuk memastikan sumber harga, status kode,
 dan distribusi rekomendasi terbaca wajar. Lalu cek tab `Kualitas Data` ->
