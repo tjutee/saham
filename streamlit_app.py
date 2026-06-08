@@ -230,6 +230,7 @@ HELP_TEXT = {
     "explainability": "Decision_Summary, Top_Strengths, Top_Risks, dan Action_Checklist menjelaskan faktor utama di balik ranking agar keputusan tidak menjadi black box.",
     "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
     "position_sizing": "Position sizing menghitung estimasi lot dari modal, risiko per transaksi, harga terakhir, dan ATR stop. Ini alat perencanaan risiko, bukan instruksi order.",
+    "fibonacci": "Fibonacci confluence membaca support/resistance dari swing high-low pada periode teknikal. Ini layer konfirmasi area harga, bukan prediksi pasti.",
     "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. Periode lebih panjang memberi lebih banyak event, tetapi lebih lambat.",
     "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan simulasi broker penuh.",
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
@@ -2011,6 +2012,105 @@ def build_technical_indicators(history):
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def add_fibonacci_confluence(technical_history):
+    if technical_history.empty:
+        return technical_history
+
+    frames = []
+    fib_ratios = {
+        "Fibo_23_6": 0.236,
+        "Fibo_38_2": 0.382,
+        "Fibo_50_0": 0.500,
+        "Fibo_61_8": 0.618,
+        "Fibo_78_6": 0.786,
+    }
+    extension_ratios = {
+        "Fibo_Ext_127_2": 1.272,
+        "Fibo_Ext_161_8": 1.618,
+    }
+
+    for code, group in technical_history.groupby("Kode"):
+        fib = group.sort_values("Date").copy()
+        high = pd.to_numeric(fib.get("High", fib["Close"]), errors="coerce")
+        low = pd.to_numeric(fib.get("Low", fib["Close"]), errors="coerce")
+        close = pd.to_numeric(fib["Close"], errors="coerce")
+        swing_high = high.max()
+        swing_low = low.min()
+        swing_range = swing_high - swing_low if pd.notna(swing_high) and pd.notna(swing_low) else np.nan
+
+        fib["Fibo_Swing_High"] = swing_high
+        fib["Fibo_Swing_Low"] = swing_low
+        fib["Fibo_Range"] = swing_range
+        if pd.isna(swing_range) or swing_range <= 0:
+            for column in list(fib_ratios) + list(extension_ratios):
+                fib[column] = np.nan
+            fib["Nearest_Fibo_Level"] = "-"
+            fib["Nearest_Fibo_Price"] = np.nan
+            fib["Distance_To_Fibo_%"] = np.nan
+            fib["Fibo_Zone"] = "Unavailable"
+            fib["Fibo_Confluence_Score"] = 0.0
+            frames.append(fib)
+            continue
+
+        for column, ratio in fib_ratios.items():
+            fib[column] = swing_high - swing_range * ratio
+        for column, ratio in extension_ratios.items():
+            fib[column] = swing_low + swing_range * ratio
+
+        level_columns = list(fib_ratios) + list(extension_ratios)
+        level_labels = {
+            "Fibo_23_6": "23.6%",
+            "Fibo_38_2": "38.2%",
+            "Fibo_50_0": "50.0%",
+            "Fibo_61_8": "61.8%",
+            "Fibo_78_6": "78.6%",
+            "Fibo_Ext_127_2": "127.2%",
+            "Fibo_Ext_161_8": "161.8%",
+        }
+        distances = pd.concat(
+            [(close / fib[column].replace(0, np.nan) - 1).abs().rename(column) for column in level_columns],
+            axis=1,
+        )
+        nearest_columns = distances.idxmin(axis=1)
+        fib["Nearest_Fibo_Level"] = nearest_columns.map(level_labels).fillna("-")
+        fib["Nearest_Fibo_Price"] = [
+            row[column] if isinstance(column, str) and column in row.index else np.nan
+            for (_, row), column in zip(fib.iterrows(), nearest_columns)
+        ]
+        fib["Distance_To_Fibo_%"] = (close / pd.to_numeric(fib["Nearest_Fibo_Price"], errors="coerce") - 1) * 100
+
+        fib["Fibo_Zone"] = np.select(
+            [
+                close.gt(fib["Fibo_Ext_127_2"]),
+                close.gt(fib["Fibo_23_6"]),
+                close.between(fib["Fibo_38_2"], fib["Fibo_23_6"], inclusive="both"),
+                close.between(fib["Fibo_61_8"], fib["Fibo_38_2"], inclusive="both"),
+                close.between(fib["Fibo_78_6"], fib["Fibo_61_8"], inclusive="both"),
+                close.lt(fib["Fibo_78_6"]),
+            ],
+            ["Extension/Take Profit", "Resistance Watch", "Upper Range", "Golden Mid Zone", "Golden Support", "Breakdown Risk"],
+            default="Mid Range",
+        )
+        distance_score = (100 - (fib["Distance_To_Fibo_%"].abs() / 5 * 100)).clip(0, 100).fillna(0)
+        zone_bonus = np.select(
+            [
+                fib["Fibo_Zone"].eq("Golden Support"),
+                fib["Fibo_Zone"].eq("Golden Mid Zone"),
+                fib["Fibo_Zone"].eq("Extension/Take Profit"),
+                fib["Fibo_Zone"].eq("Breakdown Risk"),
+            ],
+            [18, 12, -8, -18],
+            default=0,
+        )
+        trend_bonus = np.where(fib.get("Trend_Bullish", pd.Series(False, index=fib.index)), 10, 0)
+        rsi = pd.to_numeric(fib.get("RSI14", pd.Series(np.nan, index=fib.index)), errors="coerce")
+        rsi_bonus = np.where(rsi.between(35, 65), 8, np.where(rsi.ge(75), -8, 0))
+        fib["Fibo_Confluence_Score"] = (distance_score * 0.70 + 20 + zone_bonus + trend_bonus + rsi_bonus).clip(0, 100).round(1)
+        frames.append(fib)
+
+    return pd.concat(frames, ignore_index=True) if frames else technical_history
+
+
 def summarize_technical_indicators(technical_history):
     if technical_history.empty:
         return pd.DataFrame()
@@ -3298,6 +3398,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Decision Summary / Top Strengths / Top Risks**: ringkasan alasan kuantitatif agar ranking mudah diaudit.
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
         - **Position sizing**: estimasi lot berdasarkan modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan.
+        - **Fibonacci Confluence**: support/resistance dari swing high-low, nearest level, jarak harga, dan confluence score.
         - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
         - **Walk-forward**: validasi event berurutan yang membandingkan performa train dan out-of-sample agar sinyal tidak hanya bagus secara agregat.
         - **Clean_Data**: penanda bahwa data dan rasio utama lolos filter kebersihan minimum.
@@ -3315,6 +3416,8 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - `Position_Action`: teknikal dan fundamental memberi arahan hold/reduce/take profit/exit untuk saham yang sudah dimiliki.
         - `ATR_Stop_2x = Close - 2 x ATR14`.
         - `Lot estimasi = min(risk budget / risk per share, max position value / close) / 100`, lalu dibulatkan ke bawah.
+        - `Fibo retracement = Swing High - (Swing High - Swing Low) x rasio Fibonacci`.
+        - `Fibo Confluence Score`: kedekatan harga ke level Fibo + zona golden ratio + konfirmasi trend/RSI.
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
         - `Walk-forward Decay = Avg Return out-of-sample - Avg Return train`.
         - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable * 100`.
@@ -4524,6 +4627,7 @@ with tab_history:
 
         load_technical = st.toggle("Tampilkan hasil analisa teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari refresh online sementara.")
         show_auto_scan = st.toggle("Tampilkan ringkasan teknikal top kandidat", value=True, help="Menghitung teknikal otomatis untuk maksimal 5 saham teratas dari hasil filter agar keputusan entry/posisi langsung terlihat.")
+        show_fibonacci = st.toggle("Tampilkan level Fibonacci", value=True, help=HELP_TEXT["fibonacci"])
         if not load_technical:
             st.info("Aktifkan toggle di atas untuk menampilkan Entry Action, Position Action, candlestick, MA, RSI, MACD, ATR, dan Technical Score.")
         else:
@@ -4533,6 +4637,7 @@ with tab_history:
                     with st.spinner("Menghitung ringkasan teknikal top kandidat..."):
                         auto_history, auto_error, auto_source_label = fetch_yahoo_history(auto_scan_codes, period=technical_period)
                         auto_indicators = build_technical_indicators(auto_history)
+                        auto_indicators = add_fibonacci_confluence(auto_indicators)
                         auto_summary = summarize_technical_indicators(auto_indicators)
                     if auto_error:
                         st.warning(auto_error)
@@ -4557,6 +4662,10 @@ with tab_history:
                             "Technical_Score",
                             "Technical_Signal",
                             "RSI14",
+                            "Fibo_Zone",
+                            "Nearest_Fibo_Level",
+                            "Distance_To_Fibo_%",
+                            "Fibo_Confluence_Score",
                             "ATR_Stop_2x",
                             "ATR_Stop_Distance_%",
                             "Position_Risk_Bucket",
@@ -4570,6 +4679,8 @@ with tab_history:
                                 "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                                 "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
+                                "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
+                                "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                                 "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
                                 "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                             },
@@ -4582,6 +4693,7 @@ with tab_history:
                 st.info("Data OHLCV online/cache belum tersedia untuk teknikal. Coba periode lain atau refresh cache histori.")
             else:
                 tech_history = build_technical_indicators(tech_history)
+                tech_history = add_fibonacci_confluence(tech_history)
                 tech_summary = summarize_technical_indicators(tech_history)
                 tech_decision = add_entry_decision(tech_summary, scored_df)
                 latest_tech = tech_decision.iloc[0] if not tech_decision.empty else pd.Series(dtype=object)
@@ -4593,6 +4705,11 @@ with tab_history:
                 metric_cols[3].metric("Sinyal", clean_text(latest_tech.get("Technical_Signal")))
                 metric_cols[4].metric("Exit Risk", clean_text(latest_tech.get("Exit_Risk")))
                 metric_cols[5].metric("RSI 14", format_number(latest_tech.get("RSI14")))
+                fib_cols = st.columns(4)
+                fib_cols[0].metric("Fibo Zone", clean_text(latest_tech.get("Fibo_Zone")), help=HELP_TEXT["fibonacci"])
+                fib_cols[1].metric("Nearest Fibo", clean_text(latest_tech.get("Nearest_Fibo_Level")), format_percent(latest_tech.get("Distance_To_Fibo_%")), help=HELP_TEXT["fibonacci"])
+                fib_cols[2].metric("Fibo Score", format_number(latest_tech.get("Fibo_Confluence_Score")), help=HELP_TEXT["fibonacci"])
+                fib_cols[3].metric("Fibo Price", format_rupiah(latest_tech.get("Nearest_Fibo_Price")), help=HELP_TEXT["fibonacci"])
                 tech_start = tech_history["Date"].min()
                 tech_end = tech_history["Date"].max()
                 tech_range_label = f"{tech_start:%Y-%m-%d} s.d. {tech_end:%Y-%m-%d}" if pd.notna(tech_start) and pd.notna(tech_end) else "-"
@@ -4608,6 +4725,10 @@ with tab_history:
                     "Recommendation",
                     "Technical_Score",
                     "Technical_Signal",
+                    "Fibo_Zone",
+                    "Nearest_Fibo_Level",
+                    "Distance_To_Fibo_%",
+                    "Fibo_Confluence_Score",
                     "Entry_Action",
                     "Position_Action",
                     "Exit_Risk",
@@ -4624,6 +4745,8 @@ with tab_history:
                     column_config={
                         "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                         "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                        "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
+                        "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                         "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
                         "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                     },
@@ -4714,6 +4837,26 @@ with tab_history:
                 for ma_column, color in [("MA20", "#0891b2"), ("MA50", "#7c3aed"), ("MA200", "#475569")]:
                     if ma_column in price_panel.columns:
                         fig.add_trace(go.Scatter(x=price_panel["Date"], y=price_panel[ma_column], mode="lines", name=ma_column, line=dict(color=color, width=1.6)))
+                if show_fibonacci:
+                    fib_line_map = [
+                        ("Fibo_23_6", "23.6%", "#94a3b8"),
+                        ("Fibo_38_2", "38.2%", "#2563eb"),
+                        ("Fibo_50_0", "50.0%", "#0f766e"),
+                        ("Fibo_61_8", "61.8%", "#ca8a04"),
+                        ("Fibo_78_6", "78.6%", "#ea580c"),
+                        ("Fibo_Ext_127_2", "127.2%", "#7c3aed"),
+                        ("Fibo_Ext_161_8", "161.8%", "#db2777"),
+                    ]
+                    for column, label, color in fib_line_map:
+                        value = pd.to_numeric(latest_tech.get(column), errors="coerce")
+                        if pd.notna(value) and value > 0:
+                            fig.add_hline(
+                                y=value,
+                                line_dash="dot",
+                                line_color=color,
+                                annotation_text=label,
+                                annotation_position="right",
+                            )
                 fig.update_layout(
                     title=f"{technical_code}: harga, MA20/50/200 ({technical_period})",
                     height=520,
@@ -4752,6 +4895,11 @@ with tab_history:
                     "MACD_Signal",
                     "Volume_Ratio",
                     "ATR_%",
+                    "Fibo_Zone",
+                    "Nearest_Fibo_Level",
+                    "Nearest_Fibo_Price",
+                    "Distance_To_Fibo_%",
+                    "Fibo_Confluence_Score",
                     "Distance_52W_High_%",
                     "Distance_52W_Low_%",
                 ]
@@ -4770,6 +4918,9 @@ with tab_history:
                             "MACD_Signal": st.column_config.NumberColumn("Signal", format="%.2f"),
                             "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
                             "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),
+                            "Nearest_Fibo_Price": st.column_config.NumberColumn("Harga Fibo", format="%.0f", help=HELP_TEXT["fibonacci"]),
+                            "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
+                            "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                             "Distance_52W_High_%": st.column_config.NumberColumn("Jarak 52W High", format="%.1f%%"),
                             "Distance_52W_Low_%": st.column_config.NumberColumn("Jarak 52W Low", format="%.1f%%"),
                         },
@@ -4806,6 +4957,7 @@ with tab_history:
                 with st.spinner("Mengambil OHLCV dan menghitung indikator teknikal..."):
                     scan_history, scan_error, scan_source_label = fetch_yahoo_history(scan_codes, period=technical_period)
                     scan_indicators = build_technical_indicators(scan_history)
+                    scan_indicators = add_fibonacci_confluence(scan_indicators)
                     scan_summary = summarize_technical_indicators(scan_indicators)
                 if scan_error:
                     st.warning(scan_error)
@@ -4852,6 +5004,10 @@ with tab_history:
                                     "Combined_View",
                                     "Technical_Score",
                                     "Technical_Signal",
+                                    "Fibo_Zone",
+                                    "Nearest_Fibo_Level",
+                                    "Distance_To_Fibo_%",
+                                    "Fibo_Confluence_Score",
                                     "RSI14",
                                     "Volume_Ratio",
                                     "ATR_%",
@@ -4867,6 +5023,8 @@ with tab_history:
                             column_config={
                                 "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                                 "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                                "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
+                                "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                                 "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
                                 "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),
@@ -5299,6 +5457,7 @@ with tab_method:
         - Position Action dipakai untuk saham yang sudah dimiliki: Hold, Add on Pullback, Review Position, Tight Stop, Take Profit, Reduce, atau Exit / Sell.
         - Tidak ada harga beli pribadi yang dipakai; sinyal posisi adalah arahan umum berbasis data pasar terbaru.
         - ATR Stop 2x adalah zona risiko teknikal berbasis volatilitas, bukan instruksi order otomatis.
+        - Fibonacci Confluence membaca area support/resistance dari swing high-low periode teknikal. Ini bukan prediksi pasti dan harus dibaca bersama trend, RSI/MACD, volume, serta backtest.
 
         Explainability:
         - Decision Summary merangkum rekomendasi, posisi relatif sektor, dan risiko.

@@ -126,6 +126,7 @@ score fundamental utama.
 - `Exit_Risk`: risiko keluar/pengetatan posisi dari kombinasi fundamental dan teknikal.
 - `ATR_Stop_2x`: zona risiko teknikal berbasis dua kali ATR dari harga terakhir, bukan instruksi order otomatis.
 - `Trade Plan & Position Sizing`: estimasi lot dari modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan. Hasil belum memperhitungkan fee, slippage, atau gap harga.
+- `Fibonacci Confluence`: level retracement/extension dari swing high-low periode teknikal untuk membaca support/resistance dan nearest level. Ini bukan prediksi pasti.
 
 Dashboard tidak memakai harga beli pribadi, sehingga `Position_Action` adalah
 arah umum berbasis kondisi saham terbaru.
@@ -154,6 +155,7 @@ Layer teknikal terpisah dari score fundamental:
 - Position Action memberi arahan umum hold/reduce/take profit/exit untuk saham yang sudah dimiliki tanpa memakai harga beli pribadi.
 - ATR Stop 2x membantu membaca zona risiko teknikal.
 - Position sizing menghitung lot estimasi dengan risk budget / risk per share dan dibatasi maksimum nilai posisi.
+- Fibonacci Confluence memakai level 23.6%, 38.2%, 50%, 61.8%, 78.6%, 127.2%, dan 161.8% sebagai area support/resistance yang perlu dikonfirmasi oleh trend, RSI/MACD, volume, dan backtest.
 
 Layer explainability:
 
