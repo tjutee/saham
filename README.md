@@ -19,10 +19,11 @@ belum stabil tersedia online.
 - Grafik utama memprioritaskan harga/volume yfinance atau cache online; Excel hanya dipakai bila online/cache kosong.
 - Sheet `Metrik` dimanfaatkan untuk market cap, revenue, subsektor, industri, subindustri, dan daftar indeks gabungan.
 - Grafik histori online fleksibel untuk saham IDX dengan ticker `KODE.JK`.
+- Analisa teknikal berbasis OHLCV yfinance/cache: candlestick, MA20/50/200, RSI, MACD, ATR, Technical Score, Entry Action, dan Position Action.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
 - Bobot scoring bisa diatur langsung dari sidebar.
-- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Explorer, Histori Harga, Sektor, Kualitas Data, dan Metodologi.
+- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Explorer, Histori Harga, Teknikal, Sektor, Kualitas Data, dan Metodologi.
 - Ringkasan eksekutif berisi distribusi rekomendasi, komposisi risiko, sumber data, top kandidat, dan heatmap faktor.
 - Kualitas Data menampilkan audit sumber kode, audit filter, coverage kolom, serta campuran sumber harga/volume.
 - Tabel hasil bisa di-download sebagai CSV.
@@ -83,6 +84,19 @@ Mode online mendukung rentang 6 bulan, 1 tahun, 2 tahun, 5 tahun, 10 tahun,
 dan all/sepanjang masa. Jika koneksi live gagal, dashboard mencoba fallback
 `pandas-datareader` dan cache lokal di folder `history_cache/`.
 
+## Analisa Teknikal
+
+Tab `Teknikal` memakai OHLCV online/cache dari yfinance untuk membaca timing,
+bukan untuk mengganti score fundamental utama.
+
+- `Technical_Score`: trend MA20/50/200, RSI, MACD, volume ratio, dan ATR.
+- `Entry_Action`: rekomendasi untuk calon pembelian, misalnya `Buy Candidate`, `Wait Confirmation`, `Wait Pullback`, atau `Avoid Entry`.
+- `Position_Action`: rekomendasi untuk saham yang sudah dimiliki, misalnya `Hold`, `Take Profit`, `Reduce`, atau `Exit / Sell`.
+- `Exit_Risk`: risiko keluar/pengetatan posisi dari kombinasi fundamental dan teknikal.
+
+Dashboard tidak memakai harga beli pribadi, sehingga `Position_Action` adalah
+arah umum berbasis kondisi saham terbaru.
+
 ## Metodologi Singkat
 
 Score akhir memakai normalisasi percentile yang dipotong di persentil 3 dan 97
@@ -98,6 +112,12 @@ Faktor yang dihitung:
 - Kekuatan indeks: nilai kolom Sigma i >= 7 dari Excel bila tersedia, lalu jumlah indeks/tempat kemunculan dari fallback, atau minimal satu untuk kode yang hanya tersedia dari universe resmi.
 - Konteks ukuran: market cap, revenue, dan MCap/Revenue ditampilkan untuk analisis, tetapi belum menjadi faktor utama score.
 - Threshold: batas rasio dari sheet `NonBank` atau `Banking`.
+
+Layer teknikal terpisah dari score fundamental:
+
+- Technical Score memakai trend MA20/50/200, RSI, MACD, volume ratio, dan ATR.
+- Entry Action memakai fundamental sebagai gerbang awal, lalu teknikal untuk timing pembelian.
+- Position Action memberi arahan umum hold/reduce/take profit/exit untuk saham yang sudah dimiliki tanpa memakai harga beli pribadi.
 
 Penalti diterapkan untuk data yang kurang sehat, seperti PER/PBV negatif,
 profitabilitas negatif, volume rendah, harga nol, perubahan harian ekstrem,

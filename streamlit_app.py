@@ -209,9 +209,9 @@ HELP_TEXT = {
     "technical_period": "Rentang OHLCV online untuk menghitung indikator teknikal. Minimal 1 tahun disarankan agar MA200 dan 52W lebih stabil.",
     "technical_code": "Pilih satu kode saham untuk candlestick dan indikator detail. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
-    "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif.",
-    "entry_action": "Entry_Action menggabungkan fundamental dan teknikal: fundamental memilih saham layak, teknikal menentukan timing entry/tunggu/tahan/take profit.",
-    "position_action": "Position_Action adalah arahan umum untuk saham yang sudah dimiliki, tanpa memakai harga beli pribadi. Gunakan bersama ukuran posisi dan risk management.",
+    "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif. Kosongkan pilihan untuk menampilkan semua sinyal.",
+    "entry_action": "Entry_Action menggabungkan fundamental dan teknikal: fundamental memilih saham layak, teknikal menentukan timing entry/tunggu/tahan/take profit. Kosongkan filter untuk menampilkan semua aksi entry.",
+    "position_action": "Position_Action adalah arahan umum untuk saham yang sudah dimiliki, tanpa memakai harga beli pribadi. Kosongkan filter untuk menampilkan semua aksi posisi.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -2537,6 +2537,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
         - **Histori Harga**: grafik return dari yfinance online dengan format `KODE.JK`, serta mode Excel Metrik sebagai pembanding/cadangan.
+        - **Teknikal**: candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
         - **Kualitas Data**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
         - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
@@ -2558,6 +2559,10 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Threshold Pass Count / Applicable**: jumlah rasio yang lolos dibanding jumlah rasio yang bisa dinilai.
         - **Score**: nilai akhir 0-100 dari bobot faktor dikurangi penalti. Semakin tinggi semakin menarik sebagai kandidat screening.
         - **Recommendation**: label dari score akhir: Strong Buy, Buy, Watchlist, Speculative, atau Avoid.
+        - **Technical Score / Signal**: konfirmasi timing berbasis MA, RSI, MACD, volume, ATR, dan tren harga. Ini tidak mengubah Score fundamental.
+        - **Entry Action**: arahan untuk calon pembelian. Fundamental menjadi gerbang awal, teknikal menentukan timing entry/tunggu/hindari.
+        - **Position Action**: arahan umum untuk saham yang sudah dimiliki tanpa memakai harga beli pribadi, misalnya Hold, Take Profit, Reduce, atau Exit / Sell.
+        - **Exit Risk**: risiko keluar/pengetatan posisi berdasarkan kombinasi fundamental dan teknikal, bukan perhitungan profit pribadi.
         - **Clean_Data**: penanda bahwa data dan rasio utama lolos filter kebersihan minimum.
         - **Safety_Recommendation**: ringkasan kelayakan data seperti `Bersih - Strong`; di kartu utama ditampilkan sebagai `Data`, bukan jaminan aman investasi.
         - **Safety_Notes**: alasan saham perlu direview, misalnya volume rendah, rasio kosong, threshold rendah, atau risiko tinggi.
@@ -2567,6 +2572,9 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
 
         **Rumus ringkas**
         - `Score = weighted average(Valuation, Quality, Risk, Liquidity, Momentum, Index) - Penalty`, lalu dibatasi 0-100.
+        - `Technical_Score = Trend 30% + RSI 20% + MACD 20% + Volume 15% + Volatilitas 15%`.
+        - `Entry_Action`: fundamental memilih saham layak, teknikal menentukan timing untuk calon pembelian.
+        - `Position_Action`: teknikal dan fundamental memberi arahan hold/reduce/take profit/exit untuk saham yang sudah dimiliki.
         - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable * 100`.
         - `Turnover = Penutupan * Volume`.
         - `Return Total = Harga Akhir / Harga Awal - 1`.
@@ -3606,7 +3614,7 @@ with tab_technical:
                 signal_filter = st.multiselect(
                     "Filter sinyal",
                     ["Bullish", "Constructive", "Neutral", "Overbought", "Weak"],
-                    default=["Bullish", "Constructive"],
+                    default=[],
                     help=HELP_TEXT["technical_filter"],
                 )
             with scan_cols[2]:
@@ -3620,7 +3628,7 @@ with tab_technical:
             position_filter = st.multiselect(
                 "Filter aksi posisi",
                 POSITION_ACTION_ORDER,
-                default=["Hold", "Add on Pullback", "Tight Stop", "Take Profit", "Exit / Sell"],
+                default=[],
                 help=HELP_TEXT["position_action"],
             )
 
@@ -3647,7 +3655,7 @@ with tab_technical:
                     else:
                         scan_summary["Entry_Action"] = pd.Categorical(scan_summary["Entry_Action"], categories=ENTRY_ACTION_ORDER, ordered=True)
                         scan_summary["Position_Action"] = pd.Categorical(scan_summary["Position_Action"], categories=POSITION_ACTION_ORDER, ordered=True)
-                        scan_summary = scan_summary.sort_values(["Entry_Action", "Position_Action", "Technical_Score", "Score"], ascending=[True, True, False, False])
+                        scan_summary = scan_summary.sort_values(["Position_Action", "Entry_Action", "Technical_Score", "Score"], ascending=[True, True, False, False])
                         st.caption(f"Sumber scan: {scan_source_label}. Entry Action untuk calon pembelian; Position Action untuk saham yang sudah dimiliki.")
                         fig = px.bar(
                             scan_summary.head(20),
@@ -4079,6 +4087,12 @@ with tab_method:
         - Threshold sheet: rasio dibandingkan dengan batas dari sheet NonBank atau Banking sebagai cadangan metodologi fundamental.
 
         Penalti diterapkan untuk PER/PBV negatif, profitabilitas negatif, NPM negatif, volume rendah, harga nol, pergerakan harian ekstrem, dan kelulusan threshold yang terlalu rendah.
+
+        Layer teknikal terpisah dari Score fundamental:
+        - Technical Score memakai trend MA20/50/200, RSI, MACD, volume ratio, dan ATR.
+        - Entry Action dipakai untuk calon pembelian: fundamental menjadi gerbang awal, teknikal menentukan timing.
+        - Position Action dipakai untuk saham yang sudah dimiliki: Hold, Add on Pullback, Review Position, Tight Stop, Take Profit, Reduce, atau Exit / Sell.
+        - Tidak ada harga beli pribadi yang dipakai; sinyal posisi adalah arahan umum berbasis data pasar terbaru.
         """
     )
 
