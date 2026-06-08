@@ -23,6 +23,20 @@ TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/indonesia/scan"
 STOCKANALYSIS_IDX_URL = "https://stockanalysis.com/list/indonesia-stock-exchange/"
 ONLINE_LOAD_PERIOD = "1y"
 ONLINE_REFRESH_TTL = 6 * 60 * 60
+TRADINGVIEW_FUNDAMENTAL_COLUMNS = [
+    "name",
+    "description",
+    "sector",
+    "industry",
+    "market_cap_basic",
+    "total_revenue",
+    "price_earnings_ttm",
+    "price_book_fq",
+    "return_on_equity_fq",
+    "return_on_assets_fq",
+    "debt_to_equity_fq",
+    "net_margin_ttm",
+]
 
 NUMERIC_COLUMNS = [
     "Penutupan",
@@ -157,6 +171,7 @@ HELP_TEXT = {
     "core_thresholds": "Jika aktif, saham wajib memenuhi inti konservatif: PER <= 15, PBV <= 3, ROE >= 12%, dan NPM >= 7%. Ini tambahan di luar slider umum.",
     "der_banking": "Jika aktif, filter DER maksimum juga diterapkan ke saham Banking. Default mati karena struktur neraca bank berbeda dari non-bank.",
     "history_source": "Online yfinance memakai ticker KODE.JK sebagai sumber histori utama. Excel Metrik tetap tersedia sebagai cadangan/pembanding bila data online kosong.",
+    "fundamental_source": "Fundamental diprioritaskan dari online TradingView scanner bila tersedia, lalu Excel mengisi rasio/metadata yang kosong. Sumber BEI/IDX tetap utama untuk universe kode saham.",
     "history_scope": "Saham pilihan memakai kode yang dipilih manual. All/top N memakai saham teratas dari hasil filter saat ini, biasanya berdasarkan ranking Score setelah filter.",
     "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
     "history_codes": "Masukkan kode IDX tanpa akhiran .JK, misalnya BBCA atau BBRI. Dashboard otomatis memanggil format online BBCA.JK.",
@@ -185,7 +200,7 @@ HELP_TEXT = {
     "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai rekomendasi.",
     "audit_code": "Pilih satu atau beberapa kode saham untuk melihat alasan lolos/gagal pada filter aktif dan preset pembanding.",
     "audit_scope": "Cakupan audit filter. Semua saham mengecek seluruh universe final, Hasil filter aktif hanya saham yang lolos filter sidebar, Kode pilihan untuk investigasi manual.",
-    "universe_audit": "Universe kode saham diprioritaskan dari daftar resmi BEI/IDX. Kode yang tidak ada di BEI/IDX tetapi ada di fallback tetap dipertahankan dan diberi status Excel fallback only.",
+    "universe_audit": "Universe kode saham diprioritaskan dari daftar resmi BEI/IDX. Setelah itu dashboard melengkapi data dari sumber online seperti yfinance dan TradingView scanner, lalu Excel hanya sebagai fallback/ide algoritme.",
     "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih lebih panjang untuk analisis historis, lebih pendek untuk refresh cepat.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
@@ -314,7 +329,7 @@ def build_completeness_report(data):
         "Banking": ["NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"],
         "Histori": ["Return_4W", "Return_13W", "Return_26W", "Return_52W", "Return_YTD"],
         "Scoring": ["Score", "Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Index_Score"],
-        "Sumber Data": ["Price_Source", "Volume_Source", "Universe_Source", "Universe_Diff_Status"],
+        "Sumber Data": ["Price_Source", "Volume_Source", "Fundamental_Source", "Universe_Source", "Universe_Diff_Status"],
     }
     rows = []
     for group, columns in groups.items():
@@ -340,7 +355,7 @@ def build_completeness_report(data):
 
 
 def build_source_mix(data):
-    source_columns = [column for column in ["Price_Source", "Volume_Source", "Data_Source", "Universe_Source", "Universe_Diff_Status"] if column in data.columns]
+    source_columns = [column for column in ["Price_Source", "Volume_Source", "Fundamental_Source", "Data_Source", "Universe_Source", "Universe_Diff_Status"] if column in data.columns]
     rows = []
     for column in source_columns:
         counts = data[column].fillna("Tidak diketahui").astype(str).value_counts().reset_index()
@@ -525,6 +540,59 @@ def load_tradingview_universe():
             }
         )
     return normalize_universe_frame(pd.DataFrame(rows), "TradingView online")
+
+
+@st.cache_data(ttl=ONLINE_REFRESH_TTL, show_spinner=False)
+def load_online_fundamentals():
+    payload = {
+        "columns": TRADINGVIEW_FUNDAMENTAL_COLUMNS,
+        "filter": [{"left": "exchange", "operation": "equal", "right": "IDX"}],
+        "options": {"lang": "en"},
+        "range": [0, 1500],
+        "sort": {"sortBy": "name", "sortOrder": "asc"},
+        "markets": ["indonesia"],
+        "symbols": {"query": {"types": []}, "tickers": []},
+    }
+    try:
+        response = post_json(TRADINGVIEW_SCAN_URL, payload)
+    except Exception as exc:
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["fundamental_source"] = "empty"
+        output.attrs["fundamental_error"] = f"TradingView fundamental gagal: {exc}"
+        return output
+
+    rows = []
+    for item in response.get("data", []):
+        values = item.get("d", [])
+        row = dict(zip(TRADINGVIEW_FUNDAMENTAL_COLUMNS, values))
+        code = clean_stock_code(row.get("name", item.get("s", "").split(":")[-1]))
+        if not code:
+            continue
+        rows.append(
+            {
+                "Kode": code,
+                "Nama_Perusahaan_Online": clean_text(row.get("description"), "-"),
+                "Sektor_Online": clean_text(row.get("sector"), "No Sector"),
+                "Industry_Online": clean_text(row.get("industry"), "No Industry"),
+                "Market_Cap_Online": row.get("market_cap_basic"),
+                "Revenue_Online": row.get("total_revenue"),
+                "PER_Online": row.get("price_earnings_ttm"),
+                "PBV_Online": row.get("price_book_fq"),
+                "ROE_Online": row.get("return_on_equity_fq"),
+                "ROA_Online": row.get("return_on_assets_fq"),
+                "DER_Online": row.get("debt_to_equity_fq"),
+                "NPM_Online": row.get("net_margin_ttm"),
+                "Fundamental_Source": "TradingView scanner",
+            }
+        )
+
+    output = pd.DataFrame(rows).drop_duplicates("Kode") if rows else pd.DataFrame(columns=["Kode"])
+    for column in ["Market_Cap_Online", "Revenue_Online", "PER_Online", "PBV_Online", "ROE_Online", "ROA_Online", "DER_Online", "NPM_Online"]:
+        if column in output.columns:
+            output[column] = pd.to_numeric(output[column], errors="coerce")
+    output.attrs["fundamental_source"] = "TradingView scanner" if not output.empty else "empty"
+    output.attrs["fundamental_error"] = None if not output.empty else "TradingView scanner tidak mengembalikan data fundamental."
+    return output
 
 
 def load_official_idx_universe():
@@ -1630,8 +1698,42 @@ def load_data():
     online_market = build_online_market_frame(universe["Kode"].tolist(), period=ONLINE_LOAD_PERIOD)
     market_source = online_market.attrs.get("market_source", "empty")
     market_error = online_market.attrs.get("market_error")
+    online_fundamentals = load_online_fundamentals()
+    fundamental_source = online_fundamentals.attrs.get("fundamental_source", "empty")
+    fundamental_error = online_fundamentals.attrs.get("fundamental_error")
 
     df = universe.merge(online_market, on="Kode", how="left")
+    if not online_fundamentals.empty:
+        df = df.merge(online_fundamentals, on="Kode", how="left")
+    else:
+        df["Fundamental_Source"] = np.nan
+
+    text_online_columns = {
+        "Nama Perusahaan": "Nama_Perusahaan_Online",
+        "Sektor": "Sektor_Online",
+        "Industry": "Industry_Online",
+    }
+    for column, online_column in text_online_columns.items():
+        if online_column in df.columns:
+            missing = df[column].isna() | df[column].astype(str).str.strip().isin(["", "-", "No Sector", "No Industry", "nan"])
+            df.loc[missing, column] = df.loc[missing, online_column]
+
+    numeric_online_columns = {
+        "PER": "PER_Online",
+        "PBV": "PBV_Online",
+        "ROE": "ROE_Online",
+        "ROA": "ROA_Online",
+        "DER": "DER_Online",
+        "NPM": "NPM_Online",
+        "Mkt Cap": "Market_Cap_Online",
+        "Total Rev": "Revenue_Online",
+    }
+    for column, online_column in numeric_online_columns.items():
+        if online_column in df.columns:
+            if column not in df.columns:
+                df[column] = np.nan
+            df[column] = pd.to_numeric(df[column], errors="coerce").fillna(pd.to_numeric(df[online_column], errors="coerce"))
+
     excel_columns = [
         "Kode",
         "Nama Perusahaan",
@@ -1722,6 +1824,10 @@ def load_data():
                 if "Volume_Source" not in df.columns:
                     df["Volume_Source"] = np.nan
                 df.loc[fill_from_excel, "Volume_Source"] = "Excel fallback"
+            if column in ["PER", "PBV", "ROE", "ROA", "DER", "NPM", "NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"]:
+                if "Fundamental_Source" not in df.columns:
+                    df["Fundamental_Source"] = np.nan
+                df.loc[fill_from_excel & df["Fundamental_Source"].isna(), "Fundamental_Source"] = "Excel fallback"
             df[column] = df[column].fillna(excel_values)
             df = df.drop(columns=[excel_column])
 
@@ -1733,7 +1839,12 @@ def load_data():
         df["Volume_Original"] = df["Volume"]
     df["Price_Source"] = df.get("Price_Source", pd.Series(index=df.index)).fillna("Excel fallback")
     df["Volume_Source"] = df.get("Volume_Source", pd.Series(index=df.index)).fillna("Excel fallback")
-    df["Data_Source"] = np.where(df["Price_Source"].isin(["yfinance", "pandas-datareader", "cache"]), "Online/cache market", "Excel fallback")
+    df["Fundamental_Source"] = df.get("Fundamental_Source", pd.Series(index=df.index)).fillna("Excel fallback")
+    df["Data_Source"] = np.where(
+        df["Price_Source"].isin(["yfinance", "pandas-datareader", "cache"]) | df["Fundamental_Source"].eq("TradingView scanner"),
+        "Online-first mixed",
+        "Excel fallback",
+    )
     df["Turnover"] = df["Penutupan"].fillna(0) * df["Volume"].fillna(0)
     df["Intraday_Range_%"] = np.where(
         df["Penutupan"] > 0,
@@ -1773,14 +1884,17 @@ def load_data():
         if excel_column in df.columns:
             if column not in df.columns:
                 df[column] = np.nan
-            df[column] = df[column].fillna(df[excel_column])
+            missing = df[column].isna() | df[column].astype(str).str.strip().isin(["", "-", "nan"])
+            df.loc[missing, column] = df.loc[missing, excel_column]
             df = df.drop(columns=[excel_column])
     if "Sektor_Metrik" in df.columns:
         missing_sector = df["Sektor"].isna() | df["Sektor"].astype(str).str.strip().isin(["", "-", "No Sector", "nan"])
         df.loc[missing_sector, "Sektor"] = df.loc[missing_sector, "Sektor_Metrik"]
     if "Subindustri" in df.columns:
         missing_industry = df["Industry"].isna() | df["Industry"].astype(str).str.strip().isin(["", "-", "No Industry", "nan"])
-        df.loc[missing_industry, "Industry"] = df.loc[missing_industry, "Subindustri"].fillna(df.get("Industri"))
+        subindustry_values = df.loc[missing_industry, "Subindustri"]
+        industry_values = df.loc[missing_industry, "Industri"] if "Industri" in df.columns else pd.Series(np.nan, index=df.index[missing_industry])
+        df.loc[missing_industry, "Industry"] = subindustry_values.where(subindustry_values.notna(), industry_values)
     if "Index_Metrik" in df.columns:
         index_missing = df["Index"].isna() | df["Index"].astype(str).str.strip().isin(["", "-", "nan"])
         df.loc[index_missing, "Index"] = df.loc[index_missing, "Index_Metrik"]
@@ -1814,10 +1928,11 @@ def load_data():
             df[column] = df[column].fillna(df[threshold_column])
             df = df.drop(columns=[threshold_column])
     df = apply_threshold_profile(df)
-    raw.attrs["data_source"] = f"{summarize_universe_source(universe)}; Market {market_source}"
+    raw.attrs["data_source"] = f"{summarize_universe_source(universe)}; Market {market_source}; Fundamental {fundamental_source}"
     raw.attrs["online_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     raw.attrs["universe_error"] = universe_error
     raw.attrs["market_error"] = market_error
+    raw.attrs["fundamental_error"] = fundamental_error
     return df, raw
 
 
@@ -1963,12 +2078,14 @@ data_update_label = get_data_update_label(raw_df, data_file_status)
 
 st.title("Dashboard Rekomendasi Saham IDX")
 st.caption(
-    f"Data online-first, update {data_update_label}. yfinance menjadi sumber harga/histori utama; {DATA_FILE} dipakai sebagai cadangan rasio/fundamental. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
+    f"Data online-first, update {data_update_label}. Universe kode diprioritaskan dari BEI/IDX; yfinance mengisi harga/histori; TradingView scanner mengisi fundamental online; {DATA_FILE} menjadi fallback dan acuan metodologi. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
 )
 if raw_df.attrs.get("universe_error"):
     st.warning(f"Daftar kode online memakai fallback. Detail: {raw_df.attrs.get('universe_error')}")
 if raw_df.attrs.get("market_error"):
     st.warning(f"Sebagian data pasar online memakai fallback/cache. Detail: {raw_df.attrs.get('market_error')}")
+if raw_df.attrs.get("fundamental_error"):
+    st.warning(f"Sebagian data fundamental online memakai fallback Excel. Detail: {raw_df.attrs.get('fundamental_error')}")
 
 with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=False):
     st.markdown(
@@ -2021,6 +2138,11 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - Kombinasi yang rapi: pilih profil `Defensive` bila ingin bobot lebih hati-hati, lalu pilih preset filter `Konservatif Aman` bila ingin hasil yang lolos data dan rasio lebih ketat.
 
         Gunakan hasil ini sebagai screener awal. Keputusan investasi tetap perlu cek berita, laporan keuangan, aksi korporasi, dan diversifikasi portofolio.
+
+        **Prioritas sumber data**
+        1. BEI/IDX resmi untuk universe kode saham dan metadata listing.
+        2. Sumber online pelengkap: yfinance untuk harga/histori dan TradingView scanner untuk fundamental massal.
+        3. Excel dipakai terakhir sebagai fallback, audit pembanding, dan acuan ide algoritme sampai seluruh kolom penting punya sumber online yang stabil.
         """
     )
 
@@ -2246,7 +2368,7 @@ with tab_summary:
             st.plotly_chart(fig, width="stretch")
         with chart_cols[2]:
             source_mix = build_source_mix(summary_data)
-            source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Universe_Diff_Status"])].copy()
+            source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Universe_Diff_Status"])].copy()
             if source_view.empty:
                 st.info("Ringkasan sumber data belum tersedia.")
             else:
@@ -2286,6 +2408,7 @@ with tab_summary:
                 "Subsektor",
                 "Subindustri",
                 "Price_Source",
+                "Fundamental_Source",
                 "Universe_Diff_Status",
             ]
             top_summary = summary_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
@@ -2472,6 +2595,7 @@ with tab_reco:
             "Index_Count_Metrik",
             "Price_Source",
             "Volume_Source",
+            "Fundamental_Source",
             "Data_Source",
             "Universe_Source",
             "Universe_Diff_Status",
@@ -2506,6 +2630,7 @@ with tab_reco:
             "Market_Cap",
             "Index_Count",
             "Price_Source",
+            "Fundamental_Source",
             "Volume_Source",
             "Universe_Diff_Status",
             "Safety_Notes",
@@ -2543,6 +2668,7 @@ with tab_reco:
                 "Index_Count_Sigma": st.column_config.NumberColumn("Sigma i", format="%.0f", help="Nilai coverage indeks dari kolom Sigma i >= 7 di Excel fallback bila tersedia."),
                 "Index_Count_Metrik": st.column_config.NumberColumn("Index Count Metrik", format="%.0f", help="Jumlah indeks dari daftar gabungan pada sheet Metrik."),
                 "Price_Source": st.column_config.TextColumn("Sumber Harga", help="Menunjukkan apakah harga berasal dari yfinance/cache atau Excel fallback."),
+                "Fundamental_Source": st.column_config.TextColumn("Sumber Fundamental", help=HELP_TEXT["fundamental_source"]),
                 "Volume_Original": st.column_config.NumberColumn("Volume Excel", format="%.0f", help="Volume dari Excel fallback bila tersedia."),
                 "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari yfinance/cache."),
                 "Volume_Source": st.column_config.TextColumn("Sumber Volume", help="Menunjukkan apakah volume berasal dari yfinance/cache atau Excel fallback."),
@@ -2999,7 +3125,7 @@ with tab_quality:
             if source_mix.empty:
                 st.info("Ringkasan sumber data belum tersedia.")
             else:
-                source_focus = source_mix[source_mix["Area"].isin(["Price_Source", "Volume_Source", "Universe_Diff_Status"])]
+                source_focus = source_mix[source_mix["Area"].isin(["Price_Source", "Volume_Source", "Fundamental_Source", "Universe_Diff_Status"])]
                 fig = px.bar(
                     source_focus,
                     x="Jumlah",
@@ -3175,12 +3301,12 @@ with tab_quality:
     with st.expander("Workflow rutin yang disarankan", expanded=True):
         st.markdown(
             """
-            1. Biarkan dashboard mengambil universe kode dari daftar resmi BEI/IDX, lalu harga/histori dari yfinance.
-            2. Buka `Audit sumber kode saham` untuk memastikan kode BEI/IDX dan kode fallback terbaca jelas.
-            3. Jalankan `Refresh cache histori top saham` di sidebar untuk memperbarui cache online.
-            4. Cek tab `Data Quality` bila banyak harga/volume/return jatuh ke fallback.
-            5. Update `Ringkasan.xlsx` hanya bila rasio fundamental, metrik bank, sektor, atau kode fallback perlu diperbaiki.
-            6. Cek Top Rekomendasi, terutama saham dengan score tinggi tetapi volume rendah, PER negatif, atau threshold rendah.
+            1. Ambil universe kode dari daftar resmi BEI/IDX sebagai sumber utama.
+            2. Lengkapi harga/histori dari yfinance dan fundamental massal dari TradingView scanner.
+            3. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
+            4. Buka `Audit sumber kode saham` dan `Kelengkapan kolom & sumber data` untuk memastikan fallback terlihat jelas.
+            5. Jalankan `Refresh cache histori top saham` di sidebar untuk memperbarui cache online.
+            6. Update `Ringkasan.xlsx` hanya bila ada data offline yang lebih baik atau ide algoritme baru yang perlu diuji.
             7. Simpan/export hasil rekomendasi hanya setelah check High severity terkendali.
             """
         )

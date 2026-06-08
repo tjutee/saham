@@ -17,9 +17,10 @@ README.md
 
 `Ringkasan.xlsx` berfungsi sebagai fallback. Aplikasi mengambil universe kode
 saham dari endpoint resmi BEI/IDX lebih dulu, mengambil harga/histori dari
-online, lalu memakai Excel untuk rasio fundamental, metrik bank, sektor, dan
-cadangan data yang belum tersedia online. Sheet `Metrik` juga dipakai untuk
-market cap, revenue, subsektor, industri, subindustri, dan daftar indeks.
+online, melengkapi fundamental massal dari TradingView scanner, lalu memakai
+Excel untuk rasio/metrik yang masih kosong, metrik bank, sektor, dan cadangan
+data yang belum tersedia online. Sheet `Metrik` juga dipakai untuk market cap,
+revenue, subsektor, industri, subindustri, dan daftar indeks.
 
 File yang tidak perlu di-upload:
 
@@ -58,9 +59,10 @@ Pastikan koneksi internet Streamlit Cloud aktif dan dependency di
 
 1. daftar kode saham online dari endpoint resmi BEI/IDX, lalu fallback TradingView/StockAnalysis,
 2. harga/histori dari `yfinance`,
-3. fallback `pandas-datareader`,
-4. cache lokal,
-5. `Ringkasan.xlsx` untuk kolom yang masih kosong.
+3. fundamental massal dari TradingView scanner,
+4. fallback `pandas-datareader`,
+5. cache lokal,
+6. `Ringkasan.xlsx` untuk kolom yang masih kosong.
 
 Setelah deploy, cek tab `Ringkasan` untuk memastikan sumber harga, status kode,
 dan distribusi rekomendasi terbaca wajar. Lalu cek tab `Data Quality` ->
