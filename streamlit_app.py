@@ -229,6 +229,7 @@ HELP_TEXT = {
     "sector_relative": "Sector_Relative_Score membandingkan valuasi dan kualitas saham terhadap sektor yang sama. Ini membantu mengurangi bias karena PER/PBV/ROE wajar berbeda antar sektor.",
     "explainability": "Decision_Summary, Top_Strengths, Top_Risks, dan Action_Checklist menjelaskan faktor utama di balik ranking agar keputusan tidak menjadi black box.",
     "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
+    "position_sizing": "Position sizing menghitung estimasi lot dari modal, risiko per transaksi, harga terakhir, dan ATR stop. Ini alat perencanaan risiko, bukan instruksi order.",
     "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. Periode lebih panjang memberi lebih banyak event, tetapi lebih lambat.",
     "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan simulasi broker penuh.",
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
@@ -2226,6 +2227,48 @@ def add_trade_risk_levels(technical_decision):
     return output
 
 
+def build_position_plan(close, stop_price, capital, risk_pct, max_position_pct=25.0, lot_size=100):
+    close = pd.to_numeric(pd.Series([close]), errors="coerce").iloc[0]
+    stop_price = pd.to_numeric(pd.Series([stop_price]), errors="coerce").iloc[0]
+    capital = pd.to_numeric(pd.Series([capital]), errors="coerce").iloc[0]
+    risk_pct = pd.to_numeric(pd.Series([risk_pct]), errors="coerce").iloc[0]
+    max_position_pct = pd.to_numeric(pd.Series([max_position_pct]), errors="coerce").iloc[0]
+
+    if pd.isna(close) or pd.isna(stop_price) or pd.isna(capital) or pd.isna(risk_pct):
+        return {"Valid": False, "Reason": "Input harga, stop, modal, atau risiko belum valid."}
+    if close <= 0 or stop_price <= 0 or capital <= 0 or risk_pct <= 0:
+        return {"Valid": False, "Reason": "Harga, stop, modal, dan risiko harus lebih dari 0."}
+    risk_per_share = close - stop_price
+    if risk_per_share <= 0:
+        return {"Valid": False, "Reason": "Stop price harus di bawah harga terakhir untuk long position."}
+
+    risk_budget = capital * risk_pct / 100
+    raw_shares_by_risk = risk_budget / risk_per_share
+    max_position_value = capital * max_position_pct / 100
+    raw_shares_by_cap = max_position_value / close
+    shares = min(raw_shares_by_risk, raw_shares_by_cap)
+    lots = int(np.floor(shares / lot_size))
+    final_shares = lots * lot_size
+    position_value = final_shares * close
+    estimated_loss = final_shares * risk_per_share
+    capital_used_pct = position_value / capital * 100 if capital > 0 else np.nan
+    risk_used_pct = estimated_loss / capital * 100 if capital > 0 else np.nan
+
+    return {
+        "Valid": lots > 0,
+        "Reason": "OK" if lots > 0 else "Modal/risiko terlalu kecil untuk minimal 1 lot pada stop ini.",
+        "Risk_Budget": risk_budget,
+        "Risk_Per_Share": risk_per_share,
+        "Lots": lots,
+        "Shares": final_shares,
+        "Position_Value": position_value,
+        "Estimated_Loss": estimated_loss,
+        "Capital_Used_%": capital_used_pct,
+        "Risk_Used_%": risk_used_pct,
+        "Max_Position_Value": max_position_value,
+    }
+
+
 def calculate_window_return(group, days):
     if group.empty:
         return np.nan
@@ -3254,6 +3297,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Sector Relative Score**: perbandingan valuasi dan kualitas terhadap saham lain dalam sektor yang sama.
         - **Decision Summary / Top Strengths / Top Risks**: ringkasan alasan kuantitatif agar ranking mudah diaudit.
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
+        - **Position sizing**: estimasi lot berdasarkan modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan.
         - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
         - **Walk-forward**: validasi event berurutan yang membandingkan performa train dan out-of-sample agar sinyal tidak hanya bagus secara agregat.
         - **Clean_Data**: penanda bahwa data dan rasio utama lolos filter kebersihan minimum.
@@ -3270,6 +3314,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - `Entry_Action`: fundamental memilih saham layak, teknikal menentukan timing untuk calon pembelian.
         - `Position_Action`: teknikal dan fundamental memberi arahan hold/reduce/take profit/exit untuk saham yang sudah dimiliki.
         - `ATR_Stop_2x = Close - 2 x ATR14`.
+        - `Lot estimasi = min(risk budget / risk per share, max position value / close) / 100`, lalu dibulatkan ke bawah.
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
         - `Walk-forward Decay = Avg Return out-of-sample - Avg Return train`.
         - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable * 100`.
@@ -4583,6 +4628,71 @@ with tab_history:
                         "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                     },
                 )
+
+                with st.expander("Trade plan & position sizing", expanded=True):
+                    st.caption("Gunakan sebagai alat perencanaan risiko. Dashboard tidak memakai harga beli pribadi dan tidak membuat instruksi order otomatis.")
+                    close_value = pd.to_numeric(latest_tech.get("Close"), errors="coerce")
+                    atr_stop_value = pd.to_numeric(latest_tech.get("ATR_Stop_2x"), errors="coerce")
+                    plan_cols = st.columns([1, 1, 1, 1])
+                    with plan_cols[0]:
+                        portfolio_capital = st.number_input(
+                            "Modal portofolio",
+                            min_value=100_000,
+                            value=10_000_000,
+                            step=100_000,
+                            format="%d",
+                            help=HELP_TEXT["position_sizing"],
+                        )
+                    with plan_cols[1]:
+                        risk_per_trade_pct = st.number_input(
+                            "Risiko per transaksi (%)",
+                            min_value=0.1,
+                            max_value=10.0,
+                            value=1.0,
+                            step=0.1,
+                            help=HELP_TEXT["position_sizing"],
+                        )
+                    with plan_cols[2]:
+                        max_position_pct = st.number_input(
+                            "Maks posisi (% modal)",
+                            min_value=1.0,
+                            max_value=100.0,
+                            value=25.0,
+                            step=1.0,
+                            help="Batas nilai posisi agar ukuran lot tidak terlalu besar walau stop dekat.",
+                        )
+                    with plan_cols[3]:
+                        stop_override = st.number_input(
+                            "Stop override",
+                            min_value=0,
+                            value=int(atr_stop_value) if pd.notna(atr_stop_value) and atr_stop_value > 0 else 0,
+                            step=1,
+                            format="%d",
+                            help="Isi 0 untuk memakai ATR_Stop_2x. Isi angka lain untuk skenario stop manual.",
+                        )
+
+                    stop_for_plan = stop_override if stop_override > 0 else atr_stop_value
+                    plan = build_position_plan(close_value, stop_for_plan, portfolio_capital, risk_per_trade_pct, max_position_pct)
+                    if not plan.get("Valid"):
+                        st.warning(plan.get("Reason", "Trade plan belum valid."))
+                    else:
+                        plan_metric_cols = st.columns(6)
+                        plan_metric_cols[0].metric("Harga", format_rupiah(close_value))
+                        plan_metric_cols[1].metric("Stop plan", format_rupiah(stop_for_plan))
+                        plan_metric_cols[2].metric("Lot estimasi", f"{plan['Lots']:,}")
+                        plan_metric_cols[3].metric("Nilai posisi", format_large_rupiah(plan["Position_Value"]), f"{plan['Capital_Used_%']:.1f}% modal")
+                        plan_metric_cols[4].metric("Risiko Rp", format_large_rupiah(plan["Estimated_Loss"]), f"{plan['Risk_Used_%']:.2f}% modal")
+                        plan_metric_cols[5].metric("Risk/share", format_rupiah(plan["Risk_Per_Share"]))
+
+                        plan_table = pd.DataFrame(
+                            [
+                                {"Item": "Risk budget", "Value": format_large_rupiah(plan["Risk_Budget"]), "Catatan": f"{risk_per_trade_pct:.1f}% dari modal"},
+                                {"Item": "Maks nilai posisi", "Value": format_large_rupiah(plan["Max_Position_Value"]), "Catatan": f"{max_position_pct:.1f}% dari modal"},
+                                {"Item": "Saham", "Value": f"{plan['Shares']:,} lembar", "Catatan": "Dibulatkan ke lot IDX 100 saham"},
+                                {"Item": "Estimasi rugi jika stop kena", "Value": format_large_rupiah(plan["Estimated_Loss"]), "Catatan": "Belum memperhitungkan fee, slippage, dan gap harga"},
+                            ]
+                        )
+                        show_table(plan_table, hide_index=True)
 
                 price_panel = tech_history.copy()
                 fig = go.Figure()

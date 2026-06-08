@@ -125,6 +125,7 @@ score fundamental utama.
 - `Position_Action`: rekomendasi untuk saham yang sudah dimiliki, misalnya `Hold`, `Take Profit`, `Reduce`, atau `Exit / Sell`.
 - `Exit_Risk`: risiko keluar/pengetatan posisi dari kombinasi fundamental dan teknikal.
 - `ATR_Stop_2x`: zona risiko teknikal berbasis dua kali ATR dari harga terakhir, bukan instruksi order otomatis.
+- `Trade Plan & Position Sizing`: estimasi lot dari modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan. Hasil belum memperhitungkan fee, slippage, atau gap harga.
 
 Dashboard tidak memakai harga beli pribadi, sehingga `Position_Action` adalah
 arah umum berbasis kondisi saham terbaru.
@@ -152,6 +153,7 @@ Layer teknikal terpisah dari score fundamental:
 - Entry Action memakai fundamental sebagai gerbang awal, lalu teknikal untuk timing pembelian.
 - Position Action memberi arahan umum hold/reduce/take profit/exit untuk saham yang sudah dimiliki tanpa memakai harga beli pribadi.
 - ATR Stop 2x membantu membaca zona risiko teknikal.
+- Position sizing menghitung lot estimasi dengan risk budget / risk per share dan dibatasi maksimum nilai posisi.
 
 Layer explainability:
 
