@@ -2204,7 +2204,16 @@ def load_data():
         if online_column in df.columns:
             if column not in df.columns:
                 df[column] = np.nan
-            df[column] = pd.to_numeric(df[column], errors="coerce").fillna(pd.to_numeric(df[online_column], errors="coerce"))
+            online_values = pd.to_numeric(df[online_column], errors="coerce")
+            has_online_value = online_values.notna()
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+            df.loc[has_online_value, column] = online_values[has_online_value]
+
+    online_fundamental_fields = [column for column in numeric_online_columns.values() if column in df.columns]
+    if online_fundamental_fields:
+        df["Online_Fundamental_Field_Count"] = df[online_fundamental_fields].notna().sum(axis=1)
+    else:
+        df["Online_Fundamental_Field_Count"] = 0
 
     excel_columns = [
         "Kode",
@@ -2271,6 +2280,7 @@ def load_data():
         "Index_Count_Raw",
         "Index_Count_Sigma",
     ]
+    excel_fundamental_fill_count = pd.Series(0, index=df.index, dtype="int64")
     for column in text_columns:
         excel_column = f"{column}_Excel"
         if column not in df.columns:
@@ -2300,8 +2310,19 @@ def load_data():
                 if "Fundamental_Source" not in df.columns:
                     df["Fundamental_Source"] = np.nan
                 df.loc[fill_from_excel & df["Fundamental_Source"].isna(), "Fundamental_Source"] = "Excel fallback"
+                excel_fundamental_fill_count = excel_fundamental_fill_count + fill_from_excel.astype("int64")
             df[column] = df[column].fillna(excel_values)
             df = df.drop(columns=[excel_column])
+    fundamental_metric_columns = [
+        column
+        for column in ["PER", "PBV", "ROE", "ROA", "DER", "NPM", "NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"]
+        if column in df.columns
+    ]
+    final_fundamental_field_count = df[fundamental_metric_columns].notna().sum(axis=1) if fundamental_metric_columns else pd.Series(0, index=df.index)
+    df["Excel_Fundamental_Field_Count"] = (
+        final_fundamental_field_count
+        - pd.to_numeric(df.get("Online_Fundamental_Field_Count", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
+    ).clip(lower=0)
 
     index_missing = df["Index"].isna() | df["Index"].astype(str).str.strip().eq("")
     df.loc[index_missing, "Index"] = df.loc[index_missing, "Universe_Source"]
@@ -2569,7 +2590,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Ringkasan**: snapshot eksekutif berisi kondisi universe, sumber data, distribusi rekomendasi, top kandidat, dan matriks faktor.
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
-        - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
+        - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, ringkasan teknikal top kandidat, candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
         - **Kualitas Data**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
         - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
@@ -3106,6 +3127,8 @@ with tab_reco:
             "Index_Count",
             "Index_Count_Sigma",
             "Index_Count_Metrik",
+            "Online_Fundamental_Field_Count",
+            "Excel_Fundamental_Field_Count",
             "Price_Source",
             "Volume_Source",
             "Fundamental_Source",
@@ -3128,7 +3151,6 @@ with tab_reco:
             "Kode",
             "Nama Perusahaan",
             "Recommendation",
-            "Safety_Recommendation",
             "Risk_Level",
             "Clean_Data",
             "Score",
@@ -3140,15 +3162,10 @@ with tab_reco:
             "DER",
             "Return_52W",
             "Volume",
-            "Market_Cap",
-            "Index_Count",
             "Price_Source",
             "Fundamental_Source",
-            "Volume_Source",
-            "Universe_Diff_Status",
             "Safety_Notes",
             "Sektor",
-            "Industry",
         ]
         selected_table_columns = st.multiselect(
             "Kolom tabel",
@@ -3179,6 +3196,8 @@ with tab_reco:
                 "Index_Count": st.column_config.NumberColumn("Index Count", format="%.0f", help=HELP_TEXT["index_strength"]),
                 "Index_Count_Sigma": st.column_config.NumberColumn("Sigma i", format="%.0f", help="Nilai coverage indeks dari kolom Sigma i >= 7 di Excel fallback bila tersedia."),
                 "Index_Count_Metrik": st.column_config.NumberColumn("Index Count Metrik", format="%.0f", help="Jumlah indeks dari daftar gabungan pada sheet Metrik."),
+                "Online_Fundamental_Field_Count": st.column_config.NumberColumn("Field Online", format="%.0f", help="Jumlah rasio fundamental utama yang tersedia dari TradingView scanner online."),
+                "Excel_Fundamental_Field_Count": st.column_config.NumberColumn("Field Excel", format="%.0f", help="Jumlah rasio fundamental yang masih diisi dari Excel fallback karena sumber online kosong."),
                 "Price_Source": st.column_config.TextColumn("Sumber Harga", help="Menunjukkan apakah harga berasal dari yfinance/cache atau Excel fallback."),
                 "Fundamental_Source": st.column_config.TextColumn("Sumber Fundamental", help=HELP_TEXT["fundamental_source"]),
                 "Volume_Original": st.column_config.NumberColumn("Volume Excel", format="%.0f", help="Volume dari Excel fallback bila tersedia."),
@@ -3509,9 +3528,53 @@ with tab_history:
             chart_style = st.segmented_control("Chart harga", ["Candlestick", "Line"], default="Candlestick")
 
         load_technical = st.toggle("Tampilkan hasil analisa teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari refresh online sementara.")
+        show_auto_scan = st.toggle("Tampilkan ringkasan teknikal top kandidat", value=True, help="Menghitung teknikal otomatis untuk maksimal 5 saham teratas dari hasil filter agar keputusan entry/posisi langsung terlihat.")
         if not load_technical:
             st.info("Aktifkan toggle di atas untuk menampilkan Entry Action, Position Action, candlestick, MA, RSI, MACD, ATR, dan Technical Score.")
         else:
+            if show_auto_scan:
+                auto_scan_codes = technical_source.head(min(5, len(technical_codes)))["Kode"].tolist()
+                if auto_scan_codes:
+                    with st.spinner("Menghitung ringkasan teknikal top kandidat..."):
+                        auto_history, auto_error, auto_source_label = fetch_yahoo_history(auto_scan_codes, period=technical_period)
+                        auto_indicators = build_technical_indicators(auto_history)
+                        auto_summary = summarize_technical_indicators(auto_indicators)
+                    if auto_error:
+                        st.warning(auto_error)
+                    if not auto_summary.empty:
+                        auto_summary = add_entry_decision(auto_summary, scored_df)
+                        auto_summary["Entry_Action"] = pd.Categorical(auto_summary["Entry_Action"], categories=ENTRY_ACTION_ORDER, ordered=True)
+                        auto_summary["Position_Action"] = pd.Categorical(auto_summary["Position_Action"], categories=POSITION_ACTION_ORDER, ordered=True)
+                        auto_summary = auto_summary.sort_values(
+                            ["Entry_Action", "Position_Action", "Technical_Score", "Score"],
+                            ascending=[True, True, False, False],
+                        )
+                        st.markdown("**Ringkasan teknikal top kandidat**")
+                        st.caption(f"Sumber ringkasan: {auto_source_label}. Maksimal 5 saham teratas dari hasil filter/ranking saat ini.")
+                        summary_cols = [
+                            "Kode",
+                            "Nama Perusahaan",
+                            "Score",
+                            "Recommendation",
+                            "Entry_Action",
+                            "Position_Action",
+                            "Exit_Risk",
+                            "Technical_Score",
+                            "Technical_Signal",
+                            "RSI14",
+                            "Timing_Reason",
+                            "Position_Reason",
+                        ]
+                        show_table(
+                            auto_summary[[column for column in summary_cols if column in auto_summary.columns]],
+                            hide_index=True,
+                            column_config={
+                                "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
+                                "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                                "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
+                            },
+                        )
+
             tech_history, tech_error, tech_source_label = fetch_yahoo_history([technical_code], period=technical_period)
             if tech_error:
                 st.warning(tech_error)
@@ -4098,8 +4161,8 @@ with tab_quality:
         st.markdown(
             """
             1. Ambil universe kode dari daftar resmi BEI/IDX sebagai sumber utama.
-            2. Lengkapi harga/histori dari yfinance dan fundamental massal dari TradingView scanner.
-            3. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
+        2. Lengkapi harga/histori dari yfinance dan fundamental massal dari TradingView scanner; nilai online valid diprioritaskan di atas Excel.
+        3. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
             4. Buka `Audit sumber kode saham` dan `Kelengkapan kolom & sumber data` untuk memastikan fallback terlihat jelas.
             5. Jalankan `Refresh cache histori top saham` di sidebar untuk memperbarui cache online.
             6. Update `Ringkasan.xlsx` hanya bila ada data offline yang lebih baik atau ide algoritme baru yang perlu diuji.
