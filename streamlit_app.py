@@ -226,6 +226,9 @@ HELP_TEXT = {
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif. Kosongkan pilihan untuk menampilkan semua sinyal.",
     "entry_action": "Entry_Action menggabungkan fundamental dan teknikal: fundamental memilih saham layak, teknikal menentukan timing entry/tunggu/tahan/take profit. Kosongkan filter untuk menampilkan semua aksi entry.",
     "position_action": "Position_Action adalah arahan umum untuk saham yang sudah dimiliki, tanpa memakai harga beli pribadi. Kosongkan filter untuk menampilkan semua aksi posisi.",
+    "sector_relative": "Sector_Relative_Score membandingkan valuasi dan kualitas saham terhadap sektor yang sama. Ini membantu mengurangi bias karena PER/PBV/ROE wajar berbeda antar sektor.",
+    "explainability": "Decision_Summary, Top_Strengths, Top_Risks, dan Action_Checklist menjelaskan faktor utama di balik ranking agar keputusan tidak menjadi black box.",
+    "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -1139,6 +1142,114 @@ def add_safety_flags(scored):
     return output
 
 
+def grouped_percentile_score(dataframe, group_column, value_column, higher_is_better=True, min_group_size=5):
+    values = pd.to_numeric(dataframe.get(value_column, pd.Series(np.nan, index=dataframe.index)), errors="coerce")
+    groups = dataframe.get(group_column, pd.Series("All", index=dataframe.index)).fillna("All").astype(str)
+    output = pd.Series(50.0, index=dataframe.index)
+
+    for _, index in groups.groupby(groups).groups.items():
+        group_values = values.loc[index]
+        valid_values = group_values.dropna()
+        if len(valid_values) < min_group_size:
+            continue
+        ranks = valid_values.rank(method="average", ascending=True)
+        if len(valid_values) == 1:
+            scores = pd.Series(50.0, index=valid_values.index)
+        elif higher_is_better:
+            scores = (ranks - 1) / (len(valid_values) - 1) * 100
+        else:
+            scores = (len(valid_values) - ranks) / (len(valid_values) - 1) * 100
+        output.loc[scores.index] = scores.clip(0, 100)
+    return output
+
+
+def add_sector_relative_scores(scored):
+    output = scored.copy()
+    group_column = "Sektor" if "Sektor" in output.columns else "Industry"
+
+    output["Sector_PER_Score"] = grouped_percentile_score(output, group_column, "PER", higher_is_better=False)
+    output["Sector_PBV_Score"] = grouped_percentile_score(output, group_column, "PBV", higher_is_better=False)
+    output["Sector_ROE_Score"] = grouped_percentile_score(output, group_column, "ROE", higher_is_better=True)
+    output["Sector_ROA_Score"] = grouped_percentile_score(output, group_column, "ROA", higher_is_better=True)
+    output["Sector_NPM_Score"] = grouped_percentile_score(output, group_column, "NPM", higher_is_better=True)
+    output["Sector_Valuation_Score"] = output["Sector_PER_Score"] * 0.58 + output["Sector_PBV_Score"] * 0.42
+    output["Sector_Quality_Score"] = (
+        output["Sector_ROE_Score"] * 0.45
+        + output["Sector_ROA_Score"] * 0.30
+        + output["Sector_NPM_Score"] * 0.25
+    )
+    output["Sector_Relative_Score"] = (
+        output["Sector_Valuation_Score"] * 0.45
+        + output["Sector_Quality_Score"] * 0.40
+        + output.get("Liquidity_Score", pd.Series(50, index=output.index)) * 0.15
+    ).clip(0, 100).round(1)
+    output["Sector_Relative_Label"] = np.select(
+        [
+            output["Sector_Relative_Score"].ge(75),
+            output["Sector_Relative_Score"].ge(60),
+            output["Sector_Relative_Score"].lt(40),
+        ],
+        ["Unggul sektor", "Kompetitif", "Lemah sektor"],
+        default="Netral sektor",
+    )
+    return output
+
+
+def add_decision_explainability(scored):
+    output = scored.copy()
+    factor_labels = {
+        "Valuation_Score": "valuasi",
+        "Quality_Score": "kualitas profit",
+        "Risk_Score": "risiko relatif",
+        "Liquidity_Score": "likuiditas",
+        "Momentum_Score": "momentum",
+        "Index_Score": "coverage indeks",
+        "Sector_Relative_Score": "relatif sektor",
+    }
+
+    summaries = []
+    strengths = []
+    risks = []
+    checklists = []
+    for _, row in output.iterrows():
+        factor_values = {
+            label: pd.to_numeric(row.get(column), errors="coerce")
+            for column, label in factor_labels.items()
+        }
+        valid_factors = {label: value for label, value in factor_values.items() if pd.notna(value)}
+        top_strengths = sorted(valid_factors.items(), key=lambda item: item[1], reverse=True)[:3]
+        weak_factors = sorted(valid_factors.items(), key=lambda item: item[1])[:3]
+
+        strengths.append(", ".join(f"{label} {value:.0f}" for label, value in top_strengths) if top_strengths else "-")
+        risks.append(", ".join(f"{label} {value:.0f}" for label, value in weak_factors) if weak_factors else "-")
+
+        checklist = []
+        if not bool(row.get("Clean_Data", False)):
+            checklist.append("validasi data")
+        if clean_text(row.get("Risk_Level")) == "High":
+            checklist.append("kurangi risiko")
+        if pd.to_numeric(row.get("Sector_Relative_Score"), errors="coerce") < 45:
+            checklist.append("bandingkan ulang sektor")
+        if pd.to_numeric(row.get("Threshold_Pass_Ratio"), errors="coerce") < 65:
+            checklist.append("cek threshold")
+        if pd.to_numeric(row.get("Momentum_Score"), errors="coerce") < 45:
+            checklist.append("tunggu momentum")
+        if not checklist:
+            checklist.append("konfirmasi teknikal")
+        checklists.append(", ".join(checklist))
+
+        recommendation = clean_text(row.get("Recommendation"), "Avoid")
+        sector_label = clean_text(row.get("Sector_Relative_Label"), "Netral sektor")
+        risk_level = clean_text(row.get("Risk_Level"), "High")
+        summaries.append(f"{recommendation}; {sector_label}; risiko {risk_level}")
+
+    output["Top_Strengths"] = strengths
+    output["Top_Risks"] = risks
+    output["Action_Checklist"] = checklists
+    output["Decision_Summary"] = summaries
+    return output
+
+
 def make_filter_criteria(
     name,
     price_range,
@@ -1803,7 +1914,34 @@ def add_entry_decision(technical_summary, scored):
     output = technical_summary.merge(scored[available_columns], on="Kode", how="left")
     entry_decision = output.apply(build_entry_decision, axis=1)
     position_decision = output.apply(build_position_decision, axis=1)
-    return pd.concat([output, entry_decision, position_decision], axis=1)
+    output = pd.concat([output, entry_decision, position_decision], axis=1)
+    return add_trade_risk_levels(output)
+
+
+def add_trade_risk_levels(technical_decision):
+    if technical_decision.empty:
+        return technical_decision
+    output = technical_decision.copy()
+    close = pd.to_numeric(output.get("Close", pd.Series(np.nan, index=output.index)), errors="coerce")
+    atr = pd.to_numeric(output.get("ATR14", pd.Series(np.nan, index=output.index)), errors="coerce")
+    atr_pct = pd.to_numeric(output.get("ATR_%", pd.Series(np.nan, index=output.index)), errors="coerce")
+    output["ATR_Stop_2x"] = (close - 2 * atr).where(close.gt(0) & atr.gt(0))
+    output["ATR_Stop_Distance_%"] = (2 * atr / close.replace(0, np.nan) * 100).where(close.gt(0) & atr.gt(0))
+    output["Position_Risk_Bucket"] = np.select(
+        [
+            atr_pct.ge(8),
+            atr_pct.ge(5),
+            atr_pct.lt(3),
+        ],
+        ["High volatility", "Medium volatility", "Low volatility"],
+        default="Normal volatility",
+    )
+    output["Risk_Note"] = np.where(
+        output["ATR_Stop_2x"].notna(),
+        "2x ATR stop sebagai zona risiko teknikal, bukan instruksi order otomatis.",
+        "ATR belum cukup untuk menghitung zona risiko.",
+    )
+    return output
 
 
 def calculate_window_return(group, days):
@@ -2616,6 +2754,9 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Entry Action**: arahan untuk calon pembelian. Fundamental menjadi gerbang awal, teknikal menentukan timing entry/tunggu/hindari.
         - **Position Action**: arahan umum untuk saham yang sudah dimiliki tanpa memakai harga beli pribadi, misalnya Hold, Take Profit, Reduce, atau Exit / Sell.
         - **Exit Risk**: risiko keluar/pengetatan posisi berdasarkan kombinasi fundamental dan teknikal, bukan perhitungan profit pribadi.
+        - **Sector Relative Score**: perbandingan valuasi dan kualitas terhadap saham lain dalam sektor yang sama.
+        - **Decision Summary / Top Strengths / Top Risks**: ringkasan alasan kuantitatif agar ranking mudah diaudit.
+        - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
         - **Clean_Data**: penanda bahwa data dan rasio utama lolos filter kebersihan minimum.
         - **Safety_Recommendation**: ringkasan kelayakan data seperti `Bersih - Strong`; di kartu utama ditampilkan sebagai `Data`, bukan jaminan aman investasi.
         - **Safety_Notes**: alasan saham perlu direview, misalnya volume rendah, rasio kosong, threshold rendah, atau risiko tinggi.
@@ -2626,8 +2767,10 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         **Rumus ringkas**
         - `Score = weighted average(Valuation, Quality, Risk, Liquidity, Momentum, Index) - Penalty`, lalu dibatasi 0-100.
         - `Technical_Score = Trend 30% + RSI 20% + MACD 20% + Volume 15% + Volatilitas 15%`.
+        - `Sector_Relative_Score = Valuasi relatif sektor 45% + Kualitas relatif sektor 40% + Likuiditas 15%`.
         - `Entry_Action`: fundamental memilih saham layak, teknikal menentukan timing untuk calon pembelian.
         - `Position_Action`: teknikal dan fundamental memberi arahan hold/reduce/take profit/exit untuk saham yang sudah dimiliki.
+        - `ATR_Stop_2x = Close - 2 x ATR14`.
         - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable * 100`.
         - `Turnover = Penutupan * Volume`.
         - `Return Total = Harga Akhir / Harga Awal - 1`.
@@ -2778,6 +2921,8 @@ forced_threshold_mode = None if threshold_source.startswith("Auto") else thresho
 threshold_df = apply_threshold_profile(df, forced_mode=forced_threshold_mode)
 scored_df = calculate_scores(threshold_df, weights)
 scored_df = add_safety_flags(scored_df)
+scored_df = add_sector_relative_scores(scored_df)
+scored_df = add_decision_explainability(scored_df)
 filtered = scored_df.copy()
 
 if sector_filter != "Semua Sektor":
@@ -2923,7 +3068,12 @@ with tab_summary:
                 "Recommendation",
                 "Risk_Level",
                 "Clean_Data",
+                "Decision_Summary",
+                "Top_Strengths",
+                "Top_Risks",
                 "Score",
+                "Sector_Relative_Score",
+                "Sector_Relative_Label",
                 "Threshold_Pass_Ratio",
                 "Penutupan",
                 "PER",
@@ -2948,6 +3098,7 @@ with tab_summary:
                 hide_index=True,
                 column_config={
                     "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
+                    "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
                     "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
                     "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
                     "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
@@ -2993,7 +3144,7 @@ with tab_reco:
         with reco_controls[1]:
             reco_sort = st.selectbox(
                 "Urutkan berdasarkan",
-                ["Score", "Threshold_Pass_Ratio", "Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Return_52W", "Volume", "Turnover"],
+                ["Score", "Sector_Relative_Score", "Threshold_Pass_Ratio", "Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Return_52W", "Volume", "Turnover"],
                 help=HELP_TEXT["reco_sort"],
             )
         with reco_controls[2]:
@@ -3055,6 +3206,7 @@ with tab_reco:
                 "Liquidity_Score",
                 "Momentum_Score",
                 "Index_Score",
+                "Sector_Relative_Score",
             ]
             radar_base = reco_chart_view.head(5)
             fig = go.Figure()
@@ -3071,6 +3223,7 @@ with tab_reco:
                             "Likuiditas",
                             "Momentum",
                             "Indeks",
+                            "Relatif Sektor",
                             "Valuasi",
                         ],
                         fill="toself",
@@ -3095,8 +3248,16 @@ with tab_reco:
             "Safety_Recommendation",
             "Risk_Level",
             "Clean_Data",
+            "Decision_Summary",
+            "Top_Strengths",
+            "Top_Risks",
+            "Action_Checklist",
             "Safety_Notes",
             "Score",
+            "Sector_Relative_Score",
+            "Sector_Relative_Label",
+            "Sector_Valuation_Score",
+            "Sector_Quality_Score",
             "Valuation_Score",
             "Quality_Score",
             "Risk_Score",
@@ -3153,7 +3314,11 @@ with tab_reco:
             "Recommendation",
             "Risk_Level",
             "Clean_Data",
+            "Decision_Summary",
+            "Top_Strengths",
+            "Top_Risks",
             "Score",
+            "Sector_Relative_Score",
             "Threshold_Pass_Ratio",
             "Penutupan",
             "PER",
@@ -3181,6 +3346,13 @@ with tab_reco:
             hide_index=True,
             column_config={
                 "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
+                "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
+                "Sector_Valuation_Score": st.column_config.NumberColumn("Valuasi Sektor", format="%.1f", help=HELP_TEXT["sector_relative"]),
+                "Sector_Quality_Score": st.column_config.NumberColumn("Kualitas Sektor", format="%.1f", help=HELP_TEXT["sector_relative"]),
+                "Decision_Summary": st.column_config.TextColumn("Ringkasan Keputusan", help=HELP_TEXT["explainability"]),
+                "Top_Strengths": st.column_config.TextColumn("Faktor Kuat", help=HELP_TEXT["explainability"]),
+                "Top_Risks": st.column_config.TextColumn("Faktor Lemah", help=HELP_TEXT["explainability"]),
+                "Action_Checklist": st.column_config.TextColumn("Checklist", help=HELP_TEXT["explainability"]),
                 "Valuation_Score": st.column_config.NumberColumn("Valuasi", format="%.1f", help=HELP_TEXT["valuation"]),
                 "Quality_Score": st.column_config.NumberColumn("Kualitas", format="%.1f", help=HELP_TEXT["quality"]),
                 "Risk_Score": st.column_config.NumberColumn("Risiko", format="%.1f", help=HELP_TEXT["risk"]),
@@ -3562,6 +3734,9 @@ with tab_history:
                             "Technical_Score",
                             "Technical_Signal",
                             "RSI14",
+                            "ATR_Stop_2x",
+                            "ATR_Stop_Distance_%",
+                            "Position_Risk_Bucket",
                             "Timing_Reason",
                             "Position_Reason",
                         ]
@@ -3572,6 +3747,8 @@ with tab_history:
                                 "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                                 "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
+                                "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
+                                "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                             },
                         )
 
@@ -3611,6 +3788,9 @@ with tab_history:
                     "Entry_Action",
                     "Position_Action",
                     "Exit_Risk",
+                    "ATR_Stop_2x",
+                    "ATR_Stop_Distance_%",
+                    "Position_Risk_Bucket",
                     "Timing_Reason",
                     "Position_Reason",
                 ]
@@ -3621,6 +3801,8 @@ with tab_history:
                     column_config={
                         "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                         "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                        "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
+                        "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                     },
                 )
 
@@ -3785,6 +3967,9 @@ with tab_history:
                                     "RSI14",
                                     "Volume_Ratio",
                                     "ATR_%",
+                                    "ATR_Stop_2x",
+                                    "ATR_Stop_Distance_%",
+                                    "Position_Risk_Bucket",
                                     "Distance_52W_High_%",
                                     "Timing_Reason",
                                     "Position_Reason",
@@ -3797,6 +3982,8 @@ with tab_history:
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                                 "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
                                 "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),
+                                "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
+                                "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                                 "Distance_52W_High_%": st.column_config.NumberColumn("Jarak 52W High", format="%.1f%%"),
                             },
                         )
@@ -4183,6 +4370,7 @@ with tab_method:
         - Likuiditas: volume dan turnover harga x volume.
         - Momentum: kombinasi histori online 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem, dengan Excel Metrik sebagai fallback.
         - Kekuatan indeks: nilai kolom Sigma i >= 7 dari Excel bila tersedia, atau jumlah indeks/tempat kemunculan dari fallback; bila hanya universe BEI/IDX tersedia, minimal dihitung sebagai saham listed.
+        - Relatif sektor: PER/PBV dan ROE/ROA/NPM dibanding saham lain dalam sektor yang sama agar valuasi tidak dibaca terlalu absolut lintas sektor.
         - Threshold sheet: rasio dibandingkan dengan batas dari sheet NonBank atau Banking sebagai cadangan metodologi fundamental.
 
         Penalti diterapkan untuk PER/PBV negatif, profitabilitas negatif, NPM negatif, volume rendah, harga nol, pergerakan harian ekstrem, dan kelulusan threshold yang terlalu rendah.
@@ -4192,6 +4380,13 @@ with tab_method:
         - Entry Action dipakai untuk calon pembelian: fundamental menjadi gerbang awal, teknikal menentukan timing.
         - Position Action dipakai untuk saham yang sudah dimiliki: Hold, Add on Pullback, Review Position, Tight Stop, Take Profit, Reduce, atau Exit / Sell.
         - Tidak ada harga beli pribadi yang dipakai; sinyal posisi adalah arahan umum berbasis data pasar terbaru.
+        - ATR Stop 2x adalah zona risiko teknikal berbasis volatilitas, bukan instruksi order otomatis.
+
+        Explainability:
+        - Decision Summary merangkum rekomendasi, posisi relatif sektor, dan risiko.
+        - Top Strengths menunjukkan faktor skor tertinggi.
+        - Top Risks menunjukkan faktor skor terlemah.
+        - Action Checklist menunjukkan hal yang perlu dikonfirmasi sebelum entry/posisi.
         """
     )
 
@@ -4214,7 +4409,7 @@ with tab_method:
     with method_view_cols[0]:
         factor_to_inspect = st.selectbox(
             "Inspeksi faktor",
-            ["Score", "Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Index_Score", "Penalty"],
+            ["Score", "Sector_Relative_Score", "Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Index_Score", "Penalty"],
             help=HELP_TEXT["factor_inspect"],
         )
     with method_view_cols[1]:
