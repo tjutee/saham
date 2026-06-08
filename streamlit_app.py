@@ -3501,9 +3501,9 @@ with tab_technical:
         with tech_controls[2]:
             chart_style = st.segmented_control("Chart harga", ["Candlestick", "Line"], default="Candlestick")
 
-        load_technical = st.toggle("Muat analisa teknikal online/cache", value=False, help="Aktifkan saat ingin mengambil OHLCV dan menghitung indikator. Dibuat manual agar dashboard utama tetap cepat.")
+        load_technical = st.toggle("Tampilkan hasil analisa teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari refresh online sementara.")
         if not load_technical:
-            st.info("Aktifkan toggle di atas untuk memuat candlestick, MA, RSI, MACD, ATR, dan Technical Score.")
+            st.info("Aktifkan toggle di atas untuk menampilkan Entry Action, Position Action, candlestick, MA, RSI, MACD, ATR, dan Technical Score.")
         else:
             tech_history, tech_error, tech_source_label = fetch_yahoo_history([technical_code], period=technical_period)
             if tech_error:
@@ -3524,6 +3524,29 @@ with tab_technical:
                 metric_cols[4].metric("Exit Risk", clean_text(latest_tech.get("Exit_Risk")))
                 metric_cols[5].metric("RSI 14", format_number(latest_tech.get("RSI14")))
                 st.caption(f"Sumber teknikal aktif: {tech_source_label}. Entry: {clean_text(latest_tech.get('Timing_Reason'))} Posisi: {clean_text(latest_tech.get('Position_Reason'))}")
+
+                decision_columns = [
+                    "Kode",
+                    "Nama Perusahaan",
+                    "Score",
+                    "Recommendation",
+                    "Technical_Score",
+                    "Technical_Signal",
+                    "Entry_Action",
+                    "Position_Action",
+                    "Exit_Risk",
+                    "Timing_Reason",
+                    "Position_Reason",
+                ]
+                st.markdown("**Ringkasan keputusan teknikal**")
+                show_table(
+                    tech_decision[[column for column in decision_columns if column in tech_decision.columns]],
+                    hide_index=True,
+                    column_config={
+                        "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
+                        "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                    },
+                )
 
                 price_panel = tech_history.tail(260).copy()
                 fig = go.Figure()
