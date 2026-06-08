@@ -25,6 +25,7 @@ TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/indonesia/scan"
 STOCKANALYSIS_IDX_URL = "https://stockanalysis.com/list/indonesia-stock-exchange/"
 ONLINE_LOAD_PERIOD = "1y"
 ONLINE_REFRESH_TTL = 6 * 60 * 60
+APP_BUILD = os.environ.get("STREAMLIT_GIT_COMMIT", "technical-visible-ui")
 TRADINGVIEW_FUNDAMENTAL_COLUMNS = [
     "name",
     "description",
@@ -2520,6 +2521,7 @@ st.title("Dashboard Rekomendasi Saham IDX")
 st.caption(
     f"Data online-first, update {data_update_label}. Universe kode diprioritaskan dari BEI/IDX; yfinance mengisi harga/histori; TradingView scanner mengisi fundamental online; {DATA_FILE} menjadi fallback dan acuan metodologi. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
 )
+st.caption(f"Build UI: `{APP_BUILD}`. Tab **Teknikal** berada tepat setelah tab **Rekomendasi**.")
 if raw_df.attrs.get("universe_error"):
     st.warning(f"Daftar kode online memakai fallback. Detail: {raw_df.attrs.get('universe_error')}")
 if raw_df.attrs.get("market_error"):
@@ -2535,9 +2537,9 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         **Menu utama**
         - **Ringkasan**: snapshot eksekutif berisi kondisi universe, sumber data, distribusi rekomendasi, top kandidat, dan matriks faktor.
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
+        - **Teknikal**: candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
         - **Histori Harga**: grafik return dari yfinance online dengan format `KODE.JK`, serta mode Excel Metrik sebagai pembanding/cadangan.
-        - **Teknikal**: candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
         - **Kualitas Data**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
         - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
@@ -2775,8 +2777,8 @@ status_cols[1].metric("Lolos filter", f"{len(filtered):,}")
 status_cols[2].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filtered) else "-")
 status_cols[3].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
 
-tab_summary, tab_reco, tab_explore, tab_history, tab_technical, tab_sector, tab_quality, tab_method = st.tabs(
-    ["Ringkasan", "Rekomendasi", "Explorer", "Histori Harga", "Teknikal", "Sektor", "Kualitas Data", "Metodologi"]
+tab_summary, tab_reco, tab_technical, tab_explore, tab_history, tab_sector, tab_quality, tab_method = st.tabs(
+    ["Ringkasan", "Rekomendasi", "Teknikal", "Explorer", "Histori Harga", "Sektor", "Kualitas Data", "Metodologi"]
 )
 
 with tab_summary:
