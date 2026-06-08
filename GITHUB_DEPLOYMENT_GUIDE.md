@@ -64,6 +64,10 @@ Pastikan koneksi internet Streamlit Cloud aktif dan dependency di
 5. cache lokal,
 6. `Ringkasan.xlsx` untuk kolom yang masih kosong.
 
+Grafik utama memakai harga/volume yfinance atau cache online lebih dulu. Excel
+hanya menjadi fallback bila online/cache tidak tersedia, atau mode pembanding
+manual pada tab `Histori Harga`.
+
 Setelah deploy, cek tab `Ringkasan` untuk memastikan sumber harga, status kode,
 dan distribusi rekomendasi terbaca wajar. Lalu cek tab `Data Quality` ->
 `Audit sumber kode saham` dan `Kelengkapan kolom & sumber data`. Di sana akan

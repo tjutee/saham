@@ -171,7 +171,7 @@ HELP_TEXT = {
     "threshold_ratio": "Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable x 100. Rasio yang kolomnya ada tetapi nilainya kosong/tidak memenuhi batas dihitung tidak lolos.",
     "core_thresholds": "Jika aktif, saham wajib memenuhi inti konservatif: PER <= 15, PBV <= 3, ROE >= 12%, dan NPM >= 7%. Ini tambahan di luar slider umum.",
     "der_banking": "Jika aktif, filter DER maksimum juga diterapkan ke saham Banking. Default mati karena struktur neraca bank berbeda dari non-bank.",
-    "history_source": "Online yfinance memakai ticker KODE.JK sebagai sumber histori utama. Excel Metrik tetap tersedia sebagai cadangan/pembanding bila data online kosong.",
+    "history_source": "Online yfinance memakai ticker KODE.JK dan menjadi sumber utama grafik histori. Excel Metrik hanya mode pembanding/cadangan bila data online kosong.",
     "fundamental_source": "Fundamental diprioritaskan dari online TradingView scanner bila tersedia, lalu Excel mengisi rasio/metadata yang kosong. Sumber BEI/IDX tetap utama untuk universe kode saham.",
     "history_scope": "Saham pilihan memakai kode yang dipilih manual. All/top N memakai saham teratas dari hasil filter saat ini, biasanya berdasarkan ranking Score setelah filter.",
     "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
@@ -179,7 +179,7 @@ HELP_TEXT = {
     "history_period": "Rentang data online: 1 minggu = sekitar 5 hari bursa terakhir, 1/3/6 bulan, 1/2/5/10 tahun, atau All sepanjang data tersedia dari sumber.",
     "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
     "risk_level": "Risk_Level adalah kategori risiko relatif dari model berdasarkan rasio, volatilitas, likuiditas, dan penalti. Tetap perlu validasi berita dan laporan keuangan.",
-    "turnover": "Turnover = Penutupan x Volume. Ini estimasi nilai transaksi kasar dari data online atau Excel fallback.",
+    "turnover": "Turnover = Penutupan x Volume. Grafik utama memakai harga/volume yfinance/cache bila tersedia; Excel hanya fallback saat online kosong.",
     "return": "Return = harga akhir / harga awal - 1. Nilai ditampilkan dalam persen dan hanya menjelaskan performa periode historis.",
     "reco_sort": "Metrik untuk mengurutkan grafik dan tabel rekomendasi. Mengubah urutan tampilan saja, bukan rumus Score.",
     "reco_limit": "Jumlah saham yang ditampilkan setelah seluruh filter sidebar, label rekomendasi, dan sort diterapkan.",
@@ -354,6 +354,26 @@ def safe_slider(label, min_value, max_value, value, *, step=None, help=None, for
     if format is not None:
         kwargs["format"] = format
     return st.slider(label, min_value, max_value, value, **kwargs)
+
+
+def has_online_market(data):
+    if "Price_Source" not in data.columns:
+        return pd.Series(False, index=data.index)
+    return data["Price_Source"].astype(str).str.contains("yfinance|pandas-datareader|cache", case=False, na=False)
+
+
+def chart_market_frame(data, label="grafik"):
+    online_mask = has_online_market(data)
+    if online_mask.any():
+        chart_data = data[online_mask].copy()
+        fallback_count = int((~online_mask).sum())
+        if fallback_count:
+            st.caption(f"{label}: memakai {len(chart_data):,} saham dengan harga yfinance/cache. {fallback_count:,} saham Excel fallback tidak dimasukkan ke grafik utama.")
+        else:
+            st.caption(f"{label}: seluruh saham memakai harga yfinance/cache.")
+        return chart_data
+    st.caption(f"{label}: data yfinance/cache belum tersedia, memakai Excel fallback sementara.")
+    return data.copy()
 
 
 def prepare_chart_frame(data, metric, limit=None):
@@ -2369,6 +2389,7 @@ with tab_summary:
     if summary_data.empty:
         st.warning("Tidak ada data pada cakupan ini. Longgarkan filter atau pilih Semua universe.")
     else:
+        summary_chart_data = chart_market_frame(summary_data, "Ringkasan grafik utama")
         idx_match = int(summary_data.get("In_IDX_Official", pd.Series(False, index=summary_data.index)).fillna(False).sum())
         fallback_only = int((~summary_data.get("In_IDX_Official", pd.Series(False, index=summary_data.index)).fillna(False)).sum())
         online_price = int(summary_data.get("Price_Source", pd.Series("", index=summary_data.index)).astype(str).str.contains("Online|yfinance|cache", case=False, na=False).sum())
@@ -2385,7 +2406,7 @@ with tab_summary:
 
         chart_cols = st.columns([1, 1, 1])
         with chart_cols[0]:
-            reco_counts = summary_data["Recommendation"].value_counts().reindex(["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"]).dropna().reset_index()
+            reco_counts = summary_chart_data["Recommendation"].value_counts().reindex(["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"]).dropna().reset_index()
             reco_counts.columns = ["Recommendation", "Jumlah"]
             fig = px.bar(
                 reco_counts,
@@ -2404,7 +2425,7 @@ with tab_summary:
             fig.update_layout(height=330, showlegend=False, margin=dict(l=20, r=20, t=60, b=40))
             show_chart(fig)
         with chart_cols[1]:
-            risk_counts = summary_data["Risk_Level"].value_counts().reindex(["Low", "Medium", "High"]).dropna().reset_index()
+            risk_counts = summary_chart_data["Risk_Level"].value_counts().reindex(["Low", "Medium", "High"]).dropna().reset_index()
             risk_counts.columns = ["Risk_Level", "Jumlah"]
             fig = px.pie(
                 risk_counts,
@@ -2418,7 +2439,7 @@ with tab_summary:
             fig.update_layout(height=330, margin=dict(l=20, r=20, t=60, b=40))
             show_chart(fig)
         with chart_cols[2]:
-            source_mix = build_source_mix(summary_data)
+            source_mix = build_source_mix(summary_chart_data)
             source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Universe_Diff_Status"])].copy()
             if source_view.empty:
                 st.info("Ringkasan sumber data belum tersedia.")
@@ -2462,7 +2483,7 @@ with tab_summary:
                 "Fundamental_Source",
                 "Universe_Diff_Status",
             ]
-            top_summary = summary_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
+            top_summary = summary_chart_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
             show_table(
                 top_summary[[column for column in top_summary_columns if column in top_summary.columns]],                hide_index=True,
                 column_config={
@@ -2480,8 +2501,8 @@ with tab_summary:
         with overview_cols[1]:
             st.write("Matriks faktor top score")
             factor_columns = ["Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Index_Score"]
-            factor_matrix = summary_data.sort_values("Score", ascending=False).head(12).set_index("Kode")[
-                [column for column in factor_columns if column in summary_data.columns]
+            factor_matrix = summary_chart_data.sort_values("Score", ascending=False).head(12).set_index("Kode")[
+                [column for column in factor_columns if column in summary_chart_data.columns]
             ]
             if factor_matrix.empty:
                 st.info("Matriks faktor belum tersedia.")
@@ -2531,9 +2552,11 @@ with tab_reco:
             reco_view = filtered.copy()
         reco_view = reco_view.sort_values(reco_sort, ascending=reco_ascending, na_position="last").head(reco_limit)
 
+        reco_chart_view = chart_market_frame(reco_view, "Grafik rekomendasi")
+
         left, right = st.columns([1.25, 1])
         with left:
-            chart_data = prepare_chart_frame(reco_view.sort_values(reco_sort), reco_sort)
+            chart_data = prepare_chart_frame(reco_chart_view.sort_values(reco_sort), reco_sort)
             if chart_data.empty:
                 st.warning(f"Tidak ada data valid untuk grafik {reco_sort}. Pilih metrik sort lain.")
             else:
@@ -2579,7 +2602,7 @@ with tab_reco:
                 "Momentum_Score",
                 "Index_Score",
             ]
-            radar_base = reco_view.head(5)
+            radar_base = reco_chart_view.head(5)
             fig = go.Figure()
             for _, row in radar_base.iterrows():
                 values = [row[col] for col in component_cols]
@@ -2752,6 +2775,7 @@ with tab_reco:
 
 with tab_explore:
     explorer_data = filtered if not filtered.empty else scored_df
+    explorer_chart_data = chart_market_frame(explorer_data, "Explorer")
     explore_controls = st.columns([1, 1, 1, 1])
     with explore_controls[0]:
         explore_x = st.selectbox("Sumbu X", ANALYSIS_COLUMNS, index=ANALYSIS_COLUMNS.index("PER"), help=HELP_TEXT["explorer_axis"])
@@ -2762,12 +2786,12 @@ with tab_explore:
     with explore_controls[3]:
         explore_size = st.selectbox("Ukuran bubble", ["Volume", "Turnover", "Score", "Liquidity_Score", "Index_Count"], help=HELP_TEXT["explore_size"])
 
-    explore_max = max(1, min(500, len(explorer_data)))
+    explore_max = max(1, min(500, len(explorer_chart_data)))
     explore_min = min(50, explore_max)
     explore_default = min(250, explore_max)
     explore_step = 25 if explore_max >= 50 else 1
     explore_limit = safe_slider("Jumlah titik Explorer", explore_min, explore_max, explore_default, step=explore_step, help=HELP_TEXT["explore_limit"])
-    explore_plot = explorer_data.sort_values("Score", ascending=False).head(explore_limit)
+    explore_plot = explorer_chart_data.sort_values("Score", ascending=False).head(explore_limit)
 
     left, right = st.columns(2)
     with left:
@@ -2826,7 +2850,7 @@ with tab_history:
     history_source = filtered if not filtered.empty else scored_df
     history_mode = st.radio(
         "Sumber grafik histori",
-        ["Excel Metrik 4W-52W", "Online yfinance KODE.JK"],
+        ["Online yfinance KODE.JK", "Excel Metrik 4W-52W"],
         horizontal=True,
         help=HELP_TEXT["history_source"],
     )
@@ -2861,6 +2885,8 @@ with tab_history:
             help=HELP_TEXT["history_codes"],
         )
 
+    render_excel_fallback_history = history_mode == "Excel Metrik 4W-52W"
+
     if history_mode == "Online yfinance KODE.JK":
         period = st.selectbox(
             "Rentang data online",
@@ -2882,9 +2908,10 @@ with tab_history:
         online_history, online_error, online_source = fetch_yahoo_history(selected_codes, period=period)
         if online_error:
             st.warning(online_error)
-            st.caption("Dashboard memakai cache atau Excel fallback untuk bagian data yang tidak tersedia online.")
-        elif online_history.empty:
-            st.warning("Data online kosong.")
+            st.caption("Dashboard memakai cache lokal bila tersedia. Excel Metrik hanya dipakai jika online/cache kosong.")
+        if online_history.empty:
+            st.warning("Data online/cache kosong. Menampilkan Excel Metrik sebagai fallback.")
+            render_excel_fallback_history = True
         else:
             st.caption(f"Sumber histori aktif: {online_source}")
             last_dates = online_history.groupby("Kode")["Date"].max().reset_index()
@@ -2927,7 +2954,7 @@ with tab_history:
                 )
 
         st.caption("Sumber online memakai ticker IDX format KODE.JK, misalnya BBCA.JK. Jika data live gagal, dashboard mencoba fallback dan cache lokal.")
-    else:
+    if render_excel_fallback_history:
         history_columns = ["Return_4W", "Return_13W", "Return_26W", "Return_52W"]
         available_history = [column for column in history_columns if column in history_source.columns]
 
@@ -3012,12 +3039,13 @@ with tab_history:
                 show_chart(fig)
 
 with tab_sector:
+    sector_chart_base = chart_market_frame(scored_df, "Grafik sektor")
     sector_controls = st.columns([1, 1, 1, 1])
     with sector_controls[0]:
-        sector_group_options = [column for column in ["Sektor", "Subsektor", "Industri", "Subindustri", "Industry"] if column in scored_df.columns]
+        sector_group_options = [column for column in ["Sektor", "Subsektor", "Industri", "Subindustri", "Industry"] if column in sector_chart_base.columns]
         sector_group = st.selectbox("Kelompok", sector_group_options, help=HELP_TEXT["sector_group"])
     with sector_controls[1]:
-        sector_count_max = max(1, min(25, int(scored_df.groupby(sector_group, dropna=False)["Kode"].count().max())))
+        sector_count_max = max(1, min(25, int(sector_chart_base.groupby(sector_group, dropna=False)["Kode"].count().max())))
         sector_min_default = min(3, sector_count_max)
         sector_min_count = safe_slider("Minimum saham per kelompok", 1, sector_count_max, sector_min_default, help=HELP_TEXT["sector_min"])
     with sector_controls[2]:
@@ -3026,7 +3054,7 @@ with tab_sector:
         sector_chart = st.selectbox("Visual utama", ["Bar", "Treemap", "Scatter"], help=HELP_TEXT["sector_chart"])
 
     sector_summary = (
-        scored_df.groupby(sector_group, dropna=False)
+        sector_chart_base.groupby(sector_group, dropna=False)
         .agg(
             Saham=("Kode", "count"),
             Median_Score=("Score", "median"),

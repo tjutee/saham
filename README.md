@@ -16,6 +16,7 @@ belum stabil tersedia online.
 - Scoring multi-factor: valuasi, kualitas profit, risiko, likuiditas, momentum, dan kekuatan indeks.
 - Filter threshold dari sheet `NonBank` dan `Banking`.
 - Histori return 4, 13, 26, 52 minggu, dan YTD dihitung dari yfinance bila tersedia.
+- Grafik utama memprioritaskan harga/volume yfinance atau cache online; Excel hanya dipakai bila online/cache kosong.
 - Sheet `Metrik` dimanfaatkan untuk market cap, revenue, subsektor, industri, subindustri, dan daftar indeks gabungan.
 - Grafik histori online fleksibel untuk saham IDX dengan ticker `KODE.JK`.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
@@ -75,8 +76,8 @@ bukan diabaikan.
 
 Tab `Histori Harga` menyediakan dua mode:
 
-- `Excel Metrik 4W-52W`: memakai return historis dari sheet `Metrik` sebagai mode pembanding/cadangan.
 - `Online yfinance KODE.JK`: mengambil harga historis IDX secara online dengan format ticker seperti `BBCA.JK`, `BMRI.JK`, atau `TLKM.JK`.
+- `Excel Metrik 4W-52W`: memakai return historis dari sheet `Metrik` hanya sebagai mode pembanding/cadangan.
 
 Mode online mendukung rentang 6 bulan, 1 tahun, 2 tahun, 5 tahun, 10 tahun,
 dan all/sepanjang masa. Jika koneksi live gagal, dashboard mencoba fallback
