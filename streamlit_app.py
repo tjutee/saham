@@ -26,6 +26,19 @@ STOCKANALYSIS_IDX_URL = "https://stockanalysis.com/list/indonesia-stock-exchange
 ONLINE_LOAD_PERIOD = "1y"
 ONLINE_REFRESH_TTL = 6 * 60 * 60
 APP_BUILD = os.environ.get("STREAMLIT_GIT_COMMIT", "technical-visible-ui")
+ONLINE_PERIOD_OPTIONS = ["5d", "2wk", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"]
+ONLINE_PERIOD_LABELS = {
+    "5d": "1 minggu",
+    "2wk": "2 minggu",
+    "1mo": "1 bulan",
+    "3mo": "3 bulan",
+    "6mo": "6 bulan",
+    "1y": "1 tahun",
+    "2y": "2 tahun",
+    "5y": "5 tahun",
+    "10y": "10 tahun",
+    "max": "All / sepanjang masa",
+}
 TRADINGVIEW_FUNDAMENTAL_COLUMNS = [
     "name",
     "description",
@@ -178,7 +191,7 @@ HELP_TEXT = {
     "history_scope": "Saham pilihan memakai kode yang dipilih manual. All/top N memakai saham teratas dari hasil filter saat ini, biasanya berdasarkan ranking Score setelah filter.",
     "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
     "history_codes": "Masukkan kode IDX tanpa akhiran .JK, misalnya BBCA atau BBRI. Dashboard otomatis memanggil format online BBCA.JK.",
-    "history_period": "Rentang data online: 1 minggu = sekitar 5 hari bursa terakhir, 1/3/6 bulan, 1/2/5/10 tahun, atau All sepanjang data tersedia dari sumber.",
+    "history_period": "Rentang data online: 1 minggu, 2 minggu untuk short swing, 1/3/6 bulan, 1/2/5/10 tahun, atau All sepanjang data tersedia dari sumber.",
     "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
     "risk_level": "Risk_Level adalah kategori risiko relatif dari model berdasarkan rasio, volatilitas, likuiditas, dan penalti. Tetap perlu validasi berita dan laporan keuangan.",
     "turnover": "Turnover = Penutupan x Volume. Grafik utama memakai harga/volume yfinance/cache bila tersedia; Excel hanya fallback saat online kosong.",
@@ -1333,10 +1346,26 @@ def write_history_cache(history, period):
         group[cache_columns].to_csv(cache_file, index=False)
 
 
+def provider_period(period):
+    return "1mo" if period == "2wk" else period
+
+
+def trim_history_to_period(history, period):
+    if history.empty or period in ["max", None]:
+        return history
+    start, _ = yahoo_period_to_dates(period)
+    if start is None:
+        return history
+    output = history.copy()
+    output["Date"] = pd.to_datetime(output["Date"], errors="coerce")
+    return output[output["Date"].ge(start)].copy()
+
+
 def yahoo_period_to_dates(period):
     end = pd.Timestamp.today().normalize()
     days_by_period = {
         "5d": 7,
+        "2wk": 14,
         "1mo": 31,
         "3mo": 92,
         "6mo": 183,
@@ -1385,10 +1414,11 @@ def fetch_yahoo_history(codes, period="max"):
     tickers = [f"{code}.JK" for code in cleaned_codes]
     error_messages = []
     removed_proxy = remove_blocking_proxy_env()
+    download_period = provider_period(period)
     try:
         downloaded = yf.download(
             tickers=tickers,
-            period=period,
+            period=download_period,
             interval="1d",
             auto_adjust=True,
             progress=False,
@@ -1464,6 +1494,7 @@ def fetch_yahoo_history(codes, period="max"):
         return history, "Data online tidak menemukan harga penutupan.", "empty"
 
     history = normalize_history_frame(history)
+    history = trim_history_to_period(history, period)
     write_history_cache(history, period)
     return history, None, "yfinance"
 
@@ -2680,19 +2711,9 @@ with st.sidebar:
         st.caption(f"Cache histori: {len(cache_status_sidebar):,} file di `{HISTORY_CACHE_DIR}`")
         refresh_period = st.selectbox(
             "Periode refresh cache",
-            ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"],
-            index=4,
-            format_func=lambda value: {
-                "5d": "1 minggu",
-                "1mo": "1 bulan",
-                "3mo": "3 bulan",
-                "6mo": "6 bulan",
-                "1y": "1 tahun",
-                "2y": "2 tahun",
-                "5y": "5 tahun",
-                "10y": "10 tahun",
-                "max": "All / sepanjang masa",
-            }.get(value, value),
+            ONLINE_PERIOD_OPTIONS,
+            index=ONLINE_PERIOD_OPTIONS.index("1y"),
+            format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
             help=HELP_TEXT["refresh_period"],
         )
         refresh_top_n = st.slider("Jumlah top saham untuk refresh", 5, 50, 10, step=5, help=HELP_TEXT["refresh_top_n"])
@@ -3307,19 +3328,9 @@ with tab_history:
     if history_mode == "Online yfinance KODE.JK":
         period = st.selectbox(
             "Rentang data online",
-            ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"],
-            index=4,
-            format_func=lambda value: {
-                "5d": "1 minggu",
-                "1mo": "1 bulan",
-                "3mo": "3 bulan",
-                "6mo": "6 bulan",
-                "1y": "1 tahun",
-                "2y": "2 tahun",
-                "5y": "5 tahun",
-                "10y": "10 tahun",
-                "max": "All / sepanjang masa",
-            }.get(value, value),
+            ONLINE_PERIOD_OPTIONS,
+            index=ONLINE_PERIOD_OPTIONS.index("1y"),
+            format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
             help=HELP_TEXT["history_period"],
         )
         online_history, online_error, online_source = fetch_yahoo_history(selected_codes, period=period)
@@ -3489,19 +3500,9 @@ with tab_technical:
         with tech_controls[1]:
             technical_period = st.selectbox(
                 "Periode teknikal",
-                ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"],
-                index=5,
-                format_func=lambda value: {
-                    "5d": "1 minggu",
-                    "1mo": "1 bulan",
-                    "3mo": "3 bulan",
-                    "6mo": "6 bulan",
-                    "1y": "1 tahun",
-                    "2y": "2 tahun",
-                    "5y": "5 tahun",
-                    "10y": "10 tahun",
-                    "max": "All / sepanjang masa",
-                }.get(value, value),
+                ONLINE_PERIOD_OPTIONS,
+                index=ONLINE_PERIOD_OPTIONS.index("2y"),
+                format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
                 help=HELP_TEXT["technical_period"],
             )
         with tech_controls[2]:
