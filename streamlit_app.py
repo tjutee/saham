@@ -211,6 +211,7 @@ HELP_TEXT = {
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif.",
     "entry_action": "Entry_Action menggabungkan fundamental dan teknikal: fundamental memilih saham layak, teknikal menentukan timing entry/tunggu/tahan/take profit.",
+    "position_action": "Position_Action adalah arahan umum untuk saham yang sudah dimiliki, tanpa memakai harga beli pribadi. Gunakan bersama ukuran posisi dan risk management.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -273,6 +274,24 @@ ENTRY_ACTION_ORDER = [
     "Wait Pullback",
     "Take Profit / Tight Stop",
     "Avoid Entry",
+]
+POSITION_ACTION_COLORS = {
+    "Hold": "#15803d",
+    "Add on Pullback": "#65a30d",
+    "Tight Stop": "#ca8a04",
+    "Take Profit": "#ea580c",
+    "Reduce": "#ea580c",
+    "Exit / Sell": "#dc2626",
+    "Review Position": "#2563eb",
+}
+POSITION_ACTION_ORDER = [
+    "Hold",
+    "Add on Pullback",
+    "Review Position",
+    "Tight Stop",
+    "Take Profit",
+    "Reduce",
+    "Exit / Sell",
 ]
 SOURCE_COLORS = {
     "Price_Source": "#2563eb",
@@ -426,6 +445,8 @@ def chart_color_kwargs(color_field):
         return {"color_discrete_map": TECHNICAL_SIGNAL_COLORS}
     if color_field == "Entry_Action":
         return {"color_discrete_map": ENTRY_ACTION_COLORS}
+    if color_field == "Position_Action":
+        return {"color_discrete_map": POSITION_ACTION_COLORS}
     if color_field in ["Sektor", "Industry", "Kode"]:
         return {"color_discrete_sequence": STOCK_LINE_COLORS}
     if color_field in ["Score", "Quality_Score", "Risk_Score", "Threshold_Pass_Ratio", "Valuation_Score", "Liquidity_Score", "Momentum_Score", "History_Momentum_Score"]:
@@ -1668,6 +1689,71 @@ def build_entry_decision(row):
     return pd.Series({"Entry_Action": action, "Combined_View": combined, "Timing_Reason": reason})
 
 
+def build_position_decision(row):
+    score = pd.to_numeric(row.get("Score"), errors="coerce")
+    technical_score = pd.to_numeric(row.get("Technical_Score"), errors="coerce")
+    rsi = pd.to_numeric(row.get("RSI14"), errors="coerce")
+    atr_pct = pd.to_numeric(row.get("ATR_%"), errors="coerce")
+    close = pd.to_numeric(row.get("Close"), errors="coerce")
+    ma50 = pd.to_numeric(row.get("MA50"), errors="coerce")
+    ma200 = pd.to_numeric(row.get("MA200"), errors="coerce")
+    signal = clean_text(row.get("Technical_Signal"), "Neutral")
+    recommendation = clean_text(row.get("Recommendation"), "Avoid")
+    risk_level = clean_text(row.get("Risk_Level"), "High")
+    clean_data = bool(row.get("Clean_Data", False))
+    trend_bullish = bool(row.get("Trend_Bullish", False))
+    macd_bullish = bool(row.get("MACD_Bullish", False))
+
+    fundamental_strong = pd.notna(score) and score >= 68 and recommendation in ["Strong Buy", "Buy"] and risk_level != "High" and clean_data
+    fundamental_weak = pd.isna(score) or score < 55 or recommendation in ["Speculative", "Avoid"] or risk_level == "High"
+    breakdown_ma50 = pd.notna(close) and pd.notna(ma50) and close < ma50
+    breakdown_ma200 = pd.notna(close) and pd.notna(ma200) and close < ma200
+    high_volatility = pd.notna(atr_pct) and atr_pct >= 8
+
+    if fundamental_weak and (signal == "Weak" or breakdown_ma200):
+        action = "Exit / Sell"
+        exit_risk = "High"
+        reason = "Fundamental tidak mendukung dan teknikal lemah/breakdown. Prioritaskan keluar atau hindari mempertahankan posisi."
+    elif fundamental_weak:
+        action = "Reduce"
+        exit_risk = "High"
+        reason = "Fundamental lemah untuk posisi inti. Kurangi eksposur, terutama bila teknikal tidak segera membaik."
+    elif signal == "Overbought" and pd.notna(rsi) and rsi >= 80:
+        action = "Take Profit"
+        exit_risk = "Medium"
+        reason = "Fundamental masih layak, tetapi RSI sangat panas. Amankan sebagian profit dan tunggu pullback."
+    elif signal == "Overbought":
+        action = "Tight Stop"
+        exit_risk = "Medium"
+        reason = "Momentum kuat tetapi mulai panas. Pertahankan hanya dengan trailing stop atau batas risiko ketat."
+    elif fundamental_strong and trend_bullish and macd_bullish and technical_score >= 70:
+        action = "Hold"
+        exit_risk = "Low"
+        reason = "Fundamental kuat dan trend teknikal masih mendukung. Pertahankan posisi selama tidak breakdown."
+    elif fundamental_strong and signal == "Weak":
+        action = "Review Position"
+        exit_risk = "Medium"
+        reason = "Fundamental baik tetapi teknikal melemah. Evaluasi posisi dan tunggu pemulihan di atas MA kunci."
+    elif fundamental_strong and breakdown_ma50:
+        action = "Tight Stop"
+        exit_risk = "Medium"
+        reason = "Fundamental baik, tetapi harga di bawah MA50. Perketat stop sampai trend pulih."
+    elif fundamental_strong and signal == "Constructive":
+        action = "Add on Pullback"
+        exit_risk = "Low"
+        reason = "Fundamental baik dan teknikal membaik. Tambahan posisi lebih ideal saat pullback sehat, bukan mengejar harga."
+    elif high_volatility:
+        action = "Review Position"
+        exit_risk = "Medium"
+        reason = "Volatilitas tinggi. Tinjau ukuran posisi meskipun sinyal utama belum bearish."
+    else:
+        action = "Review Position"
+        exit_risk = "Medium"
+        reason = "Sinyal campuran. Pertahankan secara selektif sambil menunggu konfirmasi trend."
+
+    return pd.Series({"Position_Action": action, "Exit_Risk": exit_risk, "Position_Reason": reason})
+
+
 def add_entry_decision(technical_summary, scored):
     if technical_summary.empty:
         return technical_summary
@@ -1683,8 +1769,9 @@ def add_entry_decision(technical_summary, scored):
     ]
     available_columns = [column for column in fundamental_columns if column in scored.columns]
     output = technical_summary.merge(scored[available_columns], on="Kode", how="left")
-    decision = output.apply(build_entry_decision, axis=1)
-    return pd.concat([output, decision], axis=1)
+    entry_decision = output.apply(build_entry_decision, axis=1)
+    position_decision = output.apply(build_position_decision, axis=1)
+    return pd.concat([output, entry_decision, position_decision], axis=1)
 
 
 def calculate_window_return(group, days):
@@ -3423,12 +3510,12 @@ with tab_technical:
 
                 metric_cols = st.columns(6)
                 metric_cols[0].metric("Entry Action", clean_text(latest_tech.get("Entry_Action")), help=HELP_TEXT["entry_action"])
-                metric_cols[1].metric("Technical Score", format_number(latest_tech.get("Technical_Score")), help=HELP_TEXT["technical_score"])
-                metric_cols[2].metric("Sinyal", clean_text(latest_tech.get("Technical_Signal")))
-                metric_cols[3].metric("RSI 14", format_number(latest_tech.get("RSI14")))
-                metric_cols[4].metric("Jarak 52W High", format_percent(latest_tech.get("Distance_52W_High_%")))
-                metric_cols[5].metric("ATR", format_percent(latest_tech.get("ATR_%")))
-                st.caption(f"Sumber teknikal aktif: {tech_source_label}. {clean_text(latest_tech.get('Combined_View'))}: {clean_text(latest_tech.get('Timing_Reason'))}")
+                metric_cols[1].metric("Position Action", clean_text(latest_tech.get("Position_Action")), help=HELP_TEXT["position_action"])
+                metric_cols[2].metric("Technical Score", format_number(latest_tech.get("Technical_Score")), help=HELP_TEXT["technical_score"])
+                metric_cols[3].metric("Sinyal", clean_text(latest_tech.get("Technical_Signal")))
+                metric_cols[4].metric("Exit Risk", clean_text(latest_tech.get("Exit_Risk")))
+                metric_cols[5].metric("RSI 14", format_number(latest_tech.get("RSI14")))
+                st.caption(f"Sumber teknikal aktif: {tech_source_label}. Entry: {clean_text(latest_tech.get('Timing_Reason'))} Posisi: {clean_text(latest_tech.get('Position_Reason'))}")
 
                 price_panel = tech_history.tail(260).copy()
                 fig = go.Figure()
@@ -3527,8 +3614,14 @@ with tab_technical:
             action_filter = st.multiselect(
                 "Filter aksi entry",
                 ENTRY_ACTION_ORDER,
-                default=["Buy Candidate", "Wait Confirmation"],
+                default=[],
                 help=HELP_TEXT["entry_action"],
+            )
+            position_filter = st.multiselect(
+                "Filter aksi posisi",
+                POSITION_ACTION_ORDER,
+                default=["Hold", "Add on Pullback", "Tight Stop", "Take Profit", "Exit / Sell"],
+                help=HELP_TEXT["position_action"],
             )
 
             if run_scan:
@@ -3547,21 +3640,24 @@ with tab_technical:
                         scan_summary = scan_summary[scan_summary["Technical_Signal"].isin(signal_filter)]
                     if action_filter:
                         scan_summary = scan_summary[scan_summary["Entry_Action"].isin(action_filter)]
+                    if position_filter:
+                        scan_summary = scan_summary[scan_summary["Position_Action"].isin(position_filter)]
                     if scan_summary.empty:
-                        st.info("Tidak ada saham yang cocok dengan filter sinyal dan aksi entry saat ini.")
+                        st.info("Tidak ada saham yang cocok dengan filter sinyal, aksi entry, dan aksi posisi saat ini.")
                     else:
                         scan_summary["Entry_Action"] = pd.Categorical(scan_summary["Entry_Action"], categories=ENTRY_ACTION_ORDER, ordered=True)
-                        scan_summary = scan_summary.sort_values(["Entry_Action", "Technical_Score", "Score"], ascending=[True, False, False])
-                        st.caption(f"Sumber scan: {scan_source_label}. Entry Action memakai fundamental sebagai gerbang awal, lalu teknikal untuk timing.")
+                        scan_summary["Position_Action"] = pd.Categorical(scan_summary["Position_Action"], categories=POSITION_ACTION_ORDER, ordered=True)
+                        scan_summary = scan_summary.sort_values(["Entry_Action", "Position_Action", "Technical_Score", "Score"], ascending=[True, True, False, False])
+                        st.caption(f"Sumber scan: {scan_source_label}. Entry Action untuk calon pembelian; Position Action untuk saham yang sudah dimiliki.")
                         fig = px.bar(
                             scan_summary.head(20),
                             x="Technical_Score",
                             y="Kode",
-                            color="Entry_Action",
+                            color="Position_Action",
                             orientation="h",
-                            title="Ranking timing entry top saham",
-                            color_discrete_map=ENTRY_ACTION_COLORS,
-                            hover_data=["Nama Perusahaan", "Sektor", "Score", "Recommendation", "Technical_Signal", "RSI14", "ATR_%", "Timing_Reason"],
+                            title="Ranking aksi posisi top saham",
+                            color_discrete_map=POSITION_ACTION_COLORS,
+                            hover_data=["Nama Perusahaan", "Sektor", "Score", "Recommendation", "Entry_Action", "Technical_Signal", "RSI14", "ATR_%", "Position_Reason"],
                         )
                         fig.update_layout(height=430, xaxis_title="Technical Score", yaxis_title="")
                         show_chart(fig)
@@ -3574,6 +3670,8 @@ with tab_technical:
                                     "Score",
                                     "Recommendation",
                                     "Entry_Action",
+                                    "Position_Action",
+                                    "Exit_Risk",
                                     "Combined_View",
                                     "Technical_Score",
                                     "Technical_Signal",
@@ -3582,6 +3680,7 @@ with tab_technical:
                                     "ATR_%",
                                     "Distance_52W_High_%",
                                     "Timing_Reason",
+                                    "Position_Reason",
                                 ]
                             ].head(50),
                             hide_index=True,
