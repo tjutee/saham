@@ -20,6 +20,7 @@ belum stabil tersedia online.
 - Market breadth: persentase saham sample yang berada di atas MA50 dan MA200.
 - Data freshness guard untuk melihat tanggal online terakhir, lag data, coverage online, dan fallback Excel.
 - Filter threshold dari sheet `NonBank` dan `Banking`.
+- Backtest event-based untuk menguji sinyal teknikal historis terhadap return 5/20/60 hari.
 - Histori return 4, 13, 26, 52 minggu, dan YTD dihitung dari yfinance bila tersedia.
 - Grafik utama memprioritaskan harga/volume yfinance atau cache online; Excel hanya dipakai bila online/cache kosong.
 - Sheet `Metrik` dimanfaatkan untuk market cap, revenue, subsektor, industri, subindustri, dan daftar indeks gabungan.
@@ -28,7 +29,7 @@ belum stabil tersedia online.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
 - Bobot scoring bisa diatur langsung dari sidebar.
-- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Harga & Teknikal, Explorer, Sektor, Kualitas Data, dan Metodologi.
+- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Harga & Teknikal, Backtest, Explorer, Sektor, Kualitas Data, dan Metodologi.
 - Ringkasan eksekutif berisi distribusi rekomendasi, komposisi risiko, sumber data, top kandidat, dan heatmap faktor.
 - Kualitas Data menampilkan audit sumber kode, audit filter, coverage kolom, serta campuran sumber harga/volume.
 - Tabel hasil bisa di-download sebagai CSV.
@@ -90,6 +91,16 @@ dari kondisi IHSG.
 
 Tab `Kualitas Data` menampilkan audit market/freshness agar sumber, tanggal,
 lag data, dan fallback tetap transparan.
+
+## Backtest
+
+Tab `Backtest` menguji sinyal historis dari OHLCV online/cache. Backtest awal
+ini event-based, bukan simulasi broker penuh.
+
+- Sinyal yang bisa diuji: `Bullish`, `Constructive`, `Weak`, `Overbought`, `MA50 Recovery`, dan `MA50 Breakdown`.
+- Metrik hasil: event count, hit rate 5/20/60 hari, average return, median return, dan max drawdown setelah event.
+- Evidence label: `Strong evidence`, `Mixed positive`, `Low sample`, atau `Weak evidence`.
+- Hasil fundamental saat ini ditampilkan sebagai konteks, tetapi backtest belum memakai fundamental historis point-in-time.
 
 ## Harga & Teknikal
 

@@ -229,6 +229,10 @@ HELP_TEXT = {
     "sector_relative": "Sector_Relative_Score membandingkan valuasi dan kualitas saham terhadap sektor yang sama. Ini membantu mengurangi bias karena PER/PBV/ROE wajar berbeda antar sektor.",
     "explainability": "Decision_Summary, Top_Strengths, Top_Risks, dan Action_Checklist menjelaskan faktor utama di balik ranking agar keputusan tidak menjadi black box.",
     "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
+    "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. Periode lebih panjang memberi lebih banyak event, tetapi lebih lambat.",
+    "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan simulasi broker penuh.",
+    "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
+    "backtest_horizon": "Horizon forward return setelah sinyal muncul. Contoh 20D berarti return 20 hari bursa setelah event.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -2327,6 +2331,157 @@ def score_target_range(series, low, high, center=None):
     return score.clip(0, 100).fillna(0)
 
 
+def add_historical_technical_scores(technical_history):
+    if technical_history.empty:
+        return technical_history
+    output = technical_history.copy()
+    output["Trend_Score"] = np.select(
+        [
+            output["Close"].gt(output["MA50"]) & output["MA50"].gt(output["MA200"]),
+            output["Close"].gt(output["MA50"]),
+            output["Close"].lt(output["MA200"]),
+        ],
+        [100, 70, 25],
+        default=50,
+    )
+    output["RSI_Score"] = score_target_range(output["RSI14"], low=35, high=75, center=55)
+    output["MACD_Score"] = np.where(output["MACD_Bullish"], 80, 35)
+    output["Volume_Score"] = score_target_range(output["Volume_Ratio"], low=0.5, high=2.0, center=1.2)
+    output["Volatility_Score"] = (100 - (output["ATR_%"].fillna(6) / 12 * 100)).clip(0, 100)
+    output["Technical_Score"] = (
+        output["Trend_Score"] * 0.30
+        + output["RSI_Score"] * 0.20
+        + output["MACD_Score"] * 0.20
+        + output["Volume_Score"] * 0.15
+        + output["Volatility_Score"] * 0.15
+    ).round(1)
+    output["Technical_Signal"] = np.select(
+        [
+            output["RSI14"].ge(75),
+            output["Technical_Score"].ge(75) & output["Trend_Bullish"],
+            output["Technical_Score"].ge(60),
+            output["Technical_Score"].lt(45),
+        ],
+        ["Overbought", "Bullish", "Constructive", "Weak"],
+        default="Neutral",
+    )
+    return output
+
+
+def build_backtest_events(history, signal_name, horizons=(5, 20, 60)):
+    if history.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    technical = add_historical_technical_scores(build_technical_indicators(history))
+    if technical.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    frames = []
+    max_horizon = max(horizons)
+    for code, group in technical.groupby("Kode"):
+        test = group.sort_values("Date").copy()
+        close = pd.to_numeric(test["Close"], errors="coerce")
+        previous_close = close.shift(1)
+        previous_ma50 = pd.to_numeric(test["MA50"], errors="coerce").shift(1)
+        previous_signal = test["Technical_Signal"].shift(1)
+
+        if signal_name == "Bullish":
+            condition = test["Technical_Signal"].eq("Bullish")
+        elif signal_name == "Constructive":
+            condition = test["Technical_Signal"].eq("Constructive")
+        elif signal_name == "Weak":
+            condition = test["Technical_Signal"].eq("Weak")
+        elif signal_name == "Overbought":
+            condition = test["Technical_Signal"].eq("Overbought")
+        elif signal_name == "MA50 Recovery":
+            condition = close.gt(test["MA50"]) & previous_close.le(previous_ma50)
+        elif signal_name == "MA50 Breakdown":
+            condition = close.lt(test["MA50"]) & previous_close.ge(previous_ma50)
+        else:
+            condition = test["Technical_Signal"].isin(["Bullish", "Constructive"])
+
+        # Event-based: take the first day a condition appears, not every repeated day.
+        event_mask = condition & ~condition.shift(1, fill_value=False)
+        events = test.loc[event_mask].copy()
+        if events.empty:
+            continue
+
+        for horizon in horizons:
+            test[f"Return_{horizon}D_%"] = close.shift(-horizon) / close - 1
+            test[f"Return_{horizon}D_%"] = test[f"Return_{horizon}D_%"] * 100
+
+        drawdowns = []
+        closes = close.reset_index(drop=True)
+        date_to_position = {date: pos for pos, date in enumerate(test["Date"].tolist())}
+        for _, event_row in events.iterrows():
+            pos = date_to_position.get(event_row["Date"])
+            event_close = event_row.get("Close")
+            if pos is None or pd.isna(event_close) or event_close <= 0:
+                drawdowns.append(np.nan)
+                continue
+            future = closes.iloc[pos : pos + max_horizon + 1]
+            drawdowns.append((future.min() / event_close - 1) * 100 if not future.empty else np.nan)
+
+        event_columns = [
+            "Date",
+            "Kode",
+            "Close",
+            "Technical_Score",
+            "Technical_Signal",
+            "RSI14",
+            "MACD",
+            "MACD_Signal",
+            "ATR_%",
+            "Volume_Ratio",
+        ] + [f"Return_{horizon}D_%" for horizon in horizons]
+        events = events.merge(
+            test[["Date", "Kode"] + [f"Return_{horizon}D_%" for horizon in horizons]],
+            on=["Date", "Kode"],
+            how="left",
+            suffixes=("", "_Calc"),
+        )
+        for horizon in horizons:
+            calc_column = f"Return_{horizon}D_%_Calc"
+            if calc_column in events.columns:
+                events[f"Return_{horizon}D_%"] = events[calc_column]
+                events = events.drop(columns=[calc_column])
+        events["Signal"] = signal_name
+        events["Max_Drawdown_%"] = drawdowns
+        frames.append(events[[column for column in event_columns + ["Signal", "Max_Drawdown_%"] if column in events.columns]])
+
+    event_frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    summary = summarize_backtest_events(event_frame, horizons)
+    return event_frame, summary
+
+
+def summarize_backtest_events(events, horizons=(5, 20, 60)):
+    if events.empty:
+        return pd.DataFrame()
+    rows = []
+    for signal, group in events.groupby("Signal"):
+        row = {"Signal": signal, "Events": len(group)}
+        for horizon in horizons:
+            column = f"Return_{horizon}D_%"
+            valid = pd.to_numeric(group.get(column, pd.Series(dtype=float)), errors="coerce").dropna()
+            row[f"Hit_Rate_{horizon}D_%"] = (valid.gt(0).mean() * 100) if len(valid) else np.nan
+            row[f"Avg_Return_{horizon}D_%"] = valid.mean() if len(valid) else np.nan
+            row[f"Median_Return_{horizon}D_%"] = valid.median() if len(valid) else np.nan
+        drawdown = pd.to_numeric(group.get("Max_Drawdown_%", pd.Series(dtype=float)), errors="coerce").dropna()
+        row["Avg_Max_Drawdown_%"] = drawdown.mean() if len(drawdown) else np.nan
+        primary_hit = row.get("Hit_Rate_20D_%", np.nan)
+        primary_return = row.get("Avg_Return_20D_%", np.nan)
+        if len(group) >= 15 and pd.notna(primary_hit) and primary_hit >= 55 and pd.notna(primary_return) and primary_return > 0:
+            row["Evidence"] = "Strong evidence"
+        elif len(group) >= 8 and pd.notna(primary_return) and primary_return > 0:
+            row["Evidence"] = "Mixed positive"
+        elif len(group) < 8:
+            row["Evidence"] = "Low sample"
+        else:
+            row["Evidence"] = "Weak evidence"
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def read_sheet(sheet_name):
     try:
         df_sheet = pd.read_excel(DATA_FILE, sheet_name=sheet_name)
@@ -3006,6 +3161,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
         - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, ringkasan teknikal top kandidat, candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
+        - **Backtest**: uji event historis untuk sinyal teknikal seperti Bullish, Constructive, Weak, Overbought, MA50 Recovery, dan MA50 Breakdown.
         - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
         - **Kualitas Data**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
         - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
@@ -3034,6 +3190,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Sector Relative Score**: perbandingan valuasi dan kualitas terhadap saham lain dalam sektor yang sama.
         - **Decision Summary / Top Strengths / Top Risks**: ringkasan alasan kuantitatif agar ranking mudah diaudit.
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
+        - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
         - **Clean_Data**: penanda bahwa data dan rasio utama lolos filter kebersihan minimum.
         - **Safety_Recommendation**: ringkasan kelayakan data seperti `Bersih - Strong`; di kartu utama ditampilkan sebagai `Data`, bukan jaminan aman investasi.
         - **Safety_Notes**: alasan saham perlu direview, misalnya volume rendah, rasio kosong, threshold rendah, atau risiko tinggi.
@@ -3048,6 +3205,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - `Entry_Action`: fundamental memilih saham layak, teknikal menentukan timing untuk calon pembelian.
         - `Position_Action`: teknikal dan fundamental memberi arahan hold/reduce/take profit/exit untuk saham yang sudah dimiliki.
         - `ATR_Stop_2x = Close - 2 x ATR14`.
+        - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
         - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable * 100`.
         - `Turnover = Penutupan * Volume`.
         - `Return Total = Harga Akhir / Harga Awal - 1`.
@@ -3279,8 +3437,8 @@ if market_context.get("Market_Error"):
 if market_context.get("Breadth_Error"):
     st.caption(f"Market breadth terbatas: {market_context.get('Breadth_Error')}")
 
-tab_summary, tab_reco, tab_history, tab_explore, tab_sector, tab_quality, tab_method = st.tabs(
-    ["Ringkasan", "Rekomendasi", "Harga & Teknikal", "Explorer", "Sektor", "Kualitas Data", "Metodologi"]
+tab_summary, tab_reco, tab_history, tab_backtest, tab_explore, tab_sector, tab_quality, tab_method = st.tabs(
+    ["Ringkasan", "Rekomendasi", "Harga & Teknikal", "Backtest", "Explorer", "Sektor", "Kualitas Data", "Metodologi"]
 )
 
 with tab_summary:
@@ -3732,6 +3890,177 @@ with tab_reco:
             file_name="rekomendasi_saham_multi_factor.csv",
             mime="text/csv",
         )
+
+with tab_backtest:
+    st.subheader("Backtest sinyal")
+    st.caption(
+        "Backtest ini event-based: menghitung forward return setelah sinyal teknikal muncul. "
+        "Ini bukan simulasi broker penuh dan belum memakai fundamental historis point-in-time."
+    )
+
+    backtest_source = filtered if not filtered.empty else scored_df
+    backtest_codes_available = backtest_source["Kode"].dropna().astype(str).str.upper().unique().tolist()
+    if not backtest_codes_available:
+        st.warning("Tidak ada kode saham untuk backtest pada filter saat ini.")
+    else:
+        backtest_controls = st.columns([1, 1, 1, 1])
+        with backtest_controls[0]:
+            backtest_period = st.selectbox(
+                "Periode backtest",
+                ["6mo", "1y", "2y", "5y", "10y"],
+                index=2,
+                format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
+                help=HELP_TEXT["backtest_period"],
+            )
+        with backtest_controls[1]:
+            backtest_signal = st.selectbox(
+                "Sinyal diuji",
+                ["Bullish", "Constructive", "Weak", "Overbought", "MA50 Recovery", "MA50 Breakdown"],
+                help=HELP_TEXT["backtest_signal"],
+            )
+        with backtest_controls[2]:
+            backtest_max_codes = min(30, len(backtest_codes_available))
+            backtest_default_n = min(10, backtest_max_codes)
+            backtest_n = safe_slider(
+                "Jumlah kode top",
+                1,
+                backtest_max_codes,
+                backtest_default_n,
+                step=1,
+                help="Jumlah saham top dari hasil filter/ranking yang diuji. Batasi agar proses cepat.",
+            )
+        with backtest_controls[3]:
+            run_backtest = st.button("Jalankan backtest", type="primary")
+
+        custom_backtest_codes = st.multiselect(
+            "Kode tambahan/khusus",
+            options=scored_df["Kode"].tolist(),
+            default=[],
+            help=HELP_TEXT["backtest_codes"],
+        )
+        horizon_options = st.multiselect(
+            "Horizon forward return",
+            [5, 20, 60],
+            default=[5, 20, 60],
+            format_func=lambda value: f"{value}D",
+            help=HELP_TEXT["backtest_horizon"],
+        )
+        if not horizon_options:
+            horizon_options = [20]
+
+        selected_backtest_codes = list(dict.fromkeys(backtest_codes_available[:backtest_n] + custom_backtest_codes))
+        st.caption(
+            f"Kode diuji: {', '.join(selected_backtest_codes[:12])}"
+            + (" ..." if len(selected_backtest_codes) > 12 else "")
+        )
+
+        if run_backtest:
+            with st.spinner("Mengambil OHLCV dan menghitung event backtest..."):
+                backtest_history, backtest_error, backtest_source_label = fetch_yahoo_history(
+                    selected_backtest_codes,
+                    period=backtest_period,
+                )
+                backtest_events, backtest_summary = build_backtest_events(
+                    backtest_history,
+                    backtest_signal,
+                    horizons=tuple(sorted(horizon_options)),
+                )
+
+            if backtest_error:
+                st.warning(backtest_error)
+            if backtest_events.empty:
+                st.info("Tidak ada event sinyal pada periode/kode yang dipilih. Coba periode lebih panjang atau sinyal lain.")
+            else:
+                st.caption(f"Sumber backtest: {backtest_source_label}. Event dihitung hanya saat sinyal baru muncul.")
+                summary_cols = st.columns(4)
+                primary_horizon = 20 if 20 in horizon_options else sorted(horizon_options)[0]
+                hit_column = f"Hit_Rate_{primary_horizon}D_%"
+                return_column = f"Avg_Return_{primary_horizon}D_%"
+                summary_row = backtest_summary.iloc[0] if not backtest_summary.empty else pd.Series(dtype=object)
+                summary_cols[0].metric("Event", f"{len(backtest_events):,}")
+                summary_cols[1].metric(f"Hit rate {primary_horizon}D", format_percent(summary_row.get(hit_column)))
+                summary_cols[2].metric(f"Avg return {primary_horizon}D", format_percent(summary_row.get(return_column)))
+                summary_cols[3].metric("Evidence", clean_text(summary_row.get("Evidence")))
+
+                show_table(
+                    backtest_summary,
+                    hide_index=True,
+                    column_config={
+                        "Events": st.column_config.NumberColumn("Events", format="%d"),
+                        "Hit_Rate_5D_%": st.column_config.NumberColumn("Hit 5D", format="%.1f%%"),
+                        "Hit_Rate_20D_%": st.column_config.NumberColumn("Hit 20D", format="%.1f%%"),
+                        "Hit_Rate_60D_%": st.column_config.NumberColumn("Hit 60D", format="%.1f%%"),
+                        "Avg_Return_5D_%": st.column_config.NumberColumn("Avg 5D", format="%.1f%%"),
+                        "Avg_Return_20D_%": st.column_config.NumberColumn("Avg 20D", format="%.1f%%"),
+                        "Avg_Return_60D_%": st.column_config.NumberColumn("Avg 60D", format="%.1f%%"),
+                        "Median_Return_5D_%": st.column_config.NumberColumn("Median 5D", format="%.1f%%"),
+                        "Median_Return_20D_%": st.column_config.NumberColumn("Median 20D", format="%.1f%%"),
+                        "Median_Return_60D_%": st.column_config.NumberColumn("Median 60D", format="%.1f%%"),
+                        "Avg_Max_Drawdown_%": st.column_config.NumberColumn("Avg Max Drawdown", format="%.1f%%"),
+                    },
+                )
+
+                event_view = backtest_events.merge(
+                    scored_df[["Kode", "Nama Perusahaan", "Sektor", "Score", "Recommendation", "Risk_Level", "Sector_Relative_Score"]],
+                    on="Kode",
+                    how="left",
+                )
+                return_columns = [f"Return_{horizon}D_%" for horizon in sorted(horizon_options)]
+                event_columns = [
+                    "Date",
+                    "Kode",
+                    "Nama Perusahaan",
+                    "Sektor",
+                    "Signal",
+                    "Close",
+                    "Technical_Score",
+                    "Technical_Signal",
+                    "RSI14",
+                    "ATR_%",
+                    "Max_Drawdown_%",
+                    *return_columns,
+                    "Score",
+                    "Recommendation",
+                    "Risk_Level",
+                    "Sector_Relative_Score",
+                ]
+                show_table(
+                    event_view[[column for column in event_columns if column in event_view.columns]].sort_values("Date", ascending=False).head(300),
+                    hide_index=True,
+                    column_config={
+                        "Date": st.column_config.DateColumn("Tanggal"),
+                        "Close": st.column_config.NumberColumn("Close", format="%.0f"),
+                        "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                        "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
+                        "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),
+                        "Max_Drawdown_%": st.column_config.NumberColumn("Max Drawdown", format="%.1f%%"),
+                        "Return_5D_%": st.column_config.NumberColumn("Return 5D", format="%.1f%%"),
+                        "Return_20D_%": st.column_config.NumberColumn("Return 20D", format="%.1f%%"),
+                        "Return_60D_%": st.column_config.NumberColumn("Return 60D", format="%.1f%%"),
+                        "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
+                        "Sector_Relative_Score": st.column_config.NumberColumn("Relatif Sektor", format="%.1f"),
+                    },
+                )
+
+                if return_columns:
+                    plot_column = return_columns[0] if len(return_columns) == 1 else f"Return_{primary_horizon}D_%"
+                    valid_plot = event_view.dropna(subset=[plot_column])
+                    if not valid_plot.empty:
+                        fig = px.histogram(
+                            valid_plot,
+                            x=plot_column,
+                            nbins=30,
+                            title=f"Distribusi return setelah sinyal: {plot_column}",
+                            color_discrete_sequence=["#2563eb"],
+                        )
+                        fig.add_vline(x=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
+                        fig.update_layout(height=360, xaxis_title="Return (%)", yaxis_title="Jumlah event")
+                        show_chart(fig)
+
+                st.info(
+                    "Interpretasi: evidence kuat butuh jumlah event memadai dan hasil out-of-sample yang nanti perlu diuji lebih lanjut. "
+                    "Tahap ini baru event backtest historis, bukan prediksi masa depan."
+                )
 
 with tab_explore:
     explorer_data = filtered if not filtered.empty else scored_df
