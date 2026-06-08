@@ -2169,7 +2169,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
         - **Histori Harga**: grafik return dari yfinance online dengan format `KODE.JK`, serta mode Excel Metrik sebagai pembanding/cadangan.
         - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
-        - **Data Quality**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
+        - **Kualitas Data**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
         - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
 
         **Istilah penting**
@@ -2219,6 +2219,13 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
 
 with st.sidebar:
     st.header("Filter & Strategi")
+    ui_mode = st.radio(
+        "Mode filter",
+        ["Cepat", "Lengkap"],
+        horizontal=True,
+        help="Cepat menampilkan kontrol utama saja. Lengkap membuka rasio, threshold, dan bobot untuk analisis detail.",
+    )
+    advanced_mode = ui_mode == "Lengkap"
     profile = st.selectbox("Profil scoring", list(PROFILE_WEIGHTS), index=0, help=HELP_TEXT["profile"])
     weights = PROFILE_WEIGHTS[profile].copy()
     filter_preset = st.selectbox("Preset filter", ["Normal", "Konservatif Aman"], index=0, help=HELP_TEXT["filter_preset"])
@@ -2226,7 +2233,7 @@ with st.sidebar:
     if safe_preset:
         st.info("Preset filter konservatif aktif: filter dibuat lebih ketat. Bobot Score tetap mengikuti Profil scoring yang dipilih.")
 
-    with st.expander("Sesuaikan bobot", expanded=False):
+    with st.expander("Sesuaikan bobot", expanded=advanced_mode):
         weights["valuation"] = st.slider("Valuasi", 0, 50, weights["valuation"], help=HELP_TEXT["valuation"])
         weights["quality"] = st.slider("Kualitas profit", 0, 50, weights["quality"], help=HELP_TEXT["quality"])
         weights["risk"] = st.slider("Risiko relatif", 0, 40, weights["risk"], help=HELP_TEXT["risk"])
@@ -2253,19 +2260,30 @@ with st.sidebar:
         help=HELP_TEXT["volume"],
     )
 
-    per_range = st.slider("PER", 0.0, 80.0, (0.1, 25.0) if safe_preset else (0.0, 35.0), step=0.5, help=HELP_TEXT["per"])
-    pbv_max = st.slider("PBV maksimum", 0.0, 15.0, 3.5 if safe_preset else 5.0, step=0.1, help=HELP_TEXT["pbv"])
-    roe_min = st.slider("ROE minimum (%)", -50.0, 100.0, 8.0 if safe_preset else 5.0, step=0.5, help=HELP_TEXT["roe"])
-    npm_min = st.slider("NPM minimum (%)", -50.0, 100.0, 3.0 if safe_preset else 0.0, step=0.5, help=HELP_TEXT["npm"])
-    der_max = st.slider("DER maksimum", 0.0, 8.0, 1.5 if safe_preset else 2.5, step=0.1, help=HELP_TEXT["der"])
-    apply_der_to_banking = st.checkbox("Terapkan DER juga ke Banking", value=False, help=HELP_TEXT["der_banking"])
     min_score = st.slider("Score minimum", 0, 100, 60 if safe_preset else 45, help=HELP_TEXT["score"])
-    st.divider()
-    st.subheader("Threshold Sheet")
-    threshold_source = st.selectbox("Sumber threshold", ["Auto: Banking untuk bank, NonBank untuk lainnya", "NonBank", "Banking"], help=HELP_TEXT["threshold_source"])
-    min_threshold_ratio = st.slider("Minimum lolos threshold (%)", 0, 100, 65 if safe_preset else 50, step=5, help=HELP_TEXT["threshold_ratio"])
-    require_core_thresholds = st.checkbox("Wajib lolos valuasi & profit inti", value=safe_preset, help=HELP_TEXT["core_thresholds"])
     clean_data_only = st.checkbox("Data bersih saja", value=safe_preset, help=HELP_TEXT["clean_data"])
+
+    per_range = (0.1, 25.0) if safe_preset else (0.0, 35.0)
+    pbv_max = 3.5 if safe_preset else 5.0
+    roe_min = 8.0 if safe_preset else 5.0
+    npm_min = 3.0 if safe_preset else 0.0
+    der_max = 1.5 if safe_preset else 2.5
+    apply_der_to_banking = False
+    threshold_source = "Auto: Banking untuk bank, NonBank untuk lainnya"
+    min_threshold_ratio = 65 if safe_preset else 50
+    require_core_thresholds = safe_preset
+
+    with st.expander("Filter rasio & threshold", expanded=advanced_mode):
+        per_range = st.slider("PER", 0.0, 80.0, per_range, step=0.5, help=HELP_TEXT["per"])
+        pbv_max = st.slider("PBV maksimum", 0.0, 15.0, pbv_max, step=0.1, help=HELP_TEXT["pbv"])
+        roe_min = st.slider("ROE minimum (%)", -50.0, 100.0, roe_min, step=0.5, help=HELP_TEXT["roe"])
+        npm_min = st.slider("NPM minimum (%)", -50.0, 100.0, npm_min, step=0.5, help=HELP_TEXT["npm"])
+        der_max = st.slider("DER maksimum", 0.0, 8.0, der_max, step=0.1, help=HELP_TEXT["der"])
+        apply_der_to_banking = st.checkbox("Terapkan DER juga ke Banking", value=False, help=HELP_TEXT["der_banking"])
+        st.divider()
+        threshold_source = st.selectbox("Sumber threshold", ["Auto: Banking untuk bank, NonBank untuk lainnya", "NonBank", "Banking"], help=HELP_TEXT["threshold_source"])
+        min_threshold_ratio = st.slider("Minimum lolos threshold (%)", 0, 100, min_threshold_ratio, step=5, help=HELP_TEXT["threshold_ratio"])
+        require_core_thresholds = st.checkbox("Wajib lolos valuasi & profit inti", value=require_core_thresholds, help=HELP_TEXT["core_thresholds"])
 
     st.divider()
     with st.expander("Workflow Update", expanded=False):
@@ -2374,7 +2392,7 @@ status_cols[2].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filte
 status_cols[3].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
 
 tab_summary, tab_reco, tab_explore, tab_history, tab_sector, tab_quality, tab_method = st.tabs(
-    ["Ringkasan", "Rekomendasi", "Explorer", "Histori Harga", "Sektor", "Data Quality", "Metodologi"]
+    ["Ringkasan", "Rekomendasi", "Explorer", "Histori Harga", "Sektor", "Kualitas Data", "Metodologi"]
 )
 
 with tab_summary:
@@ -2403,6 +2421,25 @@ with tab_summary:
         summary_cols[3].metric("Harga online/cache", f"{online_price:,}")
         summary_cols[4].metric("Market cap", format_large_rupiah(total_market_cap) if total_market_cap else "-")
         summary_cols[5].metric("Clean data", f"{clean_ratio:.0f}%")
+
+        strong_buy_count = int(summary_chart_data["Recommendation"].eq("Strong Buy").sum())
+        buy_or_better_count = int(summary_chart_data["Recommendation"].isin(["Strong Buy", "Buy"]).sum())
+        low_risk_count = int(summary_chart_data["Risk_Level"].eq("Low").sum())
+        top_candidates = summary_chart_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(3)
+        top_codes = ", ".join(top_candidates["Kode"].tolist()) if not top_candidates.empty else "-"
+        source_ratio = online_price / max(len(summary_data), 1) * 100
+
+        with st.container(border=True):
+            st.markdown("**Insight Utama**")
+            insight_cols = st.columns(4)
+            insight_cols[0].metric("Layak dicermati", f"{buy_or_better_count:,}", f"{strong_buy_count:,} Strong Buy")
+            insight_cols[1].metric("Risiko rendah", f"{low_risk_count:,}")
+            insight_cols[2].metric("Cakupan online", f"{source_ratio:.0f}%")
+            insight_cols[3].metric("Top 3", top_codes)
+            if top_candidates.empty:
+                st.caption("Belum ada kandidat kuat pada filter ini. Longgarkan filter atau pilih cakupan Semua universe.")
+            else:
+                st.caption("Gunakan insight ini sebagai daftar awal; validasi detail tetap ada di tab Rekomendasi dan Kualitas Data.")
 
         chart_cols = st.columns([1, 1, 1])
         with chart_cols[0]:
@@ -3141,7 +3178,7 @@ with tab_sector:
     )
 
 with tab_quality:
-    st.subheader("Data Quality & Workflow Update")
+    st.subheader("Kualitas data & workflow update")
     quality_report = build_data_quality_report(scored_df, raw_df)
     review_count = int((quality_report["Rows"].gt(0) & ~quality_report["Severity"].eq("Info")).sum())
     high_count = int(((quality_report["Rows"] > 0) & quality_report["Severity"].eq("High")).sum())
@@ -3150,6 +3187,25 @@ with tab_quality:
     quality_cols[1].metric("Perlu review", f"{review_count}")
     quality_cols[2].metric("High severity", f"{high_count}")
     quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
+
+    priority_issues = quality_report[
+        quality_report["Rows"].gt(0) & quality_report["Severity"].isin(["High", "Medium"])
+    ].copy()
+    if priority_issues.empty:
+        st.success("Tidak ada issue high/medium pada check utama.")
+    else:
+        severity_rank = {"High": 0, "Medium": 1}
+        priority_issues["Severity_Rank"] = priority_issues["Severity"].map(severity_rank).fillna(9)
+        priority_issues = priority_issues.sort_values(["Severity_Rank", "Rows"], ascending=[True, False]).head(5)
+        with st.container(border=True):
+            st.markdown("**Prioritas Perbaikan**")
+            show_table(
+                priority_issues[["Severity", "Area", "Check", "Rows", "Action"]],
+                hide_index=True,
+                column_config={
+                    "Rows": st.column_config.NumberColumn("Rows", format="%d"),
+                },
+            )
 
     universe_summary = (
         scored_df.groupby(["Universe_Diff_Status", "Universe_Source"], dropna=False)

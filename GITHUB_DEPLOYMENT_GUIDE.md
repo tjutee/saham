@@ -69,7 +69,7 @@ hanya menjadi fallback bila online/cache tidak tersedia, atau mode pembanding
 manual pada tab `Histori Harga`.
 
 Setelah deploy, cek tab `Ringkasan` untuk memastikan sumber harga, status kode,
-dan distribusi rekomendasi terbaca wajar. Lalu cek tab `Data Quality` ->
+dan distribusi rekomendasi terbaca wajar. Lalu cek tab `Kualitas Data` ->
 `Audit sumber kode saham` dan `Kelengkapan kolom & sumber data`. Di sana akan
 terlihat jumlah kode yang match daftar resmi BEI/IDX, kode yang hanya berasal
 dari fallback, serta kolom fundamental, histori, market cap, revenue, dan

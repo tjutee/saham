@@ -22,9 +22,9 @@ belum stabil tersedia online.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
 - Bobot scoring bisa diatur langsung dari sidebar.
-- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Explorer, Histori Harga, Sektor, Data Quality, dan Metodologi.
+- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Explorer, Histori Harga, Sektor, Kualitas Data, dan Metodologi.
 - Ringkasan eksekutif berisi distribusi rekomendasi, komposisi risiko, sumber data, top kandidat, dan heatmap faktor.
-- Data Quality menampilkan audit sumber kode, audit filter, coverage kolom, serta campuran sumber harga/volume.
+- Kualitas Data menampilkan audit sumber kode, audit filter, coverage kolom, serta campuran sumber harga/volume.
 - Tabel hasil bisa di-download sebagai CSV.
 
 ## File Utama
@@ -68,7 +68,7 @@ kolom yang kosong dari `Ringkasan.xlsx` bila file tersedia.
 5. Cadangan histori: `pandas-datareader`, cache lokal, lalu sheet `Metrik`.
 6. Excel fallback: rasio, metrik bank, market cap, revenue, hierarki industri, kode khusus, dan ide algoritme yang belum punya sumber online stabil.
 
-Tab `Data Quality` menampilkan audit sumber kode agar perbedaan antara daftar
+Tab `Kualitas Data` menampilkan audit sumber kode agar perbedaan antara daftar
 resmi BEI/IDX, sumber online pelengkap, dan fallback Excel tetap terlihat,
 bukan diabaikan.
 
