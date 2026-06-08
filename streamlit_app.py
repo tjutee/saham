@@ -237,6 +237,50 @@ ANALYSIS_COLUMNS = [
     "Sales_Multiple",
 ]
 
+RECOMMENDATION_COLORS = {
+    "Strong Buy": "#15803d",
+    "Buy": "#65a30d",
+    "Watchlist": "#ca8a04",
+    "Speculative": "#ea580c",
+    "Avoid": "#dc2626",
+}
+RISK_COLORS = {"Low": "#15803d", "Medium": "#ca8a04", "High": "#dc2626"}
+SOURCE_COLORS = {
+    "Price_Source": "#2563eb",
+    "Volume_Source": "#0891b2",
+    "Fundamental_Source": "#7c3aed",
+    "Data_Source": "#475569",
+    "Universe_Source": "#0f766e",
+    "Universe_Diff_Status": "#ea580c",
+}
+FACTOR_COLORS = {
+    "Score": "#2563eb",
+    "Valuation_Score": "#0f766e",
+    "Quality_Score": "#15803d",
+    "Risk_Score": "#ca8a04",
+    "Liquidity_Score": "#0891b2",
+    "Momentum_Score": "#7c3aed",
+    "History_Momentum_Score": "#9333ea",
+    "Threshold_Pass_Ratio": "#475569",
+    "PER": "#0f766e",
+    "PBV": "#14b8a6",
+    "ROE": "#15803d",
+    "DER": "#ca8a04",
+    "Return_52W": "#7c3aed",
+}
+STOCK_LINE_COLORS = [
+    "#2563eb",
+    "#0f766e",
+    "#7c3aed",
+    "#0891b2",
+    "#ca8a04",
+    "#db2777",
+    "#475569",
+    "#65a30d",
+]
+SCORE_SCALE = "RdYlGn"
+CHART_AXIS_COLOR = "#64748b"
+
 
 st.set_page_config(
     page_title="Dashboard Rekomendasi Saham IDX",
@@ -2214,6 +2258,12 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         1. BEI/IDX resmi untuk universe kode saham dan metadata listing.
         2. Sumber online pelengkap: yfinance untuk harga/histori dan TradingView scanner untuk fundamental massal.
         3. Excel dipakai terakhir sebagai fallback, audit pembanding, dan acuan ide algoritme sampai seluruh kolom penting punya sumber online yang stabil.
+
+        **Makna warna**
+        - Hijau: kondisi lebih kuat atau risiko rendah.
+        - Kuning/oranye: area watchlist, medium, atau perlu dicermati.
+        - Merah: avoid, risiko tinggi, atau kondisi paling lemah.
+        - Biru/ungu: sumber data, likuiditas, momentum, atau dimensi netral/non-keputusan.
         """
     )
 
@@ -2451,13 +2501,7 @@ with tab_summary:
                 y="Jumlah",
                 color="Recommendation",
                 title="Distribusi rekomendasi",
-                color_discrete_map={
-                    "Strong Buy": "#15803d",
-                    "Buy": "#65a30d",
-                    "Watchlist": "#ca8a04",
-                    "Speculative": "#ea580c",
-                    "Avoid": "#dc2626",
-                },
+                color_discrete_map=RECOMMENDATION_COLORS,
             )
             fig.update_layout(height=330, showlegend=False, margin=dict(l=20, r=20, t=60, b=40))
             show_chart(fig)
@@ -2471,7 +2515,7 @@ with tab_summary:
                 hole=0.45,
                 title="Komposisi risiko",
                 color="Risk_Level",
-                color_discrete_map={"Low": "#16a34a", "Medium": "#ca8a04", "High": "#dc2626"},
+                color_discrete_map=RISK_COLORS,
             )
             fig.update_layout(height=330, margin=dict(l=20, r=20, t=60, b=40))
             show_chart(fig)
@@ -2488,6 +2532,7 @@ with tab_summary:
                     color="Area",
                     orientation="h",
                     title="Sumber harga & status kode",
+                    color_discrete_map=SOURCE_COLORS,
                 )
                 fig.update_layout(height=330, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
                 show_chart(fig)
@@ -2522,7 +2567,8 @@ with tab_summary:
             ]
             top_summary = summary_chart_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
             show_table(
-                top_summary[[column for column in top_summary_columns if column in top_summary.columns]],                hide_index=True,
+                top_summary[[column for column in top_summary_columns if column in top_summary.columns]],
+                hide_index=True,
                 column_config={
                     "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
                     "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
@@ -2548,7 +2594,7 @@ with tab_summary:
                     factor_matrix,
                     aspect="auto",
                     text_auto=".0f",
-                    color_continuous_scale="RdYlGn",
+                    color_continuous_scale=SCORE_SCALE,
                     zmin=0,
                     zmax=100,
                     title="Skor komponen 0-100",
@@ -2618,13 +2664,7 @@ with tab_reco:
                         "Volume": ":,.0f",
                     },
                     title=f"Top rekomendasi berdasarkan {reco_sort}",
-                    color_discrete_map={
-                        "Strong Buy": "#15803d",
-                        "Buy": "#65a30d",
-                        "Watchlist": "#ca8a04",
-                        "Speculative": "#ea580c",
-                        "Avoid": "#dc2626",
-                    },
+                    color_discrete_map=RECOMMENDATION_COLORS,
                 )
                 fig.update_traces(textposition="outside", cliponaxis=False)
                 fig.update_layout(height=520, xaxis_title=reco_sort, yaxis_title="", margin=dict(l=20, r=80, t=70, b=40))
@@ -2641,8 +2681,9 @@ with tab_reco:
             ]
             radar_base = reco_chart_view.head(5)
             fig = go.Figure()
-            for _, row in radar_base.iterrows():
+            for index, (_, row) in enumerate(radar_base.iterrows()):
                 values = [row[col] for col in component_cols]
+                color = STOCK_LINE_COLORS[index % len(STOCK_LINE_COLORS)]
                 fig.add_trace(
                     go.Scatterpolar(
                         r=values + [values[0]],
@@ -2657,6 +2698,9 @@ with tab_reco:
                         ],
                         fill="toself",
                         name=row["Kode"],
+                        line=dict(color=color),
+                        fillcolor=color,
+                        opacity=0.32,
                     )
                 )
             fig.update_layout(
@@ -2760,7 +2804,8 @@ with tab_reco:
             selected_table_columns = default_table_columns
         table = reco_view[selected_table_columns].copy()
         show_table(
-            table,            hide_index=True,
+            table,
+            hide_index=True,
             column_config={
                 "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
                 "Valuation_Score": st.column_config.NumberColumn("Valuasi", format="%.1f", help=HELP_TEXT["valuation"]),
@@ -2841,7 +2886,7 @@ with tab_explore:
             hover_name="Kode",
             hover_data=["Nama Perusahaan", "Sektor", "PBV", "DER", "NPM", "Recommendation"],
             title=f"{explore_x} vs {explore_y}",
-            color_continuous_scale="RdYlGn",
+            color_continuous_scale=SCORE_SCALE,
         )
         fig.update_layout(height=460)
         show_chart(fig)
@@ -2858,7 +2903,7 @@ with tab_explore:
             hover_name="Kode",
             hover_data=["Nama Perusahaan", "Sektor", "Score", "Risk_Level"],
             title=f"{pair_x} vs {pair_y}, warna = kualitas profit",
-            color_continuous_scale="Viridis",
+            color_continuous_scale=SCORE_SCALE,
         )
         fig.update_layout(height=460)
         show_chart(fig)
@@ -2870,7 +2915,6 @@ with tab_explore:
         default=["Score", "ROE", "PER"],
         help=HELP_TEXT["histogram"],
     )[:3]
-    histogram_colors = ["#2563eb", "#16a34a", "#9333ea"]
     for index, (column, container) in enumerate(zip(histogram_columns, hist_cols)):
         with container:
             fig = px.histogram(
@@ -2878,7 +2922,7 @@ with tab_explore:
                 x=column,
                 nbins=35,
                 title=f"Distribusi {column}",
-                color_discrete_sequence=[histogram_colors[index]],
+                color_discrete_sequence=[FACTOR_COLORS.get(column, "#2563eb")],
             )
             fig.update_layout(height=340)
             show_chart(fig)
@@ -2957,12 +3001,28 @@ with tab_history:
                 show_table(last_dates[["Kode", "Last Update Online"]], hide_index=True)
 
             chart_func = px.area if history_chart_type == "Area" else px.line
-            fig = chart_func(online_history, x="Date", y="Close", color="Kode", title="Harga penutupan historis online", labels={"Close": "Harga penutupan", "Date": "Tanggal"})
+            fig = chart_func(
+                online_history,
+                x="Date",
+                y="Close",
+                color="Kode",
+                title="Harga penutupan historis online",
+                labels={"Close": "Harga penutupan", "Date": "Tanggal"},
+                color_discrete_sequence=STOCK_LINE_COLORS,
+            )
             fig.update_layout(height=480)
             show_chart(fig)
 
-            fig = chart_func(online_history, x="Date", y="Normalized", color="Kode", title="Perbandingan performa, indeks awal = 100", labels={"Normalized": "Indeks performa", "Date": "Tanggal"})
-            fig.add_hline(y=100, line_dash="dash", line_color="#64748b")
+            fig = chart_func(
+                online_history,
+                x="Date",
+                y="Normalized",
+                color="Kode",
+                title="Perbandingan performa, indeks awal = 100",
+                labels={"Normalized": "Indeks performa", "Date": "Tanggal"},
+                color_discrete_sequence=STOCK_LINE_COLORS,
+            )
+            fig.add_hline(y=100, line_dash="dash", line_color=CHART_AXIS_COLOR)
             fig.update_layout(height=440)
             show_chart(fig)
 
@@ -2980,7 +3040,8 @@ with tab_history:
             summary["Return_Total_%"] = (summary["Last_Close"] / summary["Start_Close"] - 1) * 100
             if show_history_table:
                 show_table(
-                    summary.sort_values("Return_Total_%", ascending=False),                    hide_index=True,
+                    summary.sort_values("Return_Total_%", ascending=False),
+                    hide_index=True,
                     column_config={
                         "Start": st.column_config.DateColumn("Awal"),
                         "End": st.column_config.DateColumn("Akhir"),
@@ -3026,8 +3087,9 @@ with tab_history:
                     hover_data=["Nama Perusahaan", "Score", "Threshold_Pass_Ratio"],
                     title="Histori return sampai 1 tahun",
                     category_orders={"Periode": ["4 minggu", "13 minggu", "26 minggu", "52 minggu"]},
+                    color_discrete_sequence=STOCK_LINE_COLORS,
                 )
-                fig.add_hline(y=0, line_dash="dash", line_color="#64748b")
+                fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
                 fig.update_layout(height=480, yaxis_title="Return (%)", xaxis_title="")
                 show_chart(fig)
 
@@ -3046,7 +3108,8 @@ with tab_history:
                 ].sort_values("Return_52W", ascending=False)
                 if show_history_table:
                     show_table(
-                        compare,                        hide_index=True,
+                        compare,
+                        hide_index=True,
                         column_config={
                             "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
                             "Threshold_Pass_Ratio": st.column_config.NumberColumn("Threshold", format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
@@ -3069,9 +3132,9 @@ with tab_history:
                     hover_name="Kode",
                     hover_data=["Nama Perusahaan", "Sektor", "Return_26W", "Return_YTD"],
                     title="Score vs return 52 minggu pada saham terfilter",
-                    color_continuous_scale="RdYlGn",
+                    color_continuous_scale=SCORE_SCALE,
                 )
-                fig.add_vline(x=0, line_dash="dash", line_color="#64748b")
+                fig.add_vline(x=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
                 fig.update_layout(height=440, xaxis_title="Return 52 minggu (%)", yaxis_title="Score")
                 show_chart(fig)
 
@@ -3123,7 +3186,7 @@ with tab_sector:
                 color="Strong_Buy",
                 hover_name=sector_group,
                 title=f"{sector_group}: market cap vs median score",
-                color_continuous_scale="Greens",
+                color_continuous_scale=SCORE_SCALE,
             )
         elif sector_chart == "Treemap":
             fig = px.treemap(
@@ -3132,7 +3195,7 @@ with tab_sector:
                 values="Total_Market_Cap",
                 color="Median_Score",
                 title=f"Peta market cap dan score {sector_group.lower()}",
-                color_continuous_scale="RdYlGn",
+                color_continuous_scale=SCORE_SCALE,
             )
         else:
             fig = px.bar(
@@ -3142,7 +3205,7 @@ with tab_sector:
                 orientation="h",
                 color="Strong_Buy",
                 title=f"Ranking {sector_group.lower()} berdasarkan {sector_sort}",
-                color_continuous_scale="Greens",
+                color_continuous_scale=SCORE_SCALE,
             )
             fig.update_layout(yaxis={"categoryorder": "total ascending"})
         fig.update_layout(height=520)
@@ -3157,14 +3220,15 @@ with tab_sector:
             orientation="h",
             color="Median_Score",
             title=f"Kontribusi market cap {sector_group.lower()}",
-            color_continuous_scale="RdYlGn",
+            color_continuous_scale=SCORE_SCALE,
         )
         fig.update_layout(xaxis_title="Total market cap", yaxis_title="")
         fig.update_layout(height=520)
         show_chart(fig)
 
     show_table(
-        sector_summary,        hide_index=True,
+        sector_summary,
+        hide_index=True,
         column_config={
             "Median_Score": st.column_config.NumberColumn("Median Score", format="%.1f"),
             "Avg_ROE": st.column_config.NumberColumn("Avg ROE", format="%.1f%%"),
@@ -3222,7 +3286,8 @@ with tab_quality:
     with st.expander("Audit sumber kode saham", expanded=False):
         st.caption(HELP_TEXT["universe_audit"])
         show_table(
-            universe_summary,            hide_index=True,
+            universe_summary,
+            hide_index=True,
             column_config={"Jumlah": st.column_config.NumberColumn("Jumlah", format="%d")},
         )
         diff_codes = scored_df[~scored_df["In_IDX_Official"]][
@@ -3248,7 +3313,7 @@ with tab_quality:
                 text="Coverage",
                 title="Coverage rata-rata per grup data",
                 color="Coverage",
-                color_continuous_scale="RdYlGn",
+                color_continuous_scale=SCORE_SCALE,
                 range_color=[0, 100],
             )
             fig.update_traces(texttemplate="%{text:.0f}%", textposition="outside", cliponaxis=False)
@@ -3266,12 +3331,14 @@ with tab_quality:
                     color="Area",
                     orientation="h",
                     title="Campuran sumber data utama",
+                    color_discrete_map=SOURCE_COLORS,
                 )
                 fig.update_layout(height=360, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
                 show_chart(fig)
 
         show_table(
-            completeness_report.sort_values(["Coverage", "Grup", "Kolom"]),            hide_index=True,
+            completeness_report.sort_values(["Coverage", "Grup", "Kolom"]),
+            hide_index=True,
             column_config={
                 "Coverage": st.column_config.ProgressColumn("Coverage", min_value=0, max_value=100, format="%.0f%%"),
                 "Terisi": st.column_config.NumberColumn("Terisi", format="%d"),
@@ -3344,7 +3411,8 @@ with tab_quality:
                 audit_view = audit_view[search_text.str.contains(audit_search, na=False)]
 
             show_table(
-                audit_view,                hide_index=True,
+                audit_view,
+                hide_index=True,
                 column_config={
                     "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
                     "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
@@ -3367,7 +3435,8 @@ with tab_quality:
                 audit_detail["Kode"].eq(detail_code) & audit_detail["Filter"].eq(detail_filter)
             ]
             show_table(
-                selected_detail,                hide_index=True,
+                selected_detail,
+                hide_index=True,
                 column_config={
                     "Status": st.column_config.TextColumn("Status"),
                     "Actual": st.column_config.TextColumn("Nilai Saat Ini"),
@@ -3378,7 +3447,8 @@ with tab_quality:
             st.info("Pilih minimal satu kode saham untuk audit.")
 
     show_table(
-        quality_report,        hide_index=True,
+        quality_report,
+        hide_index=True,
         column_config={
             "Rows": st.column_config.NumberColumn("Rows", format="%d"),
         },
@@ -3389,7 +3459,8 @@ with tab_quality:
         selected_issue = st.selectbox("Lihat detail masalah", issue_options, help=HELP_TEXT["quality_issue"])
         detail = get_quality_detail(scored_df, selected_issue)
         show_table(
-            detail.head(200),            hide_index=True,
+            detail.head(200),
+            hide_index=True,
             column_config={
                 "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
                 "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
@@ -3483,7 +3554,13 @@ with tab_method:
         factor_top_n = safe_slider("Jumlah contoh faktor", factor_min, factor_max, factor_default, step=factor_step, help=HELP_TEXT["factor_top_n"])
 
     factor_examples = scored_df.sort_values(factor_to_inspect, ascending=False).head(factor_top_n)
-    fig = px.histogram(scored_df, x=factor_to_inspect, nbins=40, title=f"Distribusi {factor_to_inspect}", color_discrete_sequence=["#2563eb"])
+    fig = px.histogram(
+        scored_df,
+        x=factor_to_inspect,
+        nbins=40,
+        title=f"Distribusi {factor_to_inspect}",
+        color_discrete_sequence=[FACTOR_COLORS.get(factor_to_inspect, "#2563eb")],
+    )
     fig.update_layout(height=320)
     show_chart(fig)
     factor_example_columns = list(
@@ -3492,7 +3569,8 @@ with tab_method:
         )
     )
     show_table(
-        factor_examples[factor_example_columns],        hide_index=True,
+        factor_examples[factor_example_columns],
+        hide_index=True,
     )
 
     threshold_info = pd.DataFrame(
