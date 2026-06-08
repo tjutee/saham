@@ -100,6 +100,7 @@ ini event-based, bukan simulasi broker penuh.
 - Sinyal yang bisa diuji: `Bullish`, `Constructive`, `Weak`, `Overbought`, `MA50 Recovery`, dan `MA50 Breakdown`.
 - Metrik hasil: event count, hit rate 5/20/60 hari, average return, median return, dan max drawdown setelah event.
 - Evidence label: `Strong evidence`, `Mixed positive`, `Low sample`, atau `Weak evidence`.
+- Walk-forward validation membagi event secara berurutan untuk membandingkan performa train dan out-of-sample.
 - Hasil fundamental saat ini ditampilkan sebagai konteks, tetapi backtest belum memakai fundamental historis point-in-time.
 
 ## Harga & Teknikal

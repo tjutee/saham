@@ -233,6 +233,7 @@ HELP_TEXT = {
     "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan simulasi broker penuh.",
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
     "backtest_horizon": "Horizon forward return setelah sinyal muncul. Contoh 20D berarti return 20 hari bursa setelah event.",
+    "walk_forward": "Walk-forward membagi event historis secara berurutan: bagian awal sebagai in-sample dan bagian berikutnya sebagai out-of-sample. Ini membantu membaca robustness dan risiko overfitting.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -2482,6 +2483,69 @@ def summarize_backtest_events(events, horizons=(5, 20, 60)):
     return pd.DataFrame(rows)
 
 
+def build_walk_forward_validation(events, primary_horizon=20, folds=4, train_ratio=0.6):
+    if events.empty:
+        return pd.DataFrame()
+    return_column = f"Return_{primary_horizon}D_%"
+    if return_column not in events.columns:
+        return pd.DataFrame()
+
+    ordered = events.dropna(subset=["Date", return_column]).sort_values("Date").copy()
+    if len(ordered) < max(8, folds * 2):
+        return pd.DataFrame()
+
+    folds = max(2, min(int(folds), 8))
+    train_ratio = min(max(float(train_ratio), 0.4), 0.8)
+    fold_size = max(2, len(ordered) // folds)
+    rows = []
+    for fold in range(folds):
+        test_start = fold * fold_size
+        test_end = (fold + 1) * fold_size if fold < folds - 1 else len(ordered)
+        if test_start == 0:
+            train_end = max(1, int(test_end * train_ratio))
+            train = ordered.iloc[:train_end]
+            test = ordered.iloc[train_end:test_end]
+        else:
+            train = ordered.iloc[:test_start]
+            test = ordered.iloc[test_start:test_end]
+        if len(train) < 3 or len(test) < 2:
+            continue
+
+        train_return = pd.to_numeric(train[return_column], errors="coerce").dropna()
+        test_return = pd.to_numeric(test[return_column], errors="coerce").dropna()
+        if train_return.empty or test_return.empty:
+            continue
+        rows.append(
+            {
+                "Fold": fold + 1,
+                "Train_Start": train["Date"].min(),
+                "Train_End": train["Date"].max(),
+                "Test_Start": test["Date"].min(),
+                "Test_End": test["Date"].max(),
+                "Train_Events": len(train_return),
+                "Test_Events": len(test_return),
+                "Train_Hit_Rate_%": train_return.gt(0).mean() * 100,
+                "Test_Hit_Rate_%": test_return.gt(0).mean() * 100,
+                "Train_Avg_Return_%": train_return.mean(),
+                "Test_Avg_Return_%": test_return.mean(),
+                "Return_Decay_%": test_return.mean() - train_return.mean(),
+            }
+        )
+    output = pd.DataFrame(rows)
+    if output.empty:
+        return output
+    output["Robustness"] = np.select(
+        [
+            output["Test_Events"].ge(5) & output["Test_Hit_Rate_%"].ge(55) & output["Test_Avg_Return_%"].gt(0),
+            output["Test_Avg_Return_%"].gt(0),
+            output["Test_Events"].lt(5),
+        ],
+        ["Robust", "Mixed", "Low sample"],
+        default="Weak",
+    )
+    return output
+
+
 def read_sheet(sheet_name):
     try:
         df_sheet = pd.read_excel(DATA_FILE, sheet_name=sheet_name)
@@ -3191,6 +3255,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Decision Summary / Top Strengths / Top Risks**: ringkasan alasan kuantitatif agar ranking mudah diaudit.
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
         - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
+        - **Walk-forward**: validasi event berurutan yang membandingkan performa train dan out-of-sample agar sinyal tidak hanya bagus secara agregat.
         - **Clean_Data**: penanda bahwa data dan rasio utama lolos filter kebersihan minimum.
         - **Safety_Recommendation**: ringkasan kelayakan data seperti `Bersih - Strong`; di kartu utama ditampilkan sebagai `Data`, bukan jaminan aman investasi.
         - **Safety_Notes**: alasan saham perlu direview, misalnya volume rendah, rasio kosong, threshold rendah, atau risiko tinggi.
@@ -3206,6 +3271,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - `Position_Action`: teknikal dan fundamental memberi arahan hold/reduce/take profit/exit untuk saham yang sudah dimiliki.
         - `ATR_Stop_2x = Close - 2 x ATR14`.
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
+        - `Walk-forward Decay = Avg Return out-of-sample - Avg Return train`.
         - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable * 100`.
         - `Turnover = Penutupan * Volume`.
         - `Return Total = Harga Akhir / Harga Awal - 1`.
@@ -3947,6 +4013,13 @@ with tab_backtest:
         )
         if not horizon_options:
             horizon_options = [20]
+        walk_cols = st.columns([1, 1, 2])
+        with walk_cols[0]:
+            walk_forward_enabled = st.toggle("Walk-forward validation", value=True, help=HELP_TEXT["walk_forward"])
+        with walk_cols[1]:
+            walk_forward_folds = st.selectbox("Jumlah fold", [3, 4, 5, 6], index=1, help=HELP_TEXT["walk_forward"])
+        with walk_cols[2]:
+            st.caption("Walk-forward memakai urutan waktu event, bukan random split.")
 
         selected_backtest_codes = list(dict.fromkeys(backtest_codes_available[:backtest_n] + custom_backtest_codes))
         st.caption(
@@ -3999,6 +4072,51 @@ with tab_backtest:
                         "Avg_Max_Drawdown_%": st.column_config.NumberColumn("Avg Max Drawdown", format="%.1f%%"),
                     },
                 )
+
+                if walk_forward_enabled:
+                    walk_forward = build_walk_forward_validation(
+                        backtest_events,
+                        primary_horizon=primary_horizon,
+                        folds=walk_forward_folds,
+                    )
+                    if walk_forward.empty:
+                        st.info("Walk-forward belum cukup event untuk dibagi menjadi fold yang bermakna.")
+                    else:
+                        robust_count = int(walk_forward["Robustness"].eq("Robust").sum())
+                        wf_cols = st.columns(4)
+                        wf_cols[0].metric("Walk-forward fold", f"{len(walk_forward):,}")
+                        wf_cols[1].metric("Robust fold", f"{robust_count:,}")
+                        wf_cols[2].metric("Avg OOS hit", format_percent(walk_forward["Test_Hit_Rate_%"].mean()))
+                        wf_cols[3].metric("Avg OOS return", format_percent(walk_forward["Test_Avg_Return_%"].mean()))
+                        st.markdown("**Walk-forward validation**")
+                        show_table(
+                            walk_forward,
+                            hide_index=True,
+                            column_config={
+                                "Train_Start": st.column_config.DateColumn("Train Start"),
+                                "Train_End": st.column_config.DateColumn("Train End"),
+                                "Test_Start": st.column_config.DateColumn("Test Start"),
+                                "Test_End": st.column_config.DateColumn("Test End"),
+                                "Train_Events": st.column_config.NumberColumn("Train Events", format="%d"),
+                                "Test_Events": st.column_config.NumberColumn("Test Events", format="%d"),
+                                "Train_Hit_Rate_%": st.column_config.NumberColumn("Train Hit", format="%.1f%%"),
+                                "Test_Hit_Rate_%": st.column_config.NumberColumn("OOS Hit", format="%.1f%%"),
+                                "Train_Avg_Return_%": st.column_config.NumberColumn("Train Avg", format="%.1f%%"),
+                                "Test_Avg_Return_%": st.column_config.NumberColumn("OOS Avg", format="%.1f%%"),
+                                "Return_Decay_%": st.column_config.NumberColumn("Decay", format="%.1f%%"),
+                            },
+                        )
+                        fig = px.bar(
+                            walk_forward,
+                            x="Fold",
+                            y=["Train_Avg_Return_%", "Test_Avg_Return_%"],
+                            barmode="group",
+                            title=f"Walk-forward avg return {primary_horizon}D",
+                            color_discrete_sequence=["#64748b", "#2563eb"],
+                        )
+                        fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
+                        fig.update_layout(height=360, yaxis_title="Return (%)")
+                        show_chart(fig)
 
                 event_view = backtest_events.merge(
                     scored_df[["Kode", "Nama Perusahaan", "Sektor", "Score", "Recommendation", "Risk_Level", "Sector_Relative_Score"]],
