@@ -18,7 +18,8 @@ README.md
 `Ringkasan.xlsx` berfungsi sebagai fallback. Aplikasi mengambil universe kode
 saham dari endpoint resmi BEI/IDX lebih dulu, mengambil harga/histori dari
 online, lalu memakai Excel untuk rasio fundamental, metrik bank, sektor, dan
-cadangan data yang belum tersedia online.
+cadangan data yang belum tersedia online. Sheet `Metrik` juga dipakai untuk
+market cap, revenue, subsektor, industri, subindustri, dan daftar indeks.
 
 File yang tidak perlu di-upload:
 
@@ -65,7 +66,8 @@ Setelah deploy, cek tab `Ringkasan` untuk memastikan sumber harga, status kode,
 dan distribusi rekomendasi terbaca wajar. Lalu cek tab `Data Quality` ->
 `Audit sumber kode saham` dan `Kelengkapan kolom & sumber data`. Di sana akan
 terlihat jumlah kode yang match daftar resmi BEI/IDX, kode yang hanya berasal
-dari fallback, serta kolom fundamental/histori yang masih kosong.
+dari fallback, serta kolom fundamental, histori, market cap, revenue, dan
+hierarki industri yang masih kosong.
 
 Jika fallback Excel ingin dipakai, pastikan `Ringkasan.xlsx` ada di root
 repository, satu folder dengan `streamlit_app.py`. Nama file harus sama persis

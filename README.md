@@ -14,6 +14,7 @@ sektor, serta data yang belum tersedia online.
 - Scoring multi-factor: valuasi, kualitas profit, risiko, likuiditas, momentum, dan kekuatan indeks.
 - Filter threshold dari sheet `NonBank` dan `Banking`.
 - Histori return 4, 13, 26, 52 minggu, dan YTD dihitung dari yfinance bila tersedia.
+- Sheet `Metrik` dimanfaatkan untuk market cap, revenue, subsektor, industri, subindustri, dan daftar indeks gabungan.
 - Grafik histori online fleksibel untuk saham IDX dengan ticker `KODE.JK`.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
@@ -61,7 +62,7 @@ kolom yang kosong dari `Ringkasan.xlsx` bila file tersedia.
 2. Cadangan universe: TradingView, StockAnalysis, lalu `Ringkasan.xlsx`.
 3. Harga, volume, OHLC, dan histori: `yfinance`.
 4. Cadangan histori: `pandas-datareader`, cache lokal, lalu sheet `Metrik`.
-5. Fundamental dan metrik bank: `Ringkasan.xlsx` sampai tersedia API fundamental yang lebih lengkap.
+5. Fundamental, market cap, revenue, hierarki industri, dan metrik bank: `Ringkasan.xlsx` sampai tersedia API fundamental yang lebih lengkap.
 
 Tab `Data Quality` menampilkan audit sumber kode agar perbedaan antara daftar
 resmi BEI/IDX dan fallback tetap terlihat, bukan diabaikan.
@@ -90,6 +91,7 @@ Faktor yang dihitung:
 - Likuiditas: volume dan turnover harga x volume.
 - Momentum: histori online 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem, dengan sheet `Metrik` sebagai fallback.
 - Kekuatan indeks: nilai kolom Sigma i >= 7 dari Excel bila tersedia, lalu jumlah indeks/tempat kemunculan dari fallback, atau minimal satu untuk kode yang hanya tersedia dari universe resmi.
+- Konteks ukuran: market cap, revenue, dan MCap/Revenue ditampilkan untuk analisis, tetapi belum menjadi faktor utama score.
 - Threshold: batas rasio dari sheet `NonBank` atau `Banking`.
 
 Penalti diterapkan untuk data yang kurang sehat, seperti PER/PBV negatif,

@@ -47,6 +47,12 @@ NUMERIC_COLUMNS = [
     "LAR",
     "Index_Count_Raw",
     "Index_Count_Sigma",
+    "Index_Count_Metrik",
+    "Mkt Cap",
+    "Total Rev",
+    "Market_Cap",
+    "Revenue",
+    "Sales_Multiple",
 ]
 
 BASE_WEIGHTS = {
@@ -170,10 +176,10 @@ HELP_TEXT = {
     "histogram": "Pilih sampai tiga metrik untuk melihat distribusi nilai. Berguna untuk mendeteksi outlier dan sebaran rasio.",
     "history_chart_type": "Line cocok untuk perbandingan presisi banyak saham. Area lebih enak untuk satu atau sedikit saham karena area bisa menumpuk secara visual.",
     "history_table": "Menampilkan ringkasan angka histori seperti tanggal terakhir, harga awal/akhir, dan return total di bawah grafik.",
-    "sector_group": "Pilih agregasi berdasarkan Sektor luas atau Industry yang lebih rinci. Ringkasan dihitung dari seluruh scored_df.",
+    "sector_group": "Pilih agregasi berdasarkan sektor, subsektor, industri, subindustri, atau industry fallback. Ringkasan dihitung dari seluruh scored_df.",
     "sector_min": "Sembunyikan kelompok dengan jumlah saham terlalu sedikit agar median dan ranking kelompok tidak mudah bias.",
-    "sector_sort": "Metrik untuk ranking kelompok sektor/industri, misalnya median score, jumlah Strong Buy, turnover, rata-rata ROE, atau jumlah saham.",
-    "sector_chart": "Bar untuk ranking, Treemap untuk komposisi turnover, Scatter untuk membaca hubungan kualitas dan aktivitas kelompok.",
+    "sector_sort": "Metrik untuk ranking kelompok sektor/industri, misalnya median score, jumlah Strong Buy, market cap, revenue, turnover, rata-rata ROE, atau jumlah saham.",
+    "sector_chart": "Bar untuk ranking, Treemap untuk komposisi market cap, Scatter untuk membaca hubungan score dan ukuran kelompok.",
     "factor_inspect": "Pilih faktor untuk melihat distribusi dan contoh saham teratas. Ini alat audit metodologi, bukan filter baru.",
     "factor_top_n": "Jumlah contoh saham teratas yang ditampilkan untuk faktor yang sedang diinspeksi.",
     "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai rekomendasi.",
@@ -210,6 +216,9 @@ ANALYSIS_COLUMNS = [
     "Volume",
     "Turnover",
     "Index_Count",
+    "Market_Cap",
+    "Revenue",
+    "Sales_Multiple",
 ]
 
 
@@ -267,6 +276,20 @@ def format_rupiah(value):
     return f"Rp {value:,.0f}"
 
 
+def format_large_rupiah(value):
+    if pd.isna(value):
+        return "-"
+    value = float(value)
+    abs_value = abs(value)
+    if abs_value >= 1_000_000_000_000:
+        return f"Rp {value / 1_000_000_000_000:,.1f}T"
+    if abs_value >= 1_000_000_000:
+        return f"Rp {value / 1_000_000_000:,.1f}B"
+    if abs_value >= 1_000_000:
+        return f"Rp {value / 1_000_000:,.1f}M"
+    return f"Rp {value:,.0f}"
+
+
 def prepare_chart_frame(data, metric, limit=None):
     chart = data.copy()
     chart["Kode"] = chart["Kode"].astype(str).str.strip().str.upper()
@@ -283,7 +306,9 @@ def prepare_chart_frame(data, metric, limit=None):
 def build_completeness_report(data):
     groups = {
         "Identitas": ["Kode", "Nama Perusahaan", "Sektor", "Industry", "ListingBoard"],
+        "Hierarki Industri": ["Sektor_Metrik", "Subsektor", "Industri", "Subindustri"],
         "Harga & Likuiditas": ["Penutupan", "Volume", "Turnover", "%Change"],
+        "Ukuran Emiten": ["Market_Cap", "Revenue", "Sales_Multiple"],
         "Valuasi": ["PER", "PBV"],
         "Profitabilitas": ["ROE", "ROA", "NPM"],
         "Banking": ["NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"],
@@ -292,19 +317,22 @@ def build_completeness_report(data):
         "Sumber Data": ["Price_Source", "Volume_Source", "Universe_Source", "Universe_Diff_Status"],
     }
     rows = []
-    total_rows = max(len(data), 1)
     for group, columns in groups.items():
         available_columns = [column for column in columns if column in data.columns]
         if not available_columns:
             continue
+        scoped_data = data
+        if group == "Banking" and "Threshold_Mode" in data.columns:
+            scoped_data = data[data["Threshold_Mode"].eq("Banking")]
+        total_rows = max(len(scoped_data), 1)
         for column in available_columns:
-            available = int(data[column].notna().sum())
+            available = int(scoped_data[column].notna().sum())
             rows.append(
                 {
                     "Grup": group,
                     "Kolom": column,
                     "Terisi": available,
-                    "Kosong": int(len(data) - available),
+                    "Kosong": int(len(scoped_data) - available),
                     "Coverage": available / total_rows * 100,
                 }
             )
@@ -367,6 +395,16 @@ def clean_stock_code(value):
     if code in {"", "-", "NAN", "NONE", "NULL"}:
         return ""
     return code
+
+
+def count_index_memberships(value):
+    if pd.isna(value):
+        return 0
+    text = str(value).strip()
+    if not text or text.upper() in {"-", "NAN", "NONE"}:
+        return 0
+    parts = [part.strip() for part in re.split(r"[,;|]", text) if part.strip()]
+    return len(set(parts))
 
 
 def first_existing_column(dataframe, candidates):
@@ -645,6 +683,7 @@ def build_data_quality_report(scored, raw):
     invalid_per = scored["PER"].isna() | scored["PER"].le(0)
     invalid_pbv = scored["PBV"].isna() | scored["PBV"].le(0)
     missing_profit = scored[["ROE", "ROA", "NPM"]].isna().any(axis=1)
+    missing_size_data = scored.get("Market_Cap", pd.Series(index=scored.index)).isna() | scored.get("Revenue", pd.Series(index=scored.index)).isna()
     bank_metric_columns = [column for column in ["NIM", "CAR", "LDR", "NPL", "BOPO"] if column in scored.columns]
     bank_missing_metrics = scored["Threshold_Mode"].eq("Banking") & scored[bank_metric_columns].isna().any(axis=1) if bank_metric_columns else pd.Series(False, index=scored.index)
     low_threshold = scored["Threshold_Pass_Ratio"].lt(40)
@@ -700,6 +739,13 @@ def build_data_quality_report(scored, raw):
             "Action": "Lengkapi rasio profit agar kualitas score lebih akurat.",
         },
         {
+            "Area": "Ukuran Emiten",
+            "Check": "Market cap atau revenue kosong",
+            "Rows": int(missing_size_data.sum()),
+            "Severity": "Low",
+            "Action": "Lengkapi sheet Metrik agar konteks ukuran emiten dan MCap/Revenue lebih akurat.",
+        },
+        {
             "Area": "Threshold",
             "Check": "Threshold lolos < 40 persen",
             "Rows": int(low_threshold.sum()),
@@ -744,6 +790,8 @@ def get_quality_detail(scored, issue_key):
         mask = scored["PBV"].isna() | scored["PBV"].fillna(0).le(0)
     elif issue_key == "ROE/ROA/NPM ada yang kosong":
         mask = scored[["ROE", "ROA", "NPM"]].isna().any(axis=1)
+    elif issue_key == "Market cap atau revenue kosong":
+        mask = scored.get("Market_Cap", pd.Series(index=scored.index)).isna() | scored.get("Revenue", pd.Series(index=scored.index)).isna()
     elif issue_key == "Threshold lolos < 40 persen":
         mask = scored["Threshold_Pass_Ratio"].lt(40)
     elif issue_key == "Metrik khusus bank ada yang kosong":
@@ -753,7 +801,7 @@ def get_quality_detail(scored, issue_key):
         mask = scored["Return_52W"].isna()
     else:
         mask = pd.Series(False, index=scored.index)
-    columns = ["Kode", "Nama Perusahaan", "Sektor", "Industry", "Score", "Recommendation", "Penutupan", "Volume", "PER", "PBV", "ROE", "ROA", "NPM", "NIM", "CAR", "LDR", "NPL", "BOPO", "Threshold_Pass_Ratio", "Return_52W"]
+    columns = ["Kode", "Nama Perusahaan", "Sektor", "Subsektor", "Industri", "Subindustri", "Industry", "Score", "Recommendation", "Penutupan", "Volume", "Market_Cap", "Revenue", "Sales_Multiple", "PER", "PBV", "ROE", "ROA", "NPM", "NIM", "CAR", "LDR", "NPL", "BOPO", "Threshold_Pass_Ratio", "Return_52W"]
     return scored.loc[mask, [column for column in columns if column in scored.columns]].copy()
 
 
@@ -1373,10 +1421,37 @@ def load_history_metrics():
     if history.empty or "Kode Saham" not in history.columns:
         return pd.DataFrame(columns=["Kode"])
     history["Kode"] = history["Kode Saham"].astype(str).str.strip().str.upper()
-    keep_columns = ["Kode", "Mkt Cap", "Total Rev", "Industri", "Subindustri"] + list(HISTORY_COLUMNS)
+    keep_columns = [
+        "Kode",
+        "Sektor",
+        "Subsektor",
+        "Industri",
+        "Subindustri",
+        "Index",
+        "Mkt Cap",
+        "Total Rev",
+    ] + list(HISTORY_COLUMNS)
     keep_columns = [column for column in keep_columns if column in history.columns]
-    history = history[keep_columns].rename(columns=HISTORY_COLUMNS)
-    for column in ["Mkt Cap", "Total Rev", "Return_4W", "Return_13W", "Return_26W", "Return_52W", "Return_MTD", "Return_YTD"]:
+    history = history[keep_columns].rename(
+        columns={
+            **HISTORY_COLUMNS,
+            "Sektor": "Sektor_Metrik",
+            "Index": "Index_Metrik",
+        }
+    )
+    if "Index_Metrik" in history.columns:
+        history["Index_Count_Metrik"] = history["Index_Metrik"].apply(count_index_memberships)
+    for column in [
+        "Mkt Cap",
+        "Total Rev",
+        "Return_4W",
+        "Return_13W",
+        "Return_26W",
+        "Return_52W",
+        "Return_MTD",
+        "Return_YTD",
+        "Index_Count_Metrik",
+    ]:
         if column in history.columns:
             history[column] = pd.to_numeric(history[column], errors="coerce")
     return history.drop_duplicates("Kode")
@@ -1678,11 +1753,54 @@ def load_data():
         df["Source_Rows"] = 0
     history = load_history_metrics()
     df = df.merge(history, on="Kode", how="left", suffixes=("", "_ExcelHistory"))
-    for column in ["Return_4W", "Return_13W", "Return_26W", "Return_52W", "Return_MTD", "Return_YTD", "Mkt Cap", "Total Rev"]:
+    for column in [
+        "Return_4W",
+        "Return_13W",
+        "Return_26W",
+        "Return_52W",
+        "Return_MTD",
+        "Return_YTD",
+        "Mkt Cap",
+        "Total Rev",
+        "Index_Count_Metrik",
+    ]:
         excel_column = f"{column}_ExcelHistory"
         if excel_column in df.columns:
             df[column] = pd.to_numeric(df.get(column), errors="coerce").fillna(pd.to_numeric(df[excel_column], errors="coerce"))
             df = df.drop(columns=[excel_column])
+    for column in ["Sektor_Metrik", "Subsektor", "Industri", "Subindustri", "Index_Metrik"]:
+        excel_column = f"{column}_ExcelHistory"
+        if excel_column in df.columns:
+            if column not in df.columns:
+                df[column] = np.nan
+            df[column] = df[column].fillna(df[excel_column])
+            df = df.drop(columns=[excel_column])
+    if "Sektor_Metrik" in df.columns:
+        missing_sector = df["Sektor"].isna() | df["Sektor"].astype(str).str.strip().isin(["", "-", "No Sector", "nan"])
+        df.loc[missing_sector, "Sektor"] = df.loc[missing_sector, "Sektor_Metrik"]
+    if "Subindustri" in df.columns:
+        missing_industry = df["Industry"].isna() | df["Industry"].astype(str).str.strip().isin(["", "-", "No Industry", "nan"])
+        df.loc[missing_industry, "Industry"] = df.loc[missing_industry, "Subindustri"].fillna(df.get("Industri"))
+    if "Index_Metrik" in df.columns:
+        index_missing = df["Index"].isna() | df["Index"].astype(str).str.strip().isin(["", "-", "nan"])
+        df.loc[index_missing, "Index"] = df.loc[index_missing, "Index_Metrik"]
+    if "Index_Count_Metrik" in df.columns:
+        df["Index_Count"] = pd.concat(
+            [
+                pd.to_numeric(df.get("Index_Count"), errors="coerce"),
+                pd.to_numeric(df["Index_Count_Metrik"], errors="coerce"),
+            ],
+            axis=1,
+        ).max(axis=1).fillna(0)
+    if "Mkt Cap" in df.columns:
+        df["Market_Cap"] = pd.to_numeric(df["Mkt Cap"], errors="coerce")
+    else:
+        df["Market_Cap"] = np.nan
+    if "Total Rev" in df.columns:
+        df["Revenue"] = pd.to_numeric(df["Total Rev"], errors="coerce")
+    else:
+        df["Revenue"] = np.nan
+    df["Sales_Multiple"] = np.where(df["Revenue"].fillna(0) > 0, df["Market_Cap"] / df["Revenue"], np.nan)
     threshold_bank = aggregate_threshold_sheet("Banking")
     threshold_nonbank = aggregate_threshold_sheet("NonBank")
     threshold_values = pd.concat([threshold_bank, threshold_nonbank], ignore_index=True)
@@ -2056,31 +2174,11 @@ if require_core_thresholds:
 if clean_data_only:
     filtered = filtered[filtered["Clean_Data"]]
 
-top = filtered.head(20)
-best = top.iloc[0] if not top.empty else None
-
-metric_cols = st.columns(6)
-metric_cols[0].metric("Saham unik", f"{len(df):,}", f"{len(raw_df):,} baris sumber")
-metric_cols[1].metric("Lolos filter", f"{len(filtered):,}")
-metric_cols[2].metric("Median score", f"{filtered['Score'].median():.1f}" if len(filtered) else "-")
-metric_cols[3].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filtered) else "-")
-metric_cols[4].metric("Strong Buy", f"{(filtered['Recommendation'] == 'Strong Buy').sum():,}")
-metric_cols[5].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
-
-if best is not None:
-    st.markdown(
-        f"""
-        <div class="recommendation-card">
-            <b>Rekomendasi teratas saat ini: {best['Kode']} - {best['Nama Perusahaan']}</b><br>
-            Score {best['Score']:.1f} ({best['Recommendation']}) | Risiko {best['Risk_Level']} |
-            Data {best['Safety_Recommendation']} |
-            Threshold {best['Threshold_Pass_Ratio']:.0f}% ({best['Threshold_Mode']}) |
-            Harga {format_rupiah(best['Penutupan'])} | PER {format_number(best['PER'])} |
-            ROE {format_number(best['ROE'])}% | Volume {format_volume(best['Volume'])}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+status_cols = st.columns(4)
+status_cols[0].metric("Universe", f"{len(df):,}", f"{len(raw_df):,} baris sumber")
+status_cols[1].metric("Lolos filter", f"{len(filtered):,}")
+status_cols[2].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filtered) else "-")
+status_cols[3].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
 
 tab_summary, tab_reco, tab_explore, tab_history, tab_sector, tab_quality, tab_method = st.tabs(
     ["Ringkasan", "Rekomendasi", "Explorer", "Histori Harga", "Sektor", "Data Quality", "Metodologi"]
@@ -2101,15 +2199,15 @@ with tab_summary:
         idx_match = int(summary_data.get("In_IDX_Official", pd.Series(False, index=summary_data.index)).fillna(False).sum())
         fallback_only = int((~summary_data.get("In_IDX_Official", pd.Series(False, index=summary_data.index)).fillna(False)).sum())
         online_price = int(summary_data.get("Price_Source", pd.Series("", index=summary_data.index)).astype(str).str.contains("Online|yfinance|cache", case=False, na=False).sum())
-        excel_price = int(summary_data.get("Price_Source", pd.Series("", index=summary_data.index)).astype(str).str.contains("Excel", case=False, na=False).sum())
         clean_ratio = summary_data["Clean_Data"].mean() * 100 if "Clean_Data" in summary_data.columns and len(summary_data) else 0
+        total_market_cap = summary_data.get("Market_Cap", pd.Series(index=summary_data.index)).sum(skipna=True)
 
         summary_cols = st.columns(6)
         summary_cols[0].metric("Saham dianalisis", f"{summary_data['Kode'].nunique():,}")
         summary_cols[1].metric("Match BEI/IDX", f"{idx_match:,}")
         summary_cols[2].metric("Fallback kode", f"{fallback_only:,}")
         summary_cols[3].metric("Harga online/cache", f"{online_price:,}")
-        summary_cols[4].metric("Harga Excel", f"{excel_price:,}")
+        summary_cols[4].metric("Market cap", format_large_rupiah(total_market_cap) if total_market_cap else "-")
         summary_cols[5].metric("Clean data", f"{clean_ratio:.0f}%")
 
         chart_cols = st.columns([1, 1, 1])
@@ -2181,7 +2279,12 @@ with tab_summary:
                 "NPM",
                 "Return_52W",
                 "Volume",
+                "Market_Cap",
+                "Revenue",
+                "Sales_Multiple",
                 "Index_Count",
+                "Subsektor",
+                "Subindustri",
                 "Price_Source",
                 "Universe_Diff_Status",
             ]
@@ -2195,6 +2298,9 @@ with tab_summary:
                     "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
                     "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
                     "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
+                    "Market_Cap": st.column_config.NumberColumn("Market Cap", format="Rp %.0f", help="Kapitalisasi pasar dari sheet Metrik bila tersedia."),
+                    "Revenue": st.column_config.NumberColumn("Revenue", format="Rp %.0f", help="Total revenue dari sheet Metrik bila tersedia."),
+                    "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f", help="Market cap dibagi total revenue. Dipakai sebagai konteks tambahan, bukan rumus utama score."),
                     "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
                     "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
                 },
@@ -2358,8 +2464,12 @@ with tab_reco:
             "Return_52W",
             "Return_YTD",
             "Volume",
+            "Market_Cap",
+            "Revenue",
+            "Sales_Multiple",
             "Index_Count",
             "Index_Count_Sigma",
+            "Index_Count_Metrik",
             "Price_Source",
             "Volume_Source",
             "Data_Source",
@@ -2367,6 +2477,9 @@ with tab_reco:
             "Universe_Diff_Status",
             "ListingBoard",
             "ListingDate",
+            "Subsektor",
+            "Industri",
+            "Subindustri",
             "Volume_Original",
             "Volume_Online_Latest",
             "Online_Last_Date",
@@ -2390,6 +2503,7 @@ with tab_reco:
             "DER",
             "Return_52W",
             "Volume",
+            "Market_Cap",
             "Index_Count",
             "Price_Source",
             "Volume_Source",
@@ -2422,8 +2536,12 @@ with tab_reco:
                 "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
                 "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
                 "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
+                "Market_Cap": st.column_config.NumberColumn("Market Cap", format="Rp %.0f", help="Kapitalisasi pasar dari sheet Metrik bila tersedia."),
+                "Revenue": st.column_config.NumberColumn("Revenue", format="Rp %.0f", help="Total revenue dari sheet Metrik bila tersedia."),
+                "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f", help="Market cap dibagi revenue. Konteks tambahan, bukan rumus utama score."),
                 "Index_Count": st.column_config.NumberColumn("Index Count", format="%.0f", help=HELP_TEXT["index_strength"]),
                 "Index_Count_Sigma": st.column_config.NumberColumn("Sigma i", format="%.0f", help="Nilai coverage indeks dari kolom Sigma i >= 7 di Excel fallback bila tersedia."),
+                "Index_Count_Metrik": st.column_config.NumberColumn("Index Count Metrik", format="%.0f", help="Jumlah indeks dari daftar gabungan pada sheet Metrik."),
                 "Price_Source": st.column_config.TextColumn("Sumber Harga", help="Menunjukkan apakah harga berasal dari yfinance/cache atau Excel fallback."),
                 "Volume_Original": st.column_config.NumberColumn("Volume Excel", format="%.0f", help="Volume dari Excel fallback bila tersedia."),
                 "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari yfinance/cache."),
@@ -2719,11 +2837,12 @@ with tab_history:
 with tab_sector:
     sector_controls = st.columns([1, 1, 1, 1])
     with sector_controls[0]:
-        sector_group = st.selectbox("Kelompok", ["Sektor", "Industry"], help=HELP_TEXT["sector_group"])
+        sector_group_options = [column for column in ["Sektor", "Subsektor", "Industri", "Subindustri", "Industry"] if column in scored_df.columns]
+        sector_group = st.selectbox("Kelompok", sector_group_options, help=HELP_TEXT["sector_group"])
     with sector_controls[1]:
         sector_min_count = st.slider("Minimum saham per kelompok", 1, 25, 3, help=HELP_TEXT["sector_min"])
     with sector_controls[2]:
-        sector_sort = st.selectbox("Urutkan sektor", ["Median_Score", "Strong_Buy", "Total_Turnover", "Avg_ROE", "Saham"], help=HELP_TEXT["sector_sort"])
+        sector_sort = st.selectbox("Urutkan sektor", ["Median_Score", "Strong_Buy", "Total_Market_Cap", "Total_Revenue", "Total_Turnover", "Avg_ROE", "Saham"], help=HELP_TEXT["sector_sort"])
     with sector_controls[3]:
         sector_chart = st.selectbox("Visual utama", ["Bar", "Treemap", "Scatter"], help=HELP_TEXT["sector_chart"])
 
@@ -2736,6 +2855,9 @@ with tab_sector:
             Median_PER=("PER", "median"),
             Median_PBV=("PBV", "median"),
             Total_Turnover=("Turnover", "sum"),
+            Total_Market_Cap=("Market_Cap", "sum"),
+            Total_Revenue=("Revenue", "sum"),
+            Median_Sales_Multiple=("Sales_Multiple", "median"),
             Strong_Buy=("Recommendation", lambda x: (x == "Strong Buy").sum()),
         )
         .reset_index()
@@ -2751,21 +2873,21 @@ with tab_sector:
         if sector_chart == "Scatter":
             fig = px.scatter(
                 sector_summary,
-                x="Total_Turnover",
+                x="Total_Market_Cap",
                 y="Median_Score",
                 size="Saham",
                 color="Strong_Buy",
                 hover_name=sector_group,
-                title=f"{sector_group}: turnover vs median score",
+                title=f"{sector_group}: market cap vs median score",
                 color_continuous_scale="Greens",
             )
         elif sector_chart == "Treemap":
             fig = px.treemap(
                 sector_summary,
                 path=[sector_group],
-                values="Total_Turnover",
+                values="Total_Market_Cap",
                 color="Median_Score",
-                title=f"Peta turnover dan score {sector_group.lower()}",
+                title=f"Peta market cap dan score {sector_group.lower()}",
                 color_continuous_scale="RdYlGn",
             )
         else:
@@ -2783,14 +2905,17 @@ with tab_sector:
         st.plotly_chart(fig, width="stretch")
 
     with right:
-        fig = px.treemap(
-            sector_summary,
-            path=[sector_group],
-            values="Total_Turnover",
+        market_cap_view = sector_summary.sort_values("Total_Market_Cap", ascending=True).tail(15)
+        fig = px.bar(
+            market_cap_view,
+            x="Total_Market_Cap",
+            y=sector_group,
+            orientation="h",
             color="Median_Score",
-            title=f"Peta turnover dan score {sector_group.lower()}",
+            title=f"Kontribusi market cap {sector_group.lower()}",
             color_continuous_scale="RdYlGn",
         )
+        fig.update_layout(xaxis_title="Total market cap", yaxis_title="")
         fig.update_layout(height=520)
         st.plotly_chart(fig, width="stretch")
 
@@ -2804,13 +2929,16 @@ with tab_sector:
             "Median_PER": st.column_config.NumberColumn("Median PER", format="%.1f"),
             "Median_PBV": st.column_config.NumberColumn("Median PBV", format="%.1f"),
             "Total_Turnover": st.column_config.NumberColumn("Total Turnover", format="Rp %.0f"),
+            "Total_Market_Cap": st.column_config.NumberColumn("Total Market Cap", format="Rp %.0f"),
+            "Total_Revenue": st.column_config.NumberColumn("Total Revenue", format="Rp %.0f"),
+            "Median_Sales_Multiple": st.column_config.NumberColumn("Median MCap/Revenue", format="%.2f"),
         },
     )
 
 with tab_quality:
     st.subheader("Data Quality & Workflow Update")
     quality_report = build_data_quality_report(scored_df, raw_df)
-    review_count = int(quality_report["Rows"].gt(0).sum())
+    review_count = int((quality_report["Rows"].gt(0) & ~quality_report["Severity"].eq("Info")).sum())
     high_count = int(((quality_report["Rows"] > 0) & quality_report["Severity"].eq("High")).sum())
     quality_cols = st.columns(4)
     quality_cols[0].metric("Status check", f"{len(quality_report) - review_count}/{len(quality_report)} OK")
@@ -3017,6 +3145,9 @@ with tab_quality:
                 "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
                 "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
                 "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
+                "Market_Cap": st.column_config.NumberColumn("Market Cap", format="Rp %.0f"),
+                "Revenue": st.column_config.NumberColumn("Revenue", format="Rp %.0f"),
+                "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f"),
                 "PER": st.column_config.NumberColumn("PER", format="%.2f", help=HELP_TEXT["per"]),
                 "PBV": st.column_config.NumberColumn("PBV", format="%.2f", help=HELP_TEXT["pbv"]),
                 "ROE": st.column_config.NumberColumn("ROE", format="%.1f%%", help=HELP_TEXT["roe"]),
