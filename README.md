@@ -29,7 +29,7 @@ belum stabil tersedia online.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
 - Bobot scoring bisa diatur langsung dari sidebar.
-- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Harga & Teknikal, Backtest, Explorer, Sektor, Kualitas Data, dan Metodologi.
+- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Harga & Teknikal, Backtest, Prediksi, Explorer, Sektor, Kualitas Data, dan Metodologi.
 - Ringkasan eksekutif berisi distribusi rekomendasi, komposisi risiko, sumber data, top kandidat, dan heatmap faktor.
 - Kualitas Data menampilkan audit sumber kode, audit filter, coverage kolom, serta campuran sumber harga/volume.
 - Tabel hasil bisa di-download sebagai CSV.
@@ -102,6 +102,16 @@ ini event-based, bukan simulasi broker penuh.
 - Evidence label: `Strong evidence`, `Mixed positive`, `Low sample`, atau `Weak evidence`.
 - Walk-forward validation membagi event secara berurutan untuk membandingkan performa train dan out-of-sample.
 - Hasil fundamental saat ini ditampilkan sebagai konteks, tetapi backtest belum memakai fundamental historis point-in-time.
+
+## Prediksi
+
+Tab `Prediksi` memakai setup historis yang mirip dengan kondisi teknikal saat
+ini untuk menghitung probabilitas statistik.
+
+- Output: `Prediction_Bias`, `Probability_Up_20D/60D`, `Expected_Return`, `Downside_Risk`, `Model_Confidence`, dan sample historis.
+- Similarity memakai `Technical_Signal`, `Fibo_Zone`, `Technical_Score`, `RSI`, dan jarak harga ke level Fibonacci.
+- Ini baseline probabilistik berbasis histori, bukan prediksi harga pasti dan belum memakai model ML berat seperti LightGBM.
+- Gunakan bersama fundamental, market regime, backtest, dan trade plan.
 
 ## Harga & Teknikal
 

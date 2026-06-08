@@ -236,6 +236,7 @@ HELP_TEXT = {
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
     "backtest_horizon": "Horizon forward return setelah sinyal muncul. Contoh 20D berarti return 20 hari bursa setelah event.",
     "walk_forward": "Walk-forward membagi event historis secara berurutan: bagian awal sebagai in-sample dan bagian berikutnya sebagai out-of-sample. Ini membantu membaca robustness dan risiko overfitting.",
+    "prediction": "Prediction layer memakai setup historis yang mirip dengan kondisi teknikal saat ini untuk menghitung probabilitas naik, expected return, downside risk, dan confidence. Ini bukan prediksi harga pasti.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -2689,6 +2690,136 @@ def build_walk_forward_validation(events, primary_horizon=20, folds=4, train_rat
     return output
 
 
+def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8):
+    if history.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    technical = add_fibonacci_confluence(add_historical_technical_scores(build_technical_indicators(history)))
+    if technical.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    technical = technical.sort_values(["Kode", "Date"]).copy()
+    for horizon in horizons:
+        technical[f"Forward_Return_{horizon}D_%"] = (
+            technical.groupby("Kode")["Close"].shift(-horizon) / technical["Close"] - 1
+        ) * 100
+
+    latest = technical.groupby("Kode", as_index=False).tail(1).copy()
+    rows = []
+    detail_frames = []
+    scored_columns = [
+        column
+        for column in [
+            "Kode",
+            "Nama Perusahaan",
+            "Sektor",
+            "Score",
+            "Recommendation",
+            "Risk_Level",
+            "Sector_Relative_Score",
+            "Market_Regime",
+            "Action_Checklist",
+        ]
+        if column in scored.columns
+    ]
+    scored_context = scored[scored_columns].drop_duplicates("Kode") if scored_columns else pd.DataFrame(columns=["Kode"])
+
+    for _, current in latest.iterrows():
+        code = current["Kode"]
+        group = technical[technical["Kode"].eq(code)].copy()
+        history_rows = group[group["Date"].lt(current["Date"])].copy()
+        if history_rows.empty:
+            continue
+
+        signal = clean_text(current.get("Technical_Signal"), "Neutral")
+        zone = clean_text(current.get("Fibo_Zone"), "Unavailable")
+        current_score = pd.to_numeric(current.get("Technical_Score"), errors="coerce")
+        current_rsi = pd.to_numeric(current.get("RSI14"), errors="coerce")
+        current_fibo_distance = pd.to_numeric(current.get("Distance_To_Fibo_%"), errors="coerce")
+
+        similar = history_rows[history_rows["Technical_Signal"].eq(signal)].copy()
+        if "Fibo_Zone" in similar.columns:
+            stricter = similar[similar["Fibo_Zone"].eq(zone)]
+            if len(stricter) >= min_sample:
+                similar = stricter
+
+        if pd.notna(current_score):
+            bounded = similar[(similar["Technical_Score"] - current_score).abs().le(15)]
+            if len(bounded) >= min_sample:
+                similar = bounded
+        if pd.notna(current_rsi):
+            bounded = similar[(similar["RSI14"] - current_rsi).abs().le(12)]
+            if len(bounded) >= min_sample:
+                similar = bounded
+        if pd.notna(current_fibo_distance) and "Distance_To_Fibo_%" in similar.columns:
+            bounded = similar[(similar["Distance_To_Fibo_%"] - current_fibo_distance).abs().le(8)]
+            if len(bounded) >= min_sample:
+                similar = bounded
+
+        row = {
+            "Kode": code,
+            "Date": current.get("Date"),
+            "Close": current.get("Close"),
+            "Technical_Signal": signal,
+            "Technical_Score": current.get("Technical_Score"),
+            "Fibo_Zone": zone,
+            "Nearest_Fibo_Level": current.get("Nearest_Fibo_Level"),
+            "Fibo_Confluence_Score": current.get("Fibo_Confluence_Score"),
+            "RSI14": current.get("RSI14"),
+            "Similarity_Sample": len(similar),
+        }
+        primary_probability = np.nan
+        primary_expected = np.nan
+        for horizon in horizons:
+            return_column = f"Forward_Return_{horizon}D_%"
+            valid = pd.to_numeric(similar.get(return_column, pd.Series(dtype=float)), errors="coerce").dropna()
+            row[f"Probability_Up_{horizon}D_%"] = valid.gt(0).mean() * 100 if len(valid) else np.nan
+            row[f"Expected_Return_{horizon}D_%"] = valid.mean() if len(valid) else np.nan
+            row[f"Downside_Risk_{horizon}D_%"] = valid.quantile(0.20) if len(valid) else np.nan
+            row[f"Valid_Sample_{horizon}D"] = len(valid)
+            if horizon == 20 or pd.isna(primary_probability):
+                primary_probability = row[f"Probability_Up_{horizon}D_%"]
+                primary_expected = row[f"Expected_Return_{horizon}D_%"]
+
+        sample_size = max([row.get(f"Valid_Sample_{horizon}D", 0) for horizon in horizons] or [0])
+        if pd.notna(primary_probability) and pd.notna(primary_expected) and sample_size >= min_sample:
+            if primary_probability >= 58 and primary_expected > 0:
+                bias = "Bullish Probability"
+            elif primary_probability <= 45 or primary_expected < 0:
+                bias = "Bearish Probability"
+            else:
+                bias = "Neutral Probability"
+        else:
+            bias = "Low Evidence"
+
+        if sample_size >= 30:
+            confidence = "High"
+        elif sample_size >= min_sample:
+            confidence = "Medium"
+        else:
+            confidence = "Low"
+        row["Prediction_Bias"] = bias
+        row["Model_Confidence"] = confidence
+        rows.append(row)
+
+        detail_columns = [
+            "Date",
+            "Kode",
+            "Close",
+            "Technical_Score",
+            "Technical_Signal",
+            "Fibo_Zone",
+            "RSI14",
+        ] + [f"Forward_Return_{horizon}D_%" for horizon in horizons]
+        detail_frames.append(similar[[column for column in detail_columns if column in similar.columns]].tail(100))
+
+    prediction = pd.DataFrame(rows)
+    if not prediction.empty and not scored_context.empty:
+        prediction = prediction.merge(scored_context, on="Kode", how="left")
+    details = pd.concat(detail_frames, ignore_index=True) if detail_frames else pd.DataFrame()
+    return prediction, details
+
+
 def read_sheet(sheet_name):
     try:
         df_sheet = pd.read_excel(DATA_FILE, sheet_name=sheet_name)
@@ -3369,6 +3500,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
         - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, ringkasan teknikal top kandidat, candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Backtest**: uji event historis untuk sinyal teknikal seperti Bullish, Constructive, Weak, Overbought, MA50 Recovery, dan MA50 Breakdown.
+        - **Prediksi**: probabilitas naik, expected return, downside risk, dan confidence dari setup historis yang mirip dengan kondisi teknikal saat ini.
         - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
         - **Kualitas Data**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
         - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
@@ -3401,6 +3533,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Fibonacci Confluence**: support/resistance dari swing high-low, nearest level, jarak harga, dan confluence score.
         - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
         - **Walk-forward**: validasi event berurutan yang membandingkan performa train dan out-of-sample agar sinyal tidak hanya bagus secara agregat.
+        - **Prediction Bias**: bias probabilistik dari setup historis yang mirip, bukan ramalan harga pasti.
         - **Clean_Data**: penanda bahwa data dan rasio utama lolos filter kebersihan minimum.
         - **Safety_Recommendation**: ringkasan kelayakan data seperti `Bersih - Strong`; di kartu utama ditampilkan sebagai `Data`, bukan jaminan aman investasi.
         - **Safety_Notes**: alasan saham perlu direview, misalnya volume rendah, rasio kosong, threshold rendah, atau risiko tinggi.
@@ -3420,6 +3553,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - `Fibo Confluence Score`: kedekatan harga ke level Fibo + zona golden ratio + konfirmasi trend/RSI.
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
         - `Walk-forward Decay = Avg Return out-of-sample - Avg Return train`.
+        - `Probability_Up_nD = jumlah setup historis mirip yang return nD positif / total setup valid`.
         - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable * 100`.
         - `Turnover = Penutupan * Volume`.
         - `Return Total = Harga Akhir / Harga Awal - 1`.
@@ -3651,8 +3785,8 @@ if market_context.get("Market_Error"):
 if market_context.get("Breadth_Error"):
     st.caption(f"Market breadth terbatas: {market_context.get('Breadth_Error')}")
 
-tab_summary, tab_reco, tab_history, tab_backtest, tab_explore, tab_sector, tab_quality, tab_method = st.tabs(
-    ["Ringkasan", "Rekomendasi", "Harga & Teknikal", "Backtest", "Explorer", "Sektor", "Kualitas Data", "Metodologi"]
+tab_summary, tab_reco, tab_history, tab_backtest, tab_predict, tab_explore, tab_sector, tab_quality, tab_method = st.tabs(
+    ["Ringkasan", "Rekomendasi", "Harga & Teknikal", "Backtest", "Prediksi", "Explorer", "Sektor", "Kualitas Data", "Metodologi"]
 )
 
 with tab_summary:
@@ -4326,6 +4460,192 @@ with tab_backtest:
                 st.info(
                     "Interpretasi: evidence kuat butuh jumlah event memadai dan hasil out-of-sample yang nanti perlu diuji lebih lanjut. "
                     "Tahap ini baru event backtest historis, bukan prediksi masa depan."
+                )
+
+with tab_predict:
+    st.subheader("Prediksi probabilistik")
+    st.caption(
+        "Layer ini mencari setup historis yang mirip dengan kondisi teknikal saat ini, lalu menghitung probabilitas naik dan risiko downside. "
+        "Ini bukan prediksi harga pasti dan belum memakai model ML berat."
+    )
+
+    prediction_source = filtered if not filtered.empty else scored_df
+    prediction_codes_available = prediction_source["Kode"].dropna().astype(str).str.upper().unique().tolist()
+    if not prediction_codes_available:
+        st.warning("Tidak ada kode saham untuk prediksi pada filter saat ini.")
+    else:
+        prediction_controls = st.columns([1, 1, 1, 1])
+        with prediction_controls[0]:
+            prediction_period = st.selectbox(
+                "Periode histori prediksi",
+                ["1y", "2y", "5y", "10y"],
+                index=2,
+                format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
+                help=HELP_TEXT["prediction"],
+            )
+        with prediction_controls[1]:
+            prediction_horizons = st.multiselect(
+                "Horizon prediksi",
+                [20, 60],
+                default=[20, 60],
+                format_func=lambda value: f"{value}D",
+                help=HELP_TEXT["prediction"],
+            )
+        with prediction_controls[2]:
+            prediction_max_codes = min(30, len(prediction_codes_available))
+            prediction_default_n = min(10, prediction_max_codes)
+            prediction_n = safe_slider(
+                "Jumlah kode top",
+                1,
+                prediction_max_codes,
+                prediction_default_n,
+                step=1,
+                help=HELP_TEXT["prediction"],
+            )
+        with prediction_controls[3]:
+            run_prediction = st.button("Hitung prediksi", type="primary")
+
+        custom_prediction_codes = st.multiselect(
+            "Kode tambahan/khusus prediksi",
+            options=scored_df["Kode"].tolist(),
+            default=[],
+            help=HELP_TEXT["prediction"],
+        )
+        if not prediction_horizons:
+            prediction_horizons = [20]
+        selected_prediction_codes = list(dict.fromkeys(prediction_codes_available[:prediction_n] + custom_prediction_codes))
+        st.caption(
+            f"Kode prediksi: {', '.join(selected_prediction_codes[:12])}"
+            + (" ..." if len(selected_prediction_codes) > 12 else "")
+        )
+
+        if run_prediction:
+            with st.spinner("Mengambil OHLCV dan mencari setup historis yang mirip..."):
+                prediction_history, prediction_error, prediction_source_label = fetch_yahoo_history(
+                    selected_prediction_codes,
+                    period=prediction_period,
+                )
+                prediction_df, prediction_details = build_similarity_prediction(
+                    prediction_history,
+                    scored_df,
+                    horizons=tuple(sorted(prediction_horizons)),
+                )
+
+            if prediction_error:
+                st.warning(prediction_error)
+            if prediction_df.empty:
+                st.info("Prediksi belum menghasilkan sample historis yang cukup. Coba periode lebih panjang atau kode lain.")
+            else:
+                primary_horizon = 20 if 20 in prediction_horizons else sorted(prediction_horizons)[0]
+                probability_column = f"Probability_Up_{primary_horizon}D_%"
+                expected_column = f"Expected_Return_{primary_horizon}D_%"
+                downside_column = f"Downside_Risk_{primary_horizon}D_%"
+                sample_column = f"Valid_Sample_{primary_horizon}D"
+                prediction_view = prediction_df.sort_values(
+                    ["Model_Confidence", probability_column, expected_column],
+                    ascending=[True, False, False],
+                    na_position="last",
+                )
+                st.caption(f"Sumber prediksi: {prediction_source_label}. Similarity memakai Technical Signal, Fibo Zone, Technical Score, RSI, dan jarak Fibo.")
+                pred_cols = st.columns(5)
+                pred_cols[0].metric("Kode diprediksi", f"{prediction_df['Kode'].nunique():,}")
+                pred_cols[1].metric("Bullish bias", f"{prediction_df['Prediction_Bias'].eq('Bullish Probability').sum():,}")
+                pred_cols[2].metric(f"Avg prob up {primary_horizon}D", format_percent(prediction_df[probability_column].mean()))
+                pred_cols[3].metric(f"Avg expected {primary_horizon}D", format_percent(prediction_df[expected_column].mean()))
+                pred_cols[4].metric("High confidence", f"{prediction_df['Model_Confidence'].eq('High').sum():,}")
+
+                prediction_columns = [
+                    "Kode",
+                    "Nama Perusahaan",
+                    "Sektor",
+                    "Prediction_Bias",
+                    "Model_Confidence",
+                    probability_column,
+                    expected_column,
+                    downside_column,
+                    sample_column,
+                    "Similarity_Sample",
+                    "Technical_Signal",
+                    "Technical_Score",
+                    "Fibo_Zone",
+                    "Nearest_Fibo_Level",
+                    "Fibo_Confluence_Score",
+                    "RSI14",
+                    "Score",
+                    "Recommendation",
+                    "Risk_Level",
+                    "Sector_Relative_Score",
+                    "Action_Checklist",
+                ]
+                show_table(
+                    prediction_view[[column for column in prediction_columns if column in prediction_view.columns]],
+                    hide_index=True,
+                    column_config={
+                        probability_column: st.column_config.NumberColumn(f"Prob Up {primary_horizon}D", format="%.1f%%"),
+                        expected_column: st.column_config.NumberColumn(f"Expected {primary_horizon}D", format="%.1f%%"),
+                        downside_column: st.column_config.NumberColumn(f"Downside {primary_horizon}D", format="%.1f%%"),
+                        sample_column: st.column_config.NumberColumn("Valid Sample", format="%d"),
+                        "Similarity_Sample": st.column_config.NumberColumn("Similarity Sample", format="%d"),
+                        "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                        "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f"),
+                        "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
+                        "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
+                        "Sector_Relative_Score": st.column_config.NumberColumn("Relatif Sektor", format="%.1f"),
+                    },
+                )
+
+                fig = px.scatter(
+                    prediction_view.dropna(subset=[probability_column, expected_column]),
+                    x=probability_column,
+                    y=expected_column,
+                    size=sample_column,
+                    color="Prediction_Bias",
+                    hover_name="Kode",
+                    hover_data=["Nama Perusahaan", "Technical_Signal", "Fibo_Zone", "Model_Confidence", downside_column],
+                    title=f"Probability vs expected return {primary_horizon}D",
+                    color_discrete_map={
+                        "Bullish Probability": "#15803d",
+                        "Neutral Probability": "#2563eb",
+                        "Bearish Probability": "#dc2626",
+                        "Low Evidence": "#64748b",
+                    },
+                )
+                fig.add_vline(x=50, line_dash="dash", line_color=CHART_AXIS_COLOR)
+                fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
+                fig.update_layout(height=430, xaxis_title="Probability Up (%)", yaxis_title="Expected Return (%)")
+                show_chart(fig)
+
+                with st.expander("Detail setup historis yang mirip", expanded=False):
+                    if prediction_details.empty:
+                        st.info("Detail setup historis kosong.")
+                    else:
+                        detail_return_columns = [f"Forward_Return_{horizon}D_%" for horizon in sorted(prediction_horizons)]
+                        detail_columns = [
+                            "Date",
+                            "Kode",
+                            "Close",
+                            "Technical_Signal",
+                            "Technical_Score",
+                            "Fibo_Zone",
+                            "RSI14",
+                            *detail_return_columns,
+                        ]
+                        show_table(
+                            prediction_details[[column for column in detail_columns if column in prediction_details.columns]].sort_values(["Kode", "Date"], ascending=[True, False]).head(500),
+                            hide_index=True,
+                            column_config={
+                                "Date": st.column_config.DateColumn("Tanggal"),
+                                "Close": st.column_config.NumberColumn("Close", format="%.0f"),
+                                "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                                "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
+                                "Forward_Return_20D_%": st.column_config.NumberColumn("Forward 20D", format="%.1f%%"),
+                                "Forward_Return_60D_%": st.column_config.NumberColumn("Forward 60D", format="%.1f%%"),
+                            },
+                        )
+
+                st.info(
+                    "Interpretasi: gunakan Prediction Bias sebagai probabilitas statistik dari setup historis mirip. "
+                    "Tetap validasi dengan fundamental, market regime, backtest, dan trade plan."
                 )
 
 with tab_explore:
