@@ -207,7 +207,7 @@ HELP_TEXT = {
     "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih lebih panjang untuk analisis historis, lebih pendek untuk refresh cepat.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
-    "technical_period": "Rentang OHLCV online untuk menghitung indikator teknikal. Minimal 1 tahun disarankan agar MA200 dan 52W lebih stabil.",
+    "technical_period": "Rentang OHLCV online, sama seperti Histori Harga. Periode pendek cocok untuk RSI/MACD cepat; minimal 1-2 tahun disarankan agar MA200 dan 52W lebih stabil.",
     "technical_code": "Pilih satu kode saham untuk candlestick dan indikator detail. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif. Kosongkan pilihan untuk menampilkan semua sinyal.",
@@ -3489,14 +3489,18 @@ with tab_technical:
         with tech_controls[1]:
             technical_period = st.selectbox(
                 "Periode teknikal",
-                ["6mo", "1y", "2y", "5y", "10y"],
-                index=2,
+                ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"],
+                index=5,
                 format_func=lambda value: {
+                    "5d": "1 minggu",
+                    "1mo": "1 bulan",
+                    "3mo": "3 bulan",
                     "6mo": "6 bulan",
                     "1y": "1 tahun",
                     "2y": "2 tahun",
                     "5y": "5 tahun",
                     "10y": "10 tahun",
+                    "max": "All / sepanjang masa",
                 }.get(value, value),
                 help=HELP_TEXT["technical_period"],
             )
@@ -3525,7 +3529,13 @@ with tab_technical:
                 metric_cols[3].metric("Sinyal", clean_text(latest_tech.get("Technical_Signal")))
                 metric_cols[4].metric("Exit Risk", clean_text(latest_tech.get("Exit_Risk")))
                 metric_cols[5].metric("RSI 14", format_number(latest_tech.get("RSI14")))
-                st.caption(f"Sumber teknikal aktif: {tech_source_label}. Entry: {clean_text(latest_tech.get('Timing_Reason'))} Posisi: {clean_text(latest_tech.get('Position_Reason'))}")
+                tech_start = tech_history["Date"].min()
+                tech_end = tech_history["Date"].max()
+                tech_range_label = f"{tech_start:%Y-%m-%d} s.d. {tech_end:%Y-%m-%d}" if pd.notna(tech_start) and pd.notna(tech_end) else "-"
+                st.caption(
+                    f"Sumber teknikal aktif: {tech_source_label}. Data tampil: {len(tech_history):,} baris, {tech_range_label}. "
+                    f"Entry: {clean_text(latest_tech.get('Timing_Reason'))} Posisi: {clean_text(latest_tech.get('Position_Reason'))}"
+                )
 
                 decision_columns = [
                     "Kode",
@@ -3550,7 +3560,7 @@ with tab_technical:
                     },
                 )
 
-                price_panel = tech_history.tail(260).copy()
+                price_panel = tech_history.copy()
                 fig = go.Figure()
                 if chart_style == "Candlestick" and {"Open", "High", "Low", "Close"}.issubset(price_panel.columns):
                     fig.add_trace(
@@ -3571,7 +3581,7 @@ with tab_technical:
                     if ma_column in price_panel.columns:
                         fig.add_trace(go.Scatter(x=price_panel["Date"], y=price_panel[ma_column], mode="lines", name=ma_column, line=dict(color=color, width=1.6)))
                 fig.update_layout(
-                    title=f"{technical_code}: harga, MA20/50/200",
+                    title=f"{technical_code}: harga, MA20/50/200 ({technical_period})",
                     height=520,
                     xaxis_title="Tanggal",
                     yaxis_title="Harga",
