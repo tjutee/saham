@@ -332,6 +332,30 @@ def show_chart(fig, *args, **kwargs):
     return st.plotly_chart(fig, *args, **PLOTLY_STRETCH, **kwargs)
 
 
+def safe_slider(label, min_value, max_value, value, *, step=None, help=None, format=None):
+    if pd.isna(min_value) or pd.isna(max_value):
+        st.caption(f"{label}: data belum tersedia.")
+        return value
+    if max_value <= min_value:
+        st.caption(f"{label}: {min_value}")
+        return (min_value, min_value) if isinstance(value, tuple) else min_value
+    if isinstance(value, tuple):
+        low, high = value
+        low = max(min_value, min(max_value, low))
+        high = max(min_value, min(max_value, high))
+        if low > high:
+            low, high = high, low
+        value = (low, high)
+    else:
+        value = max(min_value, min(max_value, value))
+    kwargs = {"help": help}
+    if step is not None:
+        kwargs["step"] = step
+    if format is not None:
+        kwargs["format"] = format
+    return st.slider(label, min_value, max_value, value, **kwargs)
+
+
 def prepare_chart_frame(data, metric, limit=None):
     chart = data.copy()
     chart["Kode"] = chart["Kode"].astype(str).str.strip().str.upper()
@@ -2200,7 +2224,7 @@ with st.sidebar:
 
     price_min, price_max = int(df["Penutupan"].min()), int(df["Penutupan"].max())
     default_price_range = (max(price_min, 50), min(price_max, 50_000)) if safe_preset else (price_min, min(price_max, 50_000))
-    price_range = st.slider("Harga penutupan", price_min, price_max, default_price_range, help=HELP_TEXT["price"])
+    price_range = safe_slider("Harga penutupan", price_min, price_max, default_price_range, help=HELP_TEXT["price"])
     min_volume = st.select_slider(
         "Minimum volume",
         options=[0, 1_000_000, 5_000_000, 10_000_000, 50_000_000, 100_000_000, 500_000_000],
@@ -2480,7 +2504,11 @@ with tab_reco:
     else:
         reco_controls = st.columns([1, 1, 1, 1])
         with reco_controls[0]:
-            reco_limit = st.slider("Jumlah tampil", 5, 100, 25, step=5, help=HELP_TEXT["reco_limit"])
+            reco_max = max(1, min(100, len(filtered)))
+            reco_min = min(5, reco_max)
+            reco_default = min(25, reco_max)
+            reco_step = 5 if reco_max >= 10 else 1
+            reco_limit = safe_slider("Jumlah tampil", reco_min, reco_max, reco_default, step=reco_step, help=HELP_TEXT["reco_limit"])
         with reco_controls[1]:
             reco_sort = st.selectbox(
                 "Urutkan berdasarkan",
@@ -2738,7 +2766,7 @@ with tab_explore:
     explore_min = min(50, explore_max)
     explore_default = min(250, explore_max)
     explore_step = 25 if explore_max >= 50 else 1
-    explore_limit = st.slider("Jumlah titik Explorer", explore_min, explore_max, explore_default, step=explore_step, help=HELP_TEXT["explore_limit"])
+    explore_limit = safe_slider("Jumlah titik Explorer", explore_min, explore_max, explore_default, step=explore_step, help=HELP_TEXT["explore_limit"])
     explore_plot = explorer_data.sort_values("Score", ascending=False).head(explore_limit)
 
     left, right = st.columns(2)
@@ -2808,7 +2836,11 @@ with tab_history:
         horizontal=True,
         help=HELP_TEXT["history_scope"],
     )
-    top_n_history = st.slider("Jumlah saham untuk grafik all/top N", 5, 100, 25, step=5, help=HELP_TEXT["history_top_n"])
+    history_max = max(1, min(100, len(filtered) if not filtered.empty else len(scored_df)))
+    history_min = min(5, history_max)
+    history_default = min(25, history_max)
+    history_step = 5 if history_max >= 10 else 1
+    top_n_history = safe_slider("Jumlah saham untuk grafik all/top N", history_min, history_max, history_default, step=history_step, help=HELP_TEXT["history_top_n"])
     history_chart_type = st.segmented_control(
         "Tipe grafik histori",
         ["Line", "Area"],
@@ -2985,7 +3017,9 @@ with tab_sector:
         sector_group_options = [column for column in ["Sektor", "Subsektor", "Industri", "Subindustri", "Industry"] if column in scored_df.columns]
         sector_group = st.selectbox("Kelompok", sector_group_options, help=HELP_TEXT["sector_group"])
     with sector_controls[1]:
-        sector_min_count = st.slider("Minimum saham per kelompok", 1, 25, 3, help=HELP_TEXT["sector_min"])
+        sector_count_max = max(1, min(25, int(scored_df.groupby(sector_group, dropna=False)["Kode"].count().max())))
+        sector_min_default = min(3, sector_count_max)
+        sector_min_count = safe_slider("Minimum saham per kelompok", 1, sector_count_max, sector_min_default, help=HELP_TEXT["sector_min"])
     with sector_controls[2]:
         sector_sort = st.selectbox("Urutkan sektor", ["Median_Score", "Strong_Buy", "Total_Market_Cap", "Total_Revenue", "Total_Turnover", "Avg_ROE", "Saham"], help=HELP_TEXT["sector_sort"])
     with sector_controls[3]:
@@ -3358,7 +3392,11 @@ with tab_method:
             help=HELP_TEXT["factor_inspect"],
         )
     with method_view_cols[1]:
-        factor_top_n = st.slider("Jumlah contoh faktor", 5, 50, 15, step=5, help=HELP_TEXT["factor_top_n"])
+        factor_max = max(1, min(50, len(scored_df)))
+        factor_min = min(5, factor_max)
+        factor_default = min(15, factor_max)
+        factor_step = 5 if factor_max >= 10 else 1
+        factor_top_n = safe_slider("Jumlah contoh faktor", factor_min, factor_max, factor_default, step=factor_step, help=HELP_TEXT["factor_top_n"])
 
     factor_examples = scored_df.sort_values(factor_to_inspect, ascending=False).head(factor_top_n)
     fig = px.histogram(scored_df, x=factor_to_inspect, nbins=40, title=f"Distribusi {factor_to_inspect}", color_discrete_sequence=["#2563eb"])
