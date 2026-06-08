@@ -210,6 +210,7 @@ HELP_TEXT = {
     "technical_code": "Pilih satu kode saham untuk candlestick dan indikator detail. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif.",
+    "entry_action": "Entry_Action menggabungkan fundamental dan teknikal: fundamental memilih saham layak, teknikal menentukan timing entry/tunggu/tahan/take profit.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -257,6 +258,22 @@ TECHNICAL_SIGNAL_COLORS = {
     "Overbought": "#ea580c",
     "Weak": "#dc2626",
 }
+ENTRY_ACTION_COLORS = {
+    "Buy Candidate": "#15803d",
+    "Wait Pullback": "#ca8a04",
+    "Wait Confirmation": "#2563eb",
+    "Hold/Monitor": "#0f766e",
+    "Take Profit / Tight Stop": "#ea580c",
+    "Avoid Entry": "#dc2626",
+}
+ENTRY_ACTION_ORDER = [
+    "Buy Candidate",
+    "Wait Confirmation",
+    "Hold/Monitor",
+    "Wait Pullback",
+    "Take Profit / Tight Stop",
+    "Avoid Entry",
+]
 SOURCE_COLORS = {
     "Price_Source": "#2563eb",
     "Volume_Source": "#0891b2",
@@ -407,6 +424,8 @@ def chart_color_kwargs(color_field):
         return {"color_discrete_map": RISK_COLORS}
     if color_field == "Technical_Signal":
         return {"color_discrete_map": TECHNICAL_SIGNAL_COLORS}
+    if color_field == "Entry_Action":
+        return {"color_discrete_map": ENTRY_ACTION_COLORS}
     if color_field in ["Sektor", "Industry", "Kode"]:
         return {"color_discrete_sequence": STOCK_LINE_COLORS}
     if color_field in ["Score", "Quality_Score", "Risk_Score", "Threshold_Pass_Ratio", "Valuation_Score", "Liquidity_Score", "Momentum_Score", "History_Momentum_Score"]:
@@ -1596,6 +1615,76 @@ def summarize_technical_indicators(technical_history):
         axis=1,
     )
     return latest
+
+
+def build_entry_decision(row):
+    score = pd.to_numeric(row.get("Score"), errors="coerce")
+    threshold = pd.to_numeric(row.get("Threshold_Pass_Ratio"), errors="coerce")
+    technical_score = pd.to_numeric(row.get("Technical_Score"), errors="coerce")
+    signal = clean_text(row.get("Technical_Signal"), "Neutral")
+    recommendation = clean_text(row.get("Recommendation"), "Avoid")
+    risk_level = clean_text(row.get("Risk_Level"), "High")
+    clean_data = bool(row.get("Clean_Data", False))
+
+    fundamental_ok = (
+        pd.notna(score)
+        and score >= 68
+        and recommendation in ["Strong Buy", "Buy"]
+        and risk_level != "High"
+        and clean_data
+        and (pd.isna(threshold) or threshold >= 55)
+    )
+    fundamental_watch = pd.notna(score) and score >= 55 and recommendation in ["Strong Buy", "Buy", "Watchlist"] and risk_level != "High"
+
+    if not fundamental_watch:
+        action = "Avoid Entry"
+        combined = "Fundamental belum cukup kuat"
+        reason = "Prioritas rendah: score/rekomendasi/risiko/kualitas data belum memenuhi batas watchlist."
+    elif not fundamental_ok:
+        action = "Hold/Monitor"
+        combined = "Fundamental watchlist"
+        reason = "Fundamental cukup untuk dipantau, tetapi belum memenuhi kriteria kandidat entry yang bersih."
+    elif signal == "Bullish" and technical_score >= 75:
+        action = "Buy Candidate"
+        combined = "Fundamental kuat + teknikal bullish"
+        reason = "Fundamental lolos dan trend teknikal mendukung entry bertahap."
+    elif signal == "Constructive" and technical_score >= 60:
+        action = "Wait Confirmation"
+        combined = "Fundamental kuat + teknikal membaik"
+        reason = "Fundamental kuat, tetapi butuh konfirmasi lanjutan dari breakout, volume, atau MACD."
+    elif signal == "Overbought":
+        action = "Take Profit / Tight Stop"
+        combined = "Fundamental kuat + harga panas"
+        reason = "Saham layak, tetapi RSI/kenaikan teknikal sudah panas. Hindari FOMO, tunggu pullback atau gunakan stop ketat."
+    elif signal == "Weak":
+        action = "Wait Pullback"
+        combined = "Fundamental kuat + teknikal lemah"
+        reason = "Fundamental baik, tetapi timing belum mendukung. Tunggu reversal atau harga kembali di atas MA kunci."
+    else:
+        action = "Wait Confirmation"
+        combined = "Fundamental kuat + teknikal netral"
+        reason = "Fundamental lolos, tetapi sinyal teknikal belum cukup tegas."
+
+    return pd.Series({"Entry_Action": action, "Combined_View": combined, "Timing_Reason": reason})
+
+
+def add_entry_decision(technical_summary, scored):
+    if technical_summary.empty:
+        return technical_summary
+    fundamental_columns = [
+        "Kode",
+        "Nama Perusahaan",
+        "Sektor",
+        "Score",
+        "Recommendation",
+        "Risk_Level",
+        "Clean_Data",
+        "Threshold_Pass_Ratio",
+    ]
+    available_columns = [column for column in fundamental_columns if column in scored.columns]
+    output = technical_summary.merge(scored[available_columns], on="Kode", how="left")
+    decision = output.apply(build_entry_decision, axis=1)
+    return pd.concat([output, decision], axis=1)
 
 
 def calculate_window_return(group, days):
@@ -3329,15 +3418,17 @@ with tab_technical:
             else:
                 tech_history = build_technical_indicators(tech_history)
                 tech_summary = summarize_technical_indicators(tech_history)
-                latest_tech = tech_summary.iloc[0] if not tech_summary.empty else pd.Series(dtype=object)
+                tech_decision = add_entry_decision(tech_summary, scored_df)
+                latest_tech = tech_decision.iloc[0] if not tech_decision.empty else pd.Series(dtype=object)
 
-                metric_cols = st.columns(5)
-                metric_cols[0].metric("Technical Score", format_number(latest_tech.get("Technical_Score")), help=HELP_TEXT["technical_score"])
-                metric_cols[1].metric("Sinyal", clean_text(latest_tech.get("Technical_Signal")))
-                metric_cols[2].metric("RSI 14", format_number(latest_tech.get("RSI14")))
-                metric_cols[3].metric("Jarak 52W High", format_percent(latest_tech.get("Distance_52W_High_%")))
-                metric_cols[4].metric("ATR", format_percent(latest_tech.get("ATR_%")))
-                st.caption(f"Sumber teknikal aktif: {tech_source_label}. Catatan: {clean_text(latest_tech.get('Technical_Notes'), 'netral')}.")
+                metric_cols = st.columns(6)
+                metric_cols[0].metric("Entry Action", clean_text(latest_tech.get("Entry_Action")), help=HELP_TEXT["entry_action"])
+                metric_cols[1].metric("Technical Score", format_number(latest_tech.get("Technical_Score")), help=HELP_TEXT["technical_score"])
+                metric_cols[2].metric("Sinyal", clean_text(latest_tech.get("Technical_Signal")))
+                metric_cols[3].metric("RSI 14", format_number(latest_tech.get("RSI14")))
+                metric_cols[4].metric("Jarak 52W High", format_percent(latest_tech.get("Distance_52W_High_%")))
+                metric_cols[5].metric("ATR", format_percent(latest_tech.get("ATR_%")))
+                st.caption(f"Sumber teknikal aktif: {tech_source_label}. {clean_text(latest_tech.get('Combined_View'))}: {clean_text(latest_tech.get('Timing_Reason'))}")
 
                 price_panel = tech_history.tail(260).copy()
                 fig = go.Figure()
@@ -3433,6 +3524,12 @@ with tab_technical:
                 )
             with scan_cols[2]:
                 run_scan = st.button("Hitung teknikal top N")
+            action_filter = st.multiselect(
+                "Filter aksi entry",
+                ENTRY_ACTION_ORDER,
+                default=["Buy Candidate", "Wait Confirmation"],
+                help=HELP_TEXT["entry_action"],
+            )
 
             if run_scan:
                 scan_codes = technical_source.head(scan_n)["Kode"].tolist()
@@ -3445,54 +3542,58 @@ with tab_technical:
                 if scan_summary.empty:
                     st.info("Scan teknikal belum menghasilkan data.")
                 else:
-                    scan_summary = scan_summary.merge(
-                        scored_df[["Kode", "Nama Perusahaan", "Sektor", "Score", "Recommendation", "Risk_Level"]],
-                        on="Kode",
-                        how="left",
-                    )
+                    scan_summary = add_entry_decision(scan_summary, scored_df)
                     if signal_filter:
                         scan_summary = scan_summary[scan_summary["Technical_Signal"].isin(signal_filter)]
-                    scan_summary = scan_summary.sort_values(["Technical_Score", "Score"], ascending=False)
-                    st.caption(f"Sumber scan: {scan_source_label}. Technical Score dipakai sebagai konfirmasi, bukan pengganti Score utama.")
-                    fig = px.bar(
-                        scan_summary.head(20),
-                        x="Technical_Score",
-                        y="Kode",
-                        color="Technical_Signal",
-                        orientation="h",
-                        title="Ranking teknikal top saham",
-                        color_discrete_map=TECHNICAL_SIGNAL_COLORS,
-                        hover_data=["Nama Perusahaan", "Sektor", "Score", "Recommendation", "RSI14", "ATR_%", "Technical_Notes"],
-                    )
-                    fig.update_layout(height=430, xaxis_title="Technical Score", yaxis_title="")
-                    show_chart(fig)
-                    show_table(
-                        scan_summary[
-                            [
-                                "Kode",
-                                "Nama Perusahaan",
-                                "Sektor",
-                                "Score",
-                                "Recommendation",
-                                "Technical_Score",
-                                "Technical_Signal",
-                                "RSI14",
-                                "Volume_Ratio",
-                                "ATR_%",
-                                "Distance_52W_High_%",
-                                "Technical_Notes",
-                            ]
-                        ].head(50),
-                        hide_index=True,
-                        column_config={
-                            "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
-                            "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
-                            "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
-                            "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
-                            "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),
-                            "Distance_52W_High_%": st.column_config.NumberColumn("Jarak 52W High", format="%.1f%%"),
-                        },
-                    )
+                    if action_filter:
+                        scan_summary = scan_summary[scan_summary["Entry_Action"].isin(action_filter)]
+                    if scan_summary.empty:
+                        st.info("Tidak ada saham yang cocok dengan filter sinyal dan aksi entry saat ini.")
+                    else:
+                        scan_summary["Entry_Action"] = pd.Categorical(scan_summary["Entry_Action"], categories=ENTRY_ACTION_ORDER, ordered=True)
+                        scan_summary = scan_summary.sort_values(["Entry_Action", "Technical_Score", "Score"], ascending=[True, False, False])
+                        st.caption(f"Sumber scan: {scan_source_label}. Entry Action memakai fundamental sebagai gerbang awal, lalu teknikal untuk timing.")
+                        fig = px.bar(
+                            scan_summary.head(20),
+                            x="Technical_Score",
+                            y="Kode",
+                            color="Entry_Action",
+                            orientation="h",
+                            title="Ranking timing entry top saham",
+                            color_discrete_map=ENTRY_ACTION_COLORS,
+                            hover_data=["Nama Perusahaan", "Sektor", "Score", "Recommendation", "Technical_Signal", "RSI14", "ATR_%", "Timing_Reason"],
+                        )
+                        fig.update_layout(height=430, xaxis_title="Technical Score", yaxis_title="")
+                        show_chart(fig)
+                        show_table(
+                            scan_summary[
+                                [
+                                    "Kode",
+                                    "Nama Perusahaan",
+                                    "Sektor",
+                                    "Score",
+                                    "Recommendation",
+                                    "Entry_Action",
+                                    "Combined_View",
+                                    "Technical_Score",
+                                    "Technical_Signal",
+                                    "RSI14",
+                                    "Volume_Ratio",
+                                    "ATR_%",
+                                    "Distance_52W_High_%",
+                                    "Timing_Reason",
+                                ]
+                            ].head(50),
+                            hide_index=True,
+                            column_config={
+                                "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
+                                "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                                "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
+                                "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
+                                "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),
+                                "Distance_52W_High_%": st.column_config.NumberColumn("Jarak 52W High", format="%.1f%%"),
+                            },
+                        )
 
 with tab_sector:
     sector_chart_base = chart_market_frame(scored_df, "Grafik sektor")
