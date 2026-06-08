@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import inspect
 import os
 import re
 import json
@@ -303,6 +304,32 @@ def format_large_rupiah(value):
     if abs_value >= 1_000_000:
         return f"Rp {value / 1_000_000:,.1f}M"
     return f"Rp {value:,.0f}"
+
+
+def stretch_kwargs(func):
+    try:
+        params = inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return {"use_container_width": True}
+    if "width" in params:
+        return {"width": "stretch"}
+    return {"use_container_width": True}
+
+
+DATAFRAME_STRETCH = stretch_kwargs(st.dataframe)
+PLOTLY_STRETCH = stretch_kwargs(st.plotly_chart)
+
+
+def show_table(data=None, *args, **kwargs):
+    kwargs.pop("width", None)
+    kwargs.pop("use_container_width", None)
+    return st.dataframe(data, *args, **DATAFRAME_STRETCH, **kwargs)
+
+
+def show_chart(fig, *args, **kwargs):
+    kwargs.pop("width", None)
+    kwargs.pop("use_container_width", None)
+    return st.plotly_chart(fig, *args, **PLOTLY_STRETCH, **kwargs)
 
 
 def prepare_chart_frame(data, metric, limit=None):
@@ -2351,7 +2378,7 @@ with tab_summary:
                 },
             )
             fig.update_layout(height=330, showlegend=False, margin=dict(l=20, r=20, t=60, b=40))
-            st.plotly_chart(fig, width="stretch")
+            show_chart(fig)
         with chart_cols[1]:
             risk_counts = summary_data["Risk_Level"].value_counts().reindex(["Low", "Medium", "High"]).dropna().reset_index()
             risk_counts.columns = ["Risk_Level", "Jumlah"]
@@ -2365,7 +2392,7 @@ with tab_summary:
                 color_discrete_map={"Low": "#16a34a", "Medium": "#ca8a04", "High": "#dc2626"},
             )
             fig.update_layout(height=330, margin=dict(l=20, r=20, t=60, b=40))
-            st.plotly_chart(fig, width="stretch")
+            show_chart(fig)
         with chart_cols[2]:
             source_mix = build_source_mix(summary_data)
             source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Universe_Diff_Status"])].copy()
@@ -2381,7 +2408,7 @@ with tab_summary:
                     title="Sumber harga & status kode",
                 )
                 fig.update_layout(height=330, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
-                st.plotly_chart(fig, width="stretch")
+                show_chart(fig)
 
         overview_cols = st.columns([1.2, 1])
         with overview_cols[0]:
@@ -2412,10 +2439,8 @@ with tab_summary:
                 "Universe_Diff_Status",
             ]
             top_summary = summary_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
-            st.dataframe(
-                top_summary[[column for column in top_summary_columns if column in top_summary.columns]],
-                width="stretch",
-                hide_index=True,
+            show_table(
+                top_summary[[column for column in top_summary_columns if column in top_summary.columns]],                hide_index=True,
                 column_config={
                     "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
                     "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
@@ -2447,7 +2472,7 @@ with tab_summary:
                     title="Skor komponen 0-100",
                 )
                 fig.update_layout(height=460, xaxis_title="", yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
-                st.plotly_chart(fig, width="stretch")
+                show_chart(fig)
 
 with tab_reco:
     if filtered.empty:
@@ -2515,7 +2540,7 @@ with tab_reco:
                 )
                 fig.update_traces(textposition="outside", cliponaxis=False)
                 fig.update_layout(height=520, xaxis_title=reco_sort, yaxis_title="", margin=dict(l=20, r=80, t=70, b=40))
-                st.plotly_chart(fig, width="stretch")
+                show_chart(fig)
 
         with right:
             component_cols = [
@@ -2552,7 +2577,7 @@ with tab_reco:
                 height=520,
                 margin=dict(l=30, r=30, t=60, b=30),
             )
-            st.plotly_chart(fig, width="stretch")
+            show_chart(fig)
 
         display_columns = [
             "Kode",
@@ -2646,10 +2671,8 @@ with tab_reco:
         if not selected_table_columns:
             selected_table_columns = default_table_columns
         table = reco_view[selected_table_columns].copy()
-        st.dataframe(
-            table,
-            width="stretch",
-            hide_index=True,
+        show_table(
+            table,            hide_index=True,
             column_config={
                 "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
                 "Valuation_Score": st.column_config.NumberColumn("Valuasi", format="%.1f", help=HELP_TEXT["valuation"]),
@@ -2732,7 +2755,7 @@ with tab_explore:
             color_continuous_scale="RdYlGn",
         )
         fig.update_layout(height=460)
-        st.plotly_chart(fig, width="stretch")
+        show_chart(fig)
 
     with right:
         pair_x = st.selectbox("Pembanding X", ["PBV", "PER", "DER", "Threshold_Pass_Ratio", "Return_52W"], index=0)
@@ -2749,7 +2772,7 @@ with tab_explore:
             color_continuous_scale="Viridis",
         )
         fig.update_layout(height=460)
-        st.plotly_chart(fig, width="stretch")
+        show_chart(fig)
 
     hist_cols = st.columns(3)
     histogram_columns = st.multiselect(
@@ -2769,7 +2792,7 @@ with tab_explore:
                 color_discrete_sequence=[histogram_colors[index]],
             )
             fig.update_layout(height=340)
-            st.plotly_chart(fig, width="stretch")
+            show_chart(fig)
 
 with tab_history:
     history_source = filtered if not filtered.empty else scored_df
@@ -2835,17 +2858,17 @@ with tab_history:
             last_dates = online_history.groupby("Kode")["Date"].max().reset_index()
             last_dates["Last Update Online"] = last_dates["Date"].dt.strftime("%Y-%m-%d")
             if show_history_table:
-                st.dataframe(last_dates[["Kode", "Last Update Online"]], width="stretch", hide_index=True)
+                show_table(last_dates[["Kode", "Last Update Online"]], hide_index=True)
 
             chart_func = px.area if history_chart_type == "Area" else px.line
             fig = chart_func(online_history, x="Date", y="Close", color="Kode", title="Harga penutupan historis online", labels={"Close": "Harga penutupan", "Date": "Tanggal"})
             fig.update_layout(height=480)
-            st.plotly_chart(fig, width="stretch")
+            show_chart(fig)
 
             fig = chart_func(online_history, x="Date", y="Normalized", color="Kode", title="Perbandingan performa, indeks awal = 100", labels={"Normalized": "Indeks performa", "Date": "Tanggal"})
             fig.add_hline(y=100, line_dash="dash", line_color="#64748b")
             fig.update_layout(height=440)
-            st.plotly_chart(fig, width="stretch")
+            show_chart(fig)
 
             summary = (
                 online_history.groupby("Kode")
@@ -2860,10 +2883,8 @@ with tab_history:
             )
             summary["Return_Total_%"] = (summary["Last_Close"] / summary["Start_Close"] - 1) * 100
             if show_history_table:
-                st.dataframe(
-                    summary.sort_values("Return_Total_%", ascending=False),
-                    width="stretch",
-                    hide_index=True,
+                show_table(
+                    summary.sort_values("Return_Total_%", ascending=False),                    hide_index=True,
                     column_config={
                         "Start": st.column_config.DateColumn("Awal"),
                         "End": st.column_config.DateColumn("Akhir"),
@@ -2912,7 +2933,7 @@ with tab_history:
                 )
                 fig.add_hline(y=0, line_dash="dash", line_color="#64748b")
                 fig.update_layout(height=480, yaxis_title="Return (%)", xaxis_title="")
-                st.plotly_chart(fig, width="stretch")
+                show_chart(fig)
 
                 compare = selected_history[
                     [
@@ -2928,10 +2949,8 @@ with tab_history:
                     ]
                 ].sort_values("Return_52W", ascending=False)
                 if show_history_table:
-                    st.dataframe(
-                        compare,
-                        width="stretch",
-                        hide_index=True,
+                    show_table(
+                        compare,                        hide_index=True,
                         column_config={
                             "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
                             "Threshold_Pass_Ratio": st.column_config.NumberColumn("Threshold", format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
@@ -2958,7 +2977,7 @@ with tab_history:
                 )
                 fig.add_vline(x=0, line_dash="dash", line_color="#64748b")
                 fig.update_layout(height=440, xaxis_title="Return 52 minggu (%)", yaxis_title="Score")
-                st.plotly_chart(fig, width="stretch")
+                show_chart(fig)
 
 with tab_sector:
     sector_controls = st.columns([1, 1, 1, 1])
@@ -3028,7 +3047,7 @@ with tab_sector:
             )
             fig.update_layout(yaxis={"categoryorder": "total ascending"})
         fig.update_layout(height=520)
-        st.plotly_chart(fig, width="stretch")
+        show_chart(fig)
 
     with right:
         market_cap_view = sector_summary.sort_values("Total_Market_Cap", ascending=True).tail(15)
@@ -3043,12 +3062,10 @@ with tab_sector:
         )
         fig.update_layout(xaxis_title="Total market cap", yaxis_title="")
         fig.update_layout(height=520)
-        st.plotly_chart(fig, width="stretch")
+        show_chart(fig)
 
-    st.dataframe(
-        sector_summary,
-        width="stretch",
-        hide_index=True,
+    show_table(
+        sector_summary,        hide_index=True,
         column_config={
             "Median_Score": st.column_config.NumberColumn("Median Score", format="%.1f"),
             "Avg_ROE": st.column_config.NumberColumn("Avg ROE", format="%.1f%%"),
@@ -3086,10 +3103,8 @@ with tab_quality:
     universe_cols[3].metric("Sumber aktif", f"{scored_df['Universe_Source'].nunique():,}")
     with st.expander("Audit sumber kode saham", expanded=False):
         st.caption(HELP_TEXT["universe_audit"])
-        st.dataframe(
-            universe_summary,
-            width="stretch",
-            hide_index=True,
+        show_table(
+            universe_summary,            hide_index=True,
             column_config={"Jumlah": st.column_config.NumberColumn("Jumlah", format="%d")},
         )
         diff_codes = scored_df[~scored_df["In_IDX_Official"]][
@@ -3099,7 +3114,7 @@ with tab_quality:
             st.success("Semua kode di universe match dengan daftar resmi BEI/IDX.")
         else:
             st.warning(f"Ada {len(diff_codes):,} kode yang tidak match dengan daftar resmi BEI/IDX dan tetap dipertahankan dari fallback.")
-            st.dataframe(diff_codes, width="stretch", hide_index=True)
+            show_table(diff_codes, hide_index=True)
 
     with st.expander("Kelengkapan kolom & sumber data", expanded=True):
         completeness_report = build_completeness_report(scored_df)
@@ -3120,7 +3135,7 @@ with tab_quality:
             )
             fig.update_traces(texttemplate="%{text:.0f}%", textposition="outside", cliponaxis=False)
             fig.update_layout(height=360, xaxis_title="Coverage", yaxis_title="", margin=dict(l=20, r=70, t=60, b=40))
-            st.plotly_chart(fig, width="stretch")
+            show_chart(fig)
         with data_health_cols[1]:
             if source_mix.empty:
                 st.info("Ringkasan sumber data belum tersedia.")
@@ -3135,12 +3150,10 @@ with tab_quality:
                     title="Campuran sumber data utama",
                 )
                 fig.update_layout(height=360, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
-                st.plotly_chart(fig, width="stretch")
+                show_chart(fig)
 
-        st.dataframe(
-            completeness_report.sort_values(["Coverage", "Grup", "Kolom"]),
-            width="stretch",
-            hide_index=True,
+        show_table(
+            completeness_report.sort_values(["Coverage", "Grup", "Kolom"]),            hide_index=True,
             column_config={
                 "Coverage": st.column_config.ProgressColumn("Coverage", min_value=0, max_value=100, format="%.0f%%"),
                 "Terisi": st.column_config.NumberColumn("Terisi", format="%d"),
@@ -3212,10 +3225,8 @@ with tab_quality:
                 ).str.upper()
                 audit_view = audit_view[search_text.str.contains(audit_search, na=False)]
 
-            st.dataframe(
-                audit_view,
-                width="stretch",
-                hide_index=True,
+            show_table(
+                audit_view,                hide_index=True,
                 column_config={
                     "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
                     "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
@@ -3237,10 +3248,8 @@ with tab_quality:
             selected_detail = audit_detail[
                 audit_detail["Kode"].eq(detail_code) & audit_detail["Filter"].eq(detail_filter)
             ]
-            st.dataframe(
-                selected_detail,
-                width="stretch",
-                hide_index=True,
+            show_table(
+                selected_detail,                hide_index=True,
                 column_config={
                     "Status": st.column_config.TextColumn("Status"),
                     "Actual": st.column_config.TextColumn("Nilai Saat Ini"),
@@ -3250,10 +3259,8 @@ with tab_quality:
         else:
             st.info("Pilih minimal satu kode saham untuk audit.")
 
-    st.dataframe(
-        quality_report,
-        width="stretch",
-        hide_index=True,
+    show_table(
+        quality_report,        hide_index=True,
         column_config={
             "Rows": st.column_config.NumberColumn("Rows", format="%d"),
         },
@@ -3263,10 +3270,8 @@ with tab_quality:
     if issue_options:
         selected_issue = st.selectbox("Lihat detail masalah", issue_options, help=HELP_TEXT["quality_issue"])
         detail = get_quality_detail(scored_df, selected_issue)
-        st.dataframe(
-            detail.head(200),
-            width="stretch",
-            hide_index=True,
+        show_table(
+            detail.head(200),            hide_index=True,
             column_config={
                 "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
                 "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
@@ -3289,14 +3294,14 @@ with tab_quality:
     status_left, status_right = st.columns([1, 1])
     with status_left:
         st.write("Status Excel fallback")
-        st.dataframe(pd.DataFrame([get_file_status(DATA_FILE)]), width="stretch", hide_index=True)
+        show_table(pd.DataFrame([get_file_status(DATA_FILE)]), hide_index=True)
     with status_right:
         st.write("Status cache histori")
         cache_status = get_history_cache_status()
         if cache_status.empty:
             st.info("Belum ada cache histori online.")
         else:
-            st.dataframe(cache_status.sort_values("Modified", ascending=False).head(50), width="stretch", hide_index=True)
+            show_table(cache_status.sort_values("Modified", ascending=False).head(50), hide_index=True)
 
     with st.expander("Workflow rutin yang disarankan", expanded=True):
         st.markdown(
@@ -3343,7 +3348,7 @@ with tab_method:
     weight_df = pd.DataFrame(
         [{"Faktor": key.replace("_", " ").title(), "Bobot": value} for key, value in weights.items()]
     )
-    st.dataframe(weight_df, width="stretch", hide_index=True)
+    show_table(weight_df, hide_index=True)
 
     method_view_cols = st.columns([1, 1])
     with method_view_cols[0]:
@@ -3358,16 +3363,14 @@ with tab_method:
     factor_examples = scored_df.sort_values(factor_to_inspect, ascending=False).head(factor_top_n)
     fig = px.histogram(scored_df, x=factor_to_inspect, nbins=40, title=f"Distribusi {factor_to_inspect}", color_discrete_sequence=["#2563eb"])
     fig.update_layout(height=320)
-    st.plotly_chart(fig, width="stretch")
+    show_chart(fig)
     factor_example_columns = list(
         dict.fromkeys(
             ["Kode", "Nama Perusahaan", "Recommendation", "Risk_Level", factor_to_inspect, "Score", "Threshold_Pass_Ratio", "Sektor"]
         )
     )
-    st.dataframe(
-        factor_examples[factor_example_columns],
-        width="stretch",
-        hide_index=True,
+    show_table(
+        factor_examples[factor_example_columns],        hide_index=True,
     )
 
     threshold_info = pd.DataFrame(
@@ -3384,7 +3387,7 @@ with tab_method:
     if threshold_mode_view != "Semua":
         threshold_info = threshold_info[threshold_info["Mode"] == threshold_mode_view]
     st.write("Threshold aktif dari sheet:")
-    st.dataframe(threshold_info, width="stretch", hide_index=True)
+    show_table(threshold_info, hide_index=True)
 
     penalty_info = pd.DataFrame(
         [
@@ -3398,7 +3401,7 @@ with tab_method:
         ]
     )
     with st.expander("Daftar penalti scoring"):
-        st.dataframe(penalty_info, width="stretch", hide_index=True)
+        show_table(penalty_info, hide_index=True)
 
     with st.expander("Catatan risiko"):
         st.markdown(
