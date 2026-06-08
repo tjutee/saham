@@ -16,6 +16,7 @@ belum stabil tersedia online.
 - Scoring multi-factor: valuasi, kualitas profit, risiko, likuiditas, momentum, dan kekuatan indeks.
 - Sector-relative scoring untuk membandingkan valuasi dan kualitas saham terhadap sektor yang sama.
 - Explainability layer: `Decision_Summary`, `Top_Strengths`, `Top_Risks`, dan `Action_Checklist`.
+- Final decision layer: `Final_Action`, `Decision_Confidence`, `Decision_Blockers`, dan `Next_Step` sebagai playbook praktis setelah score, risiko, sektor, data, momentum, dan market regime digabung.
 - Market regime dari IHSG `^JKSE`: Risk-On, Neutral, atau Risk-Off berdasarkan MA50/MA200 dan momentum 20D/60D.
 - Market breadth: persentase saham sample yang berada di atas MA50 dan MA200.
 - Data freshness guard untuk melihat tanggal online terakhir, lag data, coverage online, dan fallback Excel.
@@ -167,12 +168,15 @@ Layer teknikal terpisah dari score fundamental:
 - Position sizing menghitung lot estimasi dengan risk budget / risk per share dan dibatasi maksimum nilai posisi.
 - Fibonacci Confluence memakai level 23.6%, 38.2%, 50%, 61.8%, 78.6%, 127.2%, dan 161.8% sebagai area support/resistance yang perlu dikonfirmasi oleh trend, RSI/MACD, volume, dan backtest.
 
-Layer explainability:
+Layer explainability dan final decision:
 
 - `Decision_Summary` merangkum rekomendasi, posisi relatif sektor, dan risiko.
 - `Top_Strengths` menunjukkan faktor skor paling kuat.
 - `Top_Risks` menunjukkan faktor skor paling lemah.
 - `Action_Checklist` menunjukkan hal yang perlu dikonfirmasi sebelum entry atau mempertahankan posisi.
+- `Final_Action` menerjemahkan hasil screening menjadi playbook: `Accumulate Candidate`, `Wait Market Confirmation`, `Watchlist`, `Speculative Monitor`, atau `Avoid / Review`.
+- `Decision_Confidence` membaca seberapa bersih sinyal akhir setelah blocker seperti data belum bersih, risiko tinggi, threshold rendah, lemah relatif sektor, atau market risk-off.
+- `Next_Step` menunjukkan langkah berikutnya, misalnya cek Harga & Teknikal, tunggu konfirmasi market, atau review ulang data.
 
 Penalti diterapkan untuk data yang kurang sehat, seperti PER/PBV negatif,
 profitabilitas negatif, volume rendah, harga nol, perubahan harian ekstrem,

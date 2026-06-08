@@ -193,6 +193,7 @@ HELP_TEXT = {
     "history_codes": "Masukkan kode IDX tanpa akhiran .JK, misalnya BBCA atau BBRI. Dashboard otomatis memanggil format online BBCA.JK.",
     "history_period": "Rentang data online: 1 minggu, 2 minggu untuk short swing, 1/3/6 bulan, 1/2/5/10 tahun, atau All sepanjang data tersedia dari sumber.",
     "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
+    "final_action": "Final_Action menggabungkan Score, Recommendation, Clean_Data, Risk_Level, Threshold, relatif sektor, momentum, dan market regime menjadi playbook keputusan yang lebih praktis.",
     "risk_level": "Risk_Level adalah kategori risiko relatif dari model berdasarkan rasio, volatilitas, likuiditas, dan penalti. Tetap perlu validasi berita dan laporan keuangan.",
     "turnover": "Turnover = Penutupan x Volume. Grafik utama memakai harga/volume yfinance/cache bila tersedia; Excel hanya fallback saat online kosong.",
     "return": "Return = harga akhir / harga awal - 1. Nilai ditampilkan dalam persen dan hanya menjelaskan performa periode historis.",
@@ -277,6 +278,13 @@ RECOMMENDATION_COLORS = {
     "Avoid": "#dc2626",
 }
 RISK_COLORS = {"Low": "#15803d", "Medium": "#ca8a04", "High": "#dc2626"}
+FINAL_ACTION_COLORS = {
+    "Accumulate Candidate": "#15803d",
+    "Wait Market Confirmation": "#ca8a04",
+    "Watchlist": "#2563eb",
+    "Speculative Monitor": "#ea580c",
+    "Avoid / Review": "#dc2626",
+}
 TECHNICAL_SIGNAL_COLORS = {
     "Bullish": "#15803d",
     "Constructive": "#65a30d",
@@ -1255,6 +1263,82 @@ def add_decision_explainability(scored):
     output["Top_Risks"] = risks
     output["Action_Checklist"] = checklists
     output["Decision_Summary"] = summaries
+    return output
+
+
+def add_final_decision_layer(scored):
+    output = scored.copy()
+    final_actions = []
+    confidences = []
+    blockers_list = []
+    next_steps = []
+
+    for _, row in output.iterrows():
+        score = pd.to_numeric(row.get("Score"), errors="coerce")
+        threshold = pd.to_numeric(row.get("Threshold_Pass_Ratio"), errors="coerce")
+        sector_score = pd.to_numeric(row.get("Sector_Relative_Score"), errors="coerce")
+        momentum = pd.to_numeric(row.get("Momentum_Score"), errors="coerce")
+        risk_level = clean_text(row.get("Risk_Level"), "High")
+        recommendation = clean_text(row.get("Recommendation"), "Avoid")
+        clean_data = bool(row.get("Clean_Data", False))
+        market_regime = clean_text(row.get("Market_Regime"), "Unknown")
+
+        blockers = []
+        if not clean_data:
+            blockers.append("data/risk belum bersih")
+        if risk_level == "High":
+            blockers.append("risk high")
+        if pd.notna(threshold) and threshold < 55:
+            blockers.append("threshold rendah")
+        if pd.notna(sector_score) and sector_score < 45:
+            blockers.append("lemah relatif sektor")
+        if market_regime == "Risk-Off":
+            blockers.append("market risk-off")
+
+        fundamental_strong = (
+            pd.notna(score)
+            and score >= 68
+            and recommendation in ["Strong Buy", "Buy"]
+            and clean_data
+            and risk_level != "High"
+            and (pd.isna(threshold) or threshold >= 55)
+        )
+        sector_ok = pd.isna(sector_score) or sector_score >= 55
+        momentum_ok = pd.isna(momentum) or momentum >= 50
+
+        if fundamental_strong and sector_ok and momentum_ok and market_regime != "Risk-Off":
+            action = "Accumulate Candidate"
+            next_step = "Cek Harga & Teknikal untuk entry action, Fibo zone, ATR stop, dan position sizing."
+        elif fundamental_strong and market_regime == "Risk-Off":
+            action = "Wait Market Confirmation"
+            next_step = "Saham layak, tetapi market risk-off. Tunggu breadth/IHSG membaik atau gunakan entry bertahap kecil."
+        elif pd.notna(score) and score >= 55 and recommendation in ["Strong Buy", "Buy", "Watchlist"] and risk_level != "High":
+            action = "Watchlist"
+            next_step = "Pantau konfirmasi teknikal, perbaiki checklist, dan bandingkan dengan sektor."
+        elif pd.notna(score) and score >= 42 and risk_level != "High":
+            action = "Speculative Monitor"
+            next_step = "Bukan prioritas inti. Pakai ukuran kecil hanya jika teknikal dan market mendukung."
+        else:
+            action = "Avoid / Review"
+            next_step = "Review data, risiko, fundamental, atau tunggu setup baru."
+
+        blocker_count = len(blockers)
+        if action == "Accumulate Candidate" and blocker_count == 0:
+            confidence = "High"
+        elif action in ["Accumulate Candidate", "Wait Market Confirmation", "Watchlist"] and blocker_count <= 1:
+            confidence = "Medium"
+        else:
+            confidence = "Low"
+
+        final_actions.append(action)
+        confidences.append(confidence)
+        blockers_list.append(", ".join(blockers) if blockers else "none")
+        next_steps.append(next_step)
+
+    output["Final_Action"] = final_actions
+    output["Decision_Confidence"] = confidences
+    output["Decision_Blockers"] = blockers_list
+    output["Next_Step"] = next_steps
     return output
 
 
@@ -3528,6 +3612,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Exit Risk**: risiko keluar/pengetatan posisi berdasarkan kombinasi fundamental dan teknikal, bukan perhitungan profit pribadi.
         - **Sector Relative Score**: perbandingan valuasi dan kualitas terhadap saham lain dalam sektor yang sama.
         - **Decision Summary / Top Strengths / Top Risks**: ringkasan alasan kuantitatif agar ranking mudah diaudit.
+        - **Final Action**: playbook keputusan yang menggabungkan fundamental, relatif sektor, risiko, kualitas data, dan market regime.
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
         - **Position sizing**: estimasi lot berdasarkan modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan.
         - **Fibonacci Confluence**: support/resistance dari swing high-low, nearest level, jarak harga, dan confluence score.
@@ -3543,6 +3628,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
 
         **Rumus ringkas**
         - `Score = weighted average(Valuation, Quality, Risk, Liquidity, Momentum, Index) - Penalty`, lalu dibatasi 0-100.
+        - `Final_Action`: ringkasan playbook dari Score, Recommendation, Clean_Data, Risk_Level, Sector_Relative_Score, Threshold, Momentum, dan Market_Regime.
         - `Technical_Score = Trend 30% + RSI 20% + MACD 20% + Volume 15% + Volatilitas 15%`.
         - `Sector_Relative_Score = Valuasi relatif sektor 45% + Kualitas relatif sektor 40% + Likuiditas 15%`.
         - `Entry_Action`: fundamental memilih saham layak, teknikal menentukan timing untuk calon pembelian.
@@ -3717,6 +3803,7 @@ breadth_codes = (
 market_breadth = build_market_breadth(tuple(breadth_codes), period="1y", limit=50)
 market_context = {**market_regime, **market_breadth}
 scored_df = add_market_context_to_explainability(scored_df, market_context)
+scored_df = add_final_decision_layer(scored_df)
 data_freshness = build_data_freshness(scored_df)
 filtered = scored_df.copy()
 
@@ -3845,7 +3932,7 @@ with tab_summary:
             regime_cols[4].metric("Freshness", clean_text(data_freshness.get("Freshness_Label")), f"Online harga {format_percent(data_freshness.get('Online_Price_Coverage_%'), 0)}")
             st.caption(clean_text(market_context.get("Regime_Reason"), "Konteks market belum tersedia."))
 
-        chart_cols = st.columns([1, 1, 1])
+        chart_cols = st.columns([1, 1])
         with chart_cols[0]:
             reco_counts = summary_chart_data["Recommendation"].value_counts().reindex(["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"]).dropna().reset_index()
             reco_counts.columns = ["Recommendation", "Jumlah"]
@@ -3860,6 +3947,24 @@ with tab_summary:
             fig.update_layout(height=330, showlegend=False, margin=dict(l=20, r=20, t=60, b=40))
             show_chart(fig)
         with chart_cols[1]:
+            final_counts = summary_chart_data["Final_Action"].value_counts().reindex(
+                ["Accumulate Candidate", "Wait Market Confirmation", "Watchlist", "Speculative Monitor", "Avoid / Review"]
+            ).dropna().reset_index()
+            final_counts.columns = ["Final_Action", "Jumlah"]
+            fig = px.bar(
+                final_counts,
+                x="Jumlah",
+                y="Final_Action",
+                color="Final_Action",
+                orientation="h",
+                title="Distribusi final action",
+                color_discrete_map=FINAL_ACTION_COLORS,
+            )
+            fig.update_layout(height=330, showlegend=False, xaxis_title="Jumlah", yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+            show_chart(fig)
+
+        chart_cols = st.columns([1, 1])
+        with chart_cols[0]:
             risk_counts = summary_chart_data["Risk_Level"].value_counts().reindex(["Low", "Medium", "High"]).dropna().reset_index()
             risk_counts.columns = ["Risk_Level", "Jumlah"]
             fig = px.pie(
@@ -3873,7 +3978,7 @@ with tab_summary:
             )
             fig.update_layout(height=330, margin=dict(l=20, r=20, t=60, b=40))
             show_chart(fig)
-        with chart_cols[2]:
+        with chart_cols[1]:
             source_mix = build_source_mix(summary_chart_data)
             source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Universe_Diff_Status"])].copy()
             if source_view.empty:
@@ -3897,9 +4002,13 @@ with tab_summary:
             top_summary_columns = [
                 "Kode",
                 "Nama Perusahaan",
+                "Final_Action",
+                "Decision_Confidence",
                 "Recommendation",
                 "Risk_Level",
                 "Clean_Data",
+                "Decision_Blockers",
+                "Next_Step",
                 "Decision_Summary",
                 "Top_Strengths",
                 "Top_Risks",
@@ -3939,6 +4048,10 @@ with tab_summary:
                     "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f", help="Market cap dibagi total revenue. Dipakai sebagai konteks tambahan, bukan rumus utama score."),
                     "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
                     "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
+                    "Final_Action": st.column_config.TextColumn("Final Action", help=HELP_TEXT["final_action"]),
+                    "Decision_Confidence": st.column_config.TextColumn("Confidence", help=HELP_TEXT["final_action"]),
+                    "Decision_Blockers": st.column_config.TextColumn("Blockers", help=HELP_TEXT["final_action"]),
+                    "Next_Step": st.column_config.TextColumn("Next Step", help=HELP_TEXT["final_action"]),
                 },
             )
         with overview_cols[1]:
@@ -4076,6 +4189,10 @@ with tab_reco:
         display_columns = [
             "Kode",
             "Nama Perusahaan",
+            "Final_Action",
+            "Decision_Confidence",
+            "Decision_Blockers",
+            "Next_Step",
             "Recommendation",
             "Safety_Recommendation",
             "Risk_Level",
@@ -4145,9 +4262,13 @@ with tab_reco:
         default_table_columns = [
             "Kode",
             "Nama Perusahaan",
+            "Final_Action",
+            "Decision_Confidence",
             "Recommendation",
             "Risk_Level",
             "Clean_Data",
+            "Decision_Blockers",
+            "Next_Step",
             "Decision_Summary",
             "Top_Strengths",
             "Top_Risks",
@@ -4188,6 +4309,10 @@ with tab_reco:
                 "Top_Strengths": st.column_config.TextColumn("Faktor Kuat", help=HELP_TEXT["explainability"]),
                 "Top_Risks": st.column_config.TextColumn("Faktor Lemah", help=HELP_TEXT["explainability"]),
                 "Action_Checklist": st.column_config.TextColumn("Checklist", help=HELP_TEXT["explainability"]),
+                "Final_Action": st.column_config.TextColumn("Final Action", help=HELP_TEXT["final_action"]),
+                "Decision_Confidence": st.column_config.TextColumn("Confidence", help=HELP_TEXT["final_action"]),
+                "Decision_Blockers": st.column_config.TextColumn("Blockers", help=HELP_TEXT["final_action"]),
+                "Next_Step": st.column_config.TextColumn("Next Step", help=HELP_TEXT["final_action"]),
                 "Market_Regime": st.column_config.TextColumn("Market Regime", help="Konteks IHSG saat ini. Tidak mengubah Score, tetapi menambah checklist risiko."),
                 "Market_Breadth": st.column_config.TextColumn("Market Breadth", help="Kesehatan pasar dari persentase saham di atas MA50/MA200 pada sample breadth."),
                 "Valuation_Score": st.column_config.NumberColumn("Valuasi", format="%.1f", help=HELP_TEXT["valuation"]),
