@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 DATA_FILE = "Ringkasan.xlsx"
 HISTORY_CACHE_DIR = Path("history_cache")
+YFINANCE_CACHE_DIR = HISTORY_CACHE_DIR / ".yfinance"
 BLOCKING_PROXY_VALUES = {"http://127.0.0.1:9", "https://127.0.0.1:9", "127.0.0.1:9"}
 IDX_COMPANY_PROFILE_URLS = [
     "https://www.idx.co.id/primary/ListedCompany/GetCompanyProfiles?emitenType=s",
@@ -205,6 +206,10 @@ HELP_TEXT = {
     "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih lebih panjang untuk analisis historis, lebih pendek untuk refresh cepat.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
+    "technical_period": "Rentang OHLCV online untuk menghitung indikator teknikal. Minimal 1 tahun disarankan agar MA200 dan 52W lebih stabil.",
+    "technical_code": "Pilih satu kode saham untuk candlestick dan indikator detail. Data diambil dari yfinance/cache memakai format KODE.JK.",
+    "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
+    "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -245,6 +250,13 @@ RECOMMENDATION_COLORS = {
     "Avoid": "#dc2626",
 }
 RISK_COLORS = {"Low": "#15803d", "Medium": "#ca8a04", "High": "#dc2626"}
+TECHNICAL_SIGNAL_COLORS = {
+    "Bullish": "#15803d",
+    "Constructive": "#65a30d",
+    "Neutral": "#2563eb",
+    "Overbought": "#ea580c",
+    "Weak": "#dc2626",
+}
 SOURCE_COLORS = {
     "Price_Source": "#2563eb",
     "Volume_Source": "#0891b2",
@@ -351,6 +363,12 @@ def format_large_rupiah(value):
     return f"Rp {value:,.0f}"
 
 
+def format_percent(value, digits=1):
+    if pd.isna(value):
+        return "-"
+    return f"{value:,.{digits}f}%"
+
+
 def stretch_kwargs(func):
     try:
         params = inspect.signature(func).parameters
@@ -387,6 +405,8 @@ def chart_color_kwargs(color_field):
         return {"color_discrete_map": RECOMMENDATION_COLORS}
     if color_field == "Risk_Level":
         return {"color_discrete_map": RISK_COLORS}
+    if color_field == "Technical_Signal":
+        return {"color_discrete_map": TECHNICAL_SIGNAL_COLORS}
     if color_field in ["Sektor", "Industry", "Kode"]:
         return {"color_discrete_sequence": STOCK_LINE_COLORS}
     if color_field in ["Score", "Quality_Score", "Risk_Score", "Threshold_Pass_Ratio", "Valuation_Score", "Liquidity_Score", "Momentum_Score", "History_Momentum_Score"]:
@@ -1312,6 +1332,9 @@ def fetch_yahoo_history(codes, period="max"):
 
     try:
         import yfinance as yf
+        YFINANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        if hasattr(yf, "set_tz_cache_location"):
+            yf.set_tz_cache_location(str(YFINANCE_CACHE_DIR))
     except Exception as exc:
         cached = read_history_cache(cleaned_codes, period)
         if not cached.empty:
@@ -1465,6 +1488,114 @@ def normalize_history_frame(history):
         lambda series: series / series.iloc[0] * 100 if len(series) else series
     )
     return history
+
+
+def compute_rsi(close, window=14):
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / window, adjust=False, min_periods=window).mean()
+    rs = gain / loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    rsi = rsi.mask(loss.eq(0) & gain.gt(0), 100)
+    rsi = rsi.mask(loss.eq(0) & gain.eq(0), 50)
+    return rsi.clip(0, 100)
+
+
+def build_technical_indicators(history):
+    if history.empty:
+        return pd.DataFrame()
+
+    frames = []
+    for code, group in normalize_history_frame(history).groupby("Kode"):
+        tech = group.sort_values("Date").copy()
+        close = tech["Close"]
+        high = pd.to_numeric(tech.get("High", close), errors="coerce").fillna(close)
+        low = pd.to_numeric(tech.get("Low", close), errors="coerce").fillna(close)
+        volume = pd.to_numeric(tech.get("Volume_Online", pd.Series(np.nan, index=tech.index)), errors="coerce")
+
+        tech["MA20"] = close.rolling(20, min_periods=5).mean()
+        tech["MA50"] = close.rolling(50, min_periods=10).mean()
+        tech["MA200"] = close.rolling(200, min_periods=40).mean()
+        tech["RSI14"] = compute_rsi(close)
+        ema12 = close.ewm(span=12, adjust=False, min_periods=12).mean()
+        ema26 = close.ewm(span=26, adjust=False, min_periods=26).mean()
+        tech["MACD"] = ema12 - ema26
+        tech["MACD_Signal"] = tech["MACD"].ewm(span=9, adjust=False, min_periods=9).mean()
+        tech["BB_Mid"] = tech["MA20"]
+        bb_std = close.rolling(20, min_periods=10).std()
+        tech["BB_Upper"] = tech["BB_Mid"] + 2 * bb_std
+        tech["BB_Lower"] = tech["BB_Mid"] - 2 * bb_std
+        prev_close = close.shift(1)
+        true_range = pd.concat([(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+        tech["ATR14"] = true_range.rolling(14, min_periods=5).mean()
+        tech["Volume_MA20"] = volume.rolling(20, min_periods=5).mean()
+        tech["Volume_Ratio"] = volume / tech["Volume_MA20"].replace(0, np.nan)
+        tech["High_52W"] = high.rolling(252, min_periods=40).max()
+        tech["Low_52W"] = low.rolling(252, min_periods=40).min()
+        tech["Distance_52W_High_%"] = (close / tech["High_52W"] - 1) * 100
+        tech["Distance_52W_Low_%"] = (close / tech["Low_52W"] - 1) * 100
+        tech["ATR_%"] = tech["ATR14"] / close.replace(0, np.nan) * 100
+        tech["Return_20D_%"] = close.pct_change(20) * 100
+        tech["Return_60D_%"] = close.pct_change(60) * 100
+        tech["Trend_Bullish"] = (close > tech["MA50"]) & (tech["MA50"] > tech["MA200"])
+        tech["MACD_Bullish"] = tech["MACD"] > tech["MACD_Signal"]
+        tech["Volume_Confirm"] = tech["Volume_Ratio"] >= 1
+        frames.append(tech)
+
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def summarize_technical_indicators(technical_history):
+    if technical_history.empty:
+        return pd.DataFrame()
+
+    latest = technical_history.sort_values(["Kode", "Date"]).groupby("Kode", as_index=False).tail(1).copy()
+    latest["Trend_Score"] = np.select(
+        [
+            latest["Close"].gt(latest["MA50"]) & latest["MA50"].gt(latest["MA200"]),
+            latest["Close"].gt(latest["MA50"]),
+            latest["Close"].lt(latest["MA200"]),
+        ],
+        [100, 70, 25],
+        default=50,
+    )
+    latest["RSI_Score"] = score_target_range(latest["RSI14"], low=35, high=75, center=55)
+    latest["MACD_Score"] = np.where(latest["MACD_Bullish"], 80, 35)
+    latest["Volume_Score"] = score_target_range(latest["Volume_Ratio"], low=0.5, high=2.0, center=1.2)
+    latest["Volatility_Score"] = (100 - (latest["ATR_%"].fillna(6) / 12 * 100)).clip(0, 100)
+    latest["Technical_Score"] = (
+        latest["Trend_Score"] * 0.30
+        + latest["RSI_Score"] * 0.20
+        + latest["MACD_Score"] * 0.20
+        + latest["Volume_Score"] * 0.15
+        + latest["Volatility_Score"] * 0.15
+    ).round(1)
+    latest["Technical_Signal"] = np.select(
+        [
+            latest["RSI14"].ge(75),
+            latest["Technical_Score"].ge(75) & latest["Trend_Bullish"],
+            latest["Technical_Score"].ge(60),
+            latest["Technical_Score"].lt(45),
+        ],
+        ["Overbought", "Bullish", "Constructive", "Weak"],
+        default="Neutral",
+    )
+    latest["Technical_Notes"] = latest.apply(
+        lambda row: ", ".join(
+            note
+            for note, ok in [
+                ("trend bullish", bool(row.get("Trend_Bullish"))),
+                ("MACD bullish", bool(row.get("MACD_Bullish"))),
+                ("volume confirm", bool(row.get("Volume_Confirm"))),
+                ("RSI tinggi", pd.notna(row.get("RSI14")) and row.get("RSI14") >= 70),
+                ("volatilitas tinggi", pd.notna(row.get("ATR_%")) and row.get("ATR_%") >= 8),
+            ]
+            if ok
+        )
+        or "netral",
+        axis=1,
+    )
+    return latest
 
 
 def calculate_window_return(group, days):
@@ -2460,8 +2591,8 @@ status_cols[1].metric("Lolos filter", f"{len(filtered):,}")
 status_cols[2].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filtered) else "-")
 status_cols[3].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
 
-tab_summary, tab_reco, tab_explore, tab_history, tab_sector, tab_quality, tab_method = st.tabs(
-    ["Ringkasan", "Rekomendasi", "Explorer", "Histori Harga", "Sektor", "Kualitas Data", "Metodologi"]
+tab_summary, tab_reco, tab_explore, tab_history, tab_technical, tab_sector, tab_quality, tab_method = st.tabs(
+    ["Ringkasan", "Rekomendasi", "Explorer", "Histori Harga", "Teknikal", "Sektor", "Kualitas Data", "Metodologi"]
 )
 
 with tab_summary:
@@ -3156,6 +3287,212 @@ with tab_history:
                 fig.add_vline(x=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
                 fig.update_layout(height=440, xaxis_title="Return 52 minggu (%)", yaxis_title="Score")
                 show_chart(fig)
+
+with tab_technical:
+    st.subheader("Analisa teknikal")
+    st.caption("Teknikal memakai OHLCV yfinance/cache sebagai konfirmasi timing. Score fundamental utama tidak berubah.")
+    technical_source = filtered if not filtered.empty else scored_df
+    technical_codes = technical_source["Kode"].dropna().astype(str).str.upper().unique().tolist()
+
+    if not technical_codes:
+        st.warning("Tidak ada kode saham pada filter saat ini.")
+    else:
+        tech_controls = st.columns([1, 1, 1])
+        with tech_controls[0]:
+            technical_code = st.selectbox("Kode saham", technical_codes, index=0, help=HELP_TEXT["technical_code"])
+        with tech_controls[1]:
+            technical_period = st.selectbox(
+                "Periode teknikal",
+                ["6mo", "1y", "2y", "5y", "10y"],
+                index=2,
+                format_func=lambda value: {
+                    "6mo": "6 bulan",
+                    "1y": "1 tahun",
+                    "2y": "2 tahun",
+                    "5y": "5 tahun",
+                    "10y": "10 tahun",
+                }.get(value, value),
+                help=HELP_TEXT["technical_period"],
+            )
+        with tech_controls[2]:
+            chart_style = st.segmented_control("Chart harga", ["Candlestick", "Line"], default="Candlestick")
+
+        load_technical = st.toggle("Muat analisa teknikal online/cache", value=False, help="Aktifkan saat ingin mengambil OHLCV dan menghitung indikator. Dibuat manual agar dashboard utama tetap cepat.")
+        if not load_technical:
+            st.info("Aktifkan toggle di atas untuk memuat candlestick, MA, RSI, MACD, ATR, dan Technical Score.")
+        else:
+            tech_history, tech_error, tech_source_label = fetch_yahoo_history([technical_code], period=technical_period)
+            if tech_error:
+                st.warning(tech_error)
+            if tech_history.empty:
+                st.info("Data OHLCV online/cache belum tersedia untuk teknikal. Coba periode lain atau refresh cache histori.")
+            else:
+                tech_history = build_technical_indicators(tech_history)
+                tech_summary = summarize_technical_indicators(tech_history)
+                latest_tech = tech_summary.iloc[0] if not tech_summary.empty else pd.Series(dtype=object)
+
+                metric_cols = st.columns(5)
+                metric_cols[0].metric("Technical Score", format_number(latest_tech.get("Technical_Score")), help=HELP_TEXT["technical_score"])
+                metric_cols[1].metric("Sinyal", clean_text(latest_tech.get("Technical_Signal")))
+                metric_cols[2].metric("RSI 14", format_number(latest_tech.get("RSI14")))
+                metric_cols[3].metric("Jarak 52W High", format_percent(latest_tech.get("Distance_52W_High_%")))
+                metric_cols[4].metric("ATR", format_percent(latest_tech.get("ATR_%")))
+                st.caption(f"Sumber teknikal aktif: {tech_source_label}. Catatan: {clean_text(latest_tech.get('Technical_Notes'), 'netral')}.")
+
+                price_panel = tech_history.tail(260).copy()
+                fig = go.Figure()
+                if chart_style == "Candlestick" and {"Open", "High", "Low", "Close"}.issubset(price_panel.columns):
+                    fig.add_trace(
+                        go.Candlestick(
+                            x=price_panel["Date"],
+                            open=price_panel["Open"],
+                            high=price_panel["High"],
+                            low=price_panel["Low"],
+                            close=price_panel["Close"],
+                            name="OHLC",
+                            increasing_line_color="#15803d",
+                            decreasing_line_color="#dc2626",
+                        )
+                    )
+                else:
+                    fig.add_trace(go.Scatter(x=price_panel["Date"], y=price_panel["Close"], mode="lines", name="Close", line=dict(color="#2563eb")))
+                for ma_column, color in [("MA20", "#0891b2"), ("MA50", "#7c3aed"), ("MA200", "#475569")]:
+                    if ma_column in price_panel.columns:
+                        fig.add_trace(go.Scatter(x=price_panel["Date"], y=price_panel[ma_column], mode="lines", name=ma_column, line=dict(color=color, width=1.6)))
+                fig.update_layout(
+                    title=f"{technical_code}: harga, MA20/50/200",
+                    height=520,
+                    xaxis_title="Tanggal",
+                    yaxis_title="Harga",
+                    xaxis_rangeslider_visible=False,
+                    margin=dict(l=20, r=20, t=60, b=40),
+                )
+                show_chart(fig)
+
+                lower_cols = st.columns([1, 1])
+                with lower_cols[0]:
+                    momentum_panel = price_panel[["Date", "RSI14", "MACD", "MACD_Signal"]].copy()
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["RSI14"], mode="lines", name="RSI14", line=dict(color="#2563eb")))
+                    fig.add_hline(y=70, line_dash="dash", line_color="#ea580c")
+                    fig.add_hline(y=30, line_dash="dash", line_color="#15803d")
+                    fig.update_layout(title="RSI 14", height=320, yaxis_title="RSI", margin=dict(l=20, r=20, t=60, b=40))
+                    show_chart(fig)
+                with lower_cols[1]:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD"], mode="lines", name="MACD", line=dict(color="#7c3aed")))
+                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD_Signal"], mode="lines", name="Signal", line=dict(color="#ca8a04")))
+                    fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
+                    fig.update_layout(title="MACD", height=320, yaxis_title="MACD", margin=dict(l=20, r=20, t=60, b=40))
+                    show_chart(fig)
+
+                detail_columns = [
+                    "Date",
+                    "Close",
+                    "MA20",
+                    "MA50",
+                    "MA200",
+                    "RSI14",
+                    "MACD",
+                    "MACD_Signal",
+                    "Volume_Ratio",
+                    "ATR_%",
+                    "Distance_52W_High_%",
+                    "Distance_52W_Low_%",
+                ]
+                with st.expander("Detail indikator terakhir", expanded=False):
+                    show_table(
+                        tech_history[[column for column in detail_columns if column in tech_history.columns]].tail(60).sort_values("Date", ascending=False),
+                        hide_index=True,
+                        column_config={
+                            "Date": st.column_config.DateColumn("Tanggal"),
+                            "Close": st.column_config.NumberColumn("Close", format="%.0f"),
+                            "MA20": st.column_config.NumberColumn("MA20", format="%.0f"),
+                            "MA50": st.column_config.NumberColumn("MA50", format="%.0f"),
+                            "MA200": st.column_config.NumberColumn("MA200", format="%.0f"),
+                            "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
+                            "MACD": st.column_config.NumberColumn("MACD", format="%.2f"),
+                            "MACD_Signal": st.column_config.NumberColumn("Signal", format="%.2f"),
+                            "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
+                            "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),
+                            "Distance_52W_High_%": st.column_config.NumberColumn("Jarak 52W High", format="%.1f%%"),
+                            "Distance_52W_Low_%": st.column_config.NumberColumn("Jarak 52W Low", format="%.1f%%"),
+                        },
+                    )
+
+        with st.expander("Scan teknikal top saham", expanded=False):
+            scan_cols = st.columns([1, 1, 1])
+            with scan_cols[0]:
+                scan_n = safe_slider("Jumlah scan", 5, min(30, len(technical_codes)), min(10, len(technical_codes)), step=5, help="Scan manual agar app tidak lambat saat dibuka.")
+            with scan_cols[1]:
+                signal_filter = st.multiselect(
+                    "Filter sinyal",
+                    ["Bullish", "Constructive", "Neutral", "Overbought", "Weak"],
+                    default=["Bullish", "Constructive"],
+                    help=HELP_TEXT["technical_filter"],
+                )
+            with scan_cols[2]:
+                run_scan = st.button("Hitung teknikal top N")
+
+            if run_scan:
+                scan_codes = technical_source.head(scan_n)["Kode"].tolist()
+                with st.spinner("Mengambil OHLCV dan menghitung indikator teknikal..."):
+                    scan_history, scan_error, scan_source_label = fetch_yahoo_history(scan_codes, period=technical_period)
+                    scan_indicators = build_technical_indicators(scan_history)
+                    scan_summary = summarize_technical_indicators(scan_indicators)
+                if scan_error:
+                    st.warning(scan_error)
+                if scan_summary.empty:
+                    st.info("Scan teknikal belum menghasilkan data.")
+                else:
+                    scan_summary = scan_summary.merge(
+                        scored_df[["Kode", "Nama Perusahaan", "Sektor", "Score", "Recommendation", "Risk_Level"]],
+                        on="Kode",
+                        how="left",
+                    )
+                    if signal_filter:
+                        scan_summary = scan_summary[scan_summary["Technical_Signal"].isin(signal_filter)]
+                    scan_summary = scan_summary.sort_values(["Technical_Score", "Score"], ascending=False)
+                    st.caption(f"Sumber scan: {scan_source_label}. Technical Score dipakai sebagai konfirmasi, bukan pengganti Score utama.")
+                    fig = px.bar(
+                        scan_summary.head(20),
+                        x="Technical_Score",
+                        y="Kode",
+                        color="Technical_Signal",
+                        orientation="h",
+                        title="Ranking teknikal top saham",
+                        color_discrete_map=TECHNICAL_SIGNAL_COLORS,
+                        hover_data=["Nama Perusahaan", "Sektor", "Score", "Recommendation", "RSI14", "ATR_%", "Technical_Notes"],
+                    )
+                    fig.update_layout(height=430, xaxis_title="Technical Score", yaxis_title="")
+                    show_chart(fig)
+                    show_table(
+                        scan_summary[
+                            [
+                                "Kode",
+                                "Nama Perusahaan",
+                                "Sektor",
+                                "Score",
+                                "Recommendation",
+                                "Technical_Score",
+                                "Technical_Signal",
+                                "RSI14",
+                                "Volume_Ratio",
+                                "ATR_%",
+                                "Distance_52W_High_%",
+                                "Technical_Notes",
+                            ]
+                        ].head(50),
+                        hide_index=True,
+                        column_config={
+                            "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
+                            "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                            "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
+                            "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
+                            "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),
+                            "Distance_52W_High_%": st.column_config.NumberColumn("Jarak 52W High", format="%.1f%%"),
+                        },
+                    )
 
 with tab_sector:
     sector_chart_base = chart_market_frame(scored_df, "Grafik sektor")
