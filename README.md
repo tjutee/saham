@@ -16,6 +16,9 @@ belum stabil tersedia online.
 - Scoring multi-factor: valuasi, kualitas profit, risiko, likuiditas, momentum, dan kekuatan indeks.
 - Sector-relative scoring untuk membandingkan valuasi dan kualitas saham terhadap sektor yang sama.
 - Explainability layer: `Decision_Summary`, `Top_Strengths`, `Top_Risks`, dan `Action_Checklist`.
+- Market regime dari IHSG `^JKSE`: Risk-On, Neutral, atau Risk-Off berdasarkan MA50/MA200 dan momentum 20D/60D.
+- Market breadth: persentase saham sample yang berada di atas MA50 dan MA200.
+- Data freshness guard untuk melihat tanggal online terakhir, lag data, coverage online, dan fallback Excel.
 - Filter threshold dari sheet `NonBank` dan `Banking`.
 - Histori return 4, 13, 26, 52 minggu, dan YTD dihitung dari yfinance bila tersedia.
 - Grafik utama memprioritaskan harga/volume yfinance atau cache online; Excel hanya dipakai bila online/cache kosong.
@@ -74,6 +77,19 @@ kolom yang kosong dari `Ringkasan.xlsx` bila file tersedia.
 Tab `Kualitas Data` menampilkan audit sumber kode agar perbedaan antara daftar
 resmi BEI/IDX, sumber online pelengkap, dan fallback Excel tetap terlihat,
 bukan diabaikan.
+
+## Market Regime & Freshness
+
+Dashboard menambahkan konteks pasar besar agar saham bagus tidak dibaca lepas
+dari kondisi IHSG.
+
+- `Market_Regime`: `Risk-On`, `Neutral`, atau `Risk-Off` dari posisi IHSG terhadap MA50/MA200 dan return 20D/60D.
+- `Market_Breadth`: kondisi breadth dari persentase saham sample yang berada di atas MA50/MA200.
+- `Freshness`: status data online seperti `Fresh`, `Stale`, atau `Needs Refresh`.
+- Jika market melemah, `Action_Checklist` menambahkan konteks seperti `market risk-off`, tanpa mengubah `Score` fundamental.
+
+Tab `Kualitas Data` menampilkan audit market/freshness agar sumber, tanggal,
+lag data, dan fallback tetap transparan.
 
 ## Harga & Teknikal
 

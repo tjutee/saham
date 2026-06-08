@@ -1250,6 +1250,194 @@ def add_decision_explainability(scored):
     return output
 
 
+def build_data_freshness(scored):
+    if scored.empty:
+        return {
+            "Freshness_Label": "Unknown",
+            "Latest_Online_Date": None,
+            "Online_Data_Lag_Days": np.nan,
+            "Online_Price_Coverage_%": 0.0,
+            "Online_Fundamental_Coverage_%": 0.0,
+            "Excel_Fundamental_Coverage_%": 0.0,
+            "Stale_Price_Rows": 0,
+        }
+
+    today = pd.Timestamp.today().normalize()
+    online_dates = pd.to_datetime(scored.get("Online_Last_Date", pd.Series(pd.NaT, index=scored.index)), errors="coerce")
+    latest_online_date = online_dates.max()
+    lag_days = (today - latest_online_date.normalize()).days if pd.notna(latest_online_date) else np.nan
+    stale_rows = int((online_dates.notna() & ((today - online_dates.dt.normalize()).dt.days > 5)).sum())
+    online_price_coverage = (
+        scored.get("Price_Source", pd.Series("", index=scored.index))
+        .astype(str)
+        .str.contains("yfinance|cache|pandas-datareader", case=False, na=False)
+        .mean()
+        * 100
+    )
+    online_fundamental_count = pd.to_numeric(
+        scored.get("Online_Fundamental_Field_Count", pd.Series(0, index=scored.index)), errors="coerce"
+    ).fillna(0)
+    excel_fundamental_count = pd.to_numeric(
+        scored.get("Excel_Fundamental_Field_Count", pd.Series(0, index=scored.index)), errors="coerce"
+    ).fillna(0)
+    fundamental_total = online_fundamental_count + excel_fundamental_count
+    online_fundamental_coverage = (
+        online_fundamental_count.sum() / fundamental_total.sum() * 100 if fundamental_total.sum() > 0 else 0.0
+    )
+    excel_fundamental_coverage = (
+        excel_fundamental_count.sum() / fundamental_total.sum() * 100 if fundamental_total.sum() > 0 else 0.0
+    )
+
+    if pd.isna(lag_days):
+        label = "Unknown"
+    elif lag_days <= 3 and online_price_coverage >= 70:
+        label = "Fresh"
+    elif lag_days <= 7 and online_price_coverage >= 40:
+        label = "Stale"
+    else:
+        label = "Needs Refresh"
+
+    return {
+        "Freshness_Label": label,
+        "Latest_Online_Date": latest_online_date,
+        "Online_Data_Lag_Days": lag_days,
+        "Online_Price_Coverage_%": round(float(online_price_coverage), 1),
+        "Online_Fundamental_Coverage_%": round(float(online_fundamental_coverage), 1),
+        "Excel_Fundamental_Coverage_%": round(float(excel_fundamental_coverage), 1),
+        "Stale_Price_Rows": stale_rows,
+    }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def build_market_regime(period="2y"):
+    history, error, source = fetch_yahoo_symbol_history(["^JKSE"], period=period)
+    if history.empty:
+        return {
+            "Market_Regime": "Unknown",
+            "IHSG_Close": np.nan,
+            "IHSG_MA50": np.nan,
+            "IHSG_MA200": np.nan,
+            "IHSG_Return_20D_%": np.nan,
+            "IHSG_Return_60D_%": np.nan,
+            "IHSG_Last_Date": pd.NaT,
+            "Regime_Reason": error or "Data IHSG kosong.",
+            "Market_Source": source,
+            "Market_Error": error,
+        }
+
+    ihsg = history[history["Symbol"].eq("^JKSE")].sort_values("Date").copy()
+    ihsg["MA50"] = ihsg["Close"].rolling(50, min_periods=20).mean()
+    ihsg["MA200"] = ihsg["Close"].rolling(200, min_periods=80).mean()
+    ihsg["Return_20D_%"] = ihsg["Close"].pct_change(20) * 100
+    ihsg["Return_60D_%"] = ihsg["Close"].pct_change(60) * 100
+    latest = ihsg.iloc[-1]
+    close = latest.get("Close")
+    ma50 = latest.get("MA50")
+    ma200 = latest.get("MA200")
+    ret20 = latest.get("Return_20D_%")
+    ret60 = latest.get("Return_60D_%")
+    above50 = pd.notna(close) and pd.notna(ma50) and close >= ma50
+    above200 = pd.notna(close) and pd.notna(ma200) and close >= ma200
+    positive20 = pd.notna(ret20) and ret20 >= 0
+    positive60 = pd.notna(ret60) and ret60 >= 0
+
+    if above50 and above200 and positive20 and positive60:
+        regime = "Risk-On"
+        reason = "IHSG di atas MA50/MA200 dan momentum 20D/60D positif."
+    elif (pd.notna(close) and pd.notna(ma200) and close < ma200) or ((not above50) and pd.notna(ret20) and ret20 < 0):
+        regime = "Risk-Off"
+        reason = "IHSG di bawah MA200 atau trend pendek melemah."
+    else:
+        regime = "Neutral"
+        reason = "Sinyal IHSG campuran; gunakan konfirmasi tambahan."
+
+    return {
+        "Market_Regime": regime,
+        "IHSG_Close": close,
+        "IHSG_MA50": ma50,
+        "IHSG_MA200": ma200,
+        "IHSG_Return_20D_%": ret20,
+        "IHSG_Return_60D_%": ret60,
+        "IHSG_Last_Date": latest.get("Date"),
+        "Regime_Reason": reason,
+        "Market_Source": source,
+        "Market_Error": error,
+    }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def build_market_breadth(codes, period="1y", limit=50):
+    selected_codes = [str(code).strip().upper() for code in codes if str(code).strip()][:limit]
+    if not selected_codes:
+        return {
+            "Breadth_Count": 0,
+            "Above_MA50_%": np.nan,
+            "Above_MA200_%": np.nan,
+            "Breadth_Label": "Unknown",
+            "Breadth_Source": "empty",
+            "Breadth_Error": "Kode breadth kosong.",
+        }
+
+    history, error, source = fetch_yahoo_history(selected_codes, period=period)
+    if history.empty:
+        return {
+            "Breadth_Count": 0,
+            "Above_MA50_%": np.nan,
+            "Above_MA200_%": np.nan,
+            "Breadth_Label": "Unknown",
+            "Breadth_Source": source,
+            "Breadth_Error": error,
+        }
+
+    indicators = build_technical_indicators(history)
+    latest = indicators.sort_values(["Kode", "Date"]).groupby("Kode", as_index=False).tail(1)
+    close = pd.to_numeric(latest.get("Close", pd.Series(index=latest.index)), errors="coerce")
+    ma50 = pd.to_numeric(latest.get("MA50", pd.Series(index=latest.index)), errors="coerce")
+    ma200 = pd.to_numeric(latest.get("MA200", pd.Series(index=latest.index)), errors="coerce")
+    valid50 = close.notna() & ma50.notna()
+    valid200 = close.notna() & ma200.notna()
+    above50 = (close[valid50] >= ma50[valid50]).mean() * 100 if valid50.any() else np.nan
+    above200 = (close[valid200] >= ma200[valid200]).mean() * 100 if valid200.any() else np.nan
+
+    if pd.notna(above50) and pd.notna(above200) and above50 >= 60 and above200 >= 55:
+        label = "Healthy"
+    elif pd.notna(above50) and pd.notna(above200) and (above50 < 40 or above200 < 40):
+        label = "Weak"
+    else:
+        label = "Mixed"
+
+    return {
+        "Breadth_Count": int(latest["Kode"].nunique()),
+        "Above_MA50_%": round(float(above50), 1) if pd.notna(above50) else np.nan,
+        "Above_MA200_%": round(float(above200), 1) if pd.notna(above200) else np.nan,
+        "Breadth_Label": label,
+        "Breadth_Source": source,
+        "Breadth_Error": error,
+    }
+
+
+def add_market_context_to_explainability(scored, market_context):
+    output = scored.copy()
+    regime = clean_text(market_context.get("Market_Regime"), "Unknown")
+    breadth = clean_text(market_context.get("Breadth_Label"), "Unknown")
+    if regime == "Risk-Off" or breadth == "Weak":
+        append_note = "market risk-off"
+    elif regime == "Neutral" or breadth == "Mixed":
+        append_note = "konfirmasi market"
+    else:
+        append_note = ""
+    if append_note:
+        checklist = output.get("Action_Checklist", pd.Series("", index=output.index)).astype(str)
+        output["Action_Checklist"] = np.where(
+            checklist.str.strip().eq(""),
+            append_note,
+            checklist + ", " + append_note,
+        )
+    output["Market_Regime"] = regime
+    output["Market_Breadth"] = breadth
+    return output
+
+
 def make_filter_criteria(
     name,
     price_range,
@@ -1607,6 +1795,95 @@ def fetch_yahoo_history(codes, period="max"):
     history = normalize_history_frame(history)
     history = trim_history_to_period(history, period)
     write_history_cache(history, period)
+    return history, None, "yfinance"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_yahoo_symbol_history(symbols, period="2y"):
+    cleaned_symbols = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
+    if not cleaned_symbols:
+        return pd.DataFrame(), "Pilih minimal satu simbol.", "empty"
+
+    try:
+        import yfinance as yf
+        YFINANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        if hasattr(yf, "set_tz_cache_location"):
+            yf.set_tz_cache_location(str(YFINANCE_CACHE_DIR))
+    except Exception as exc:
+        return pd.DataFrame(), f"Library yfinance belum tersedia: {exc}", "empty"
+
+    removed_proxy = remove_blocking_proxy_env()
+    try:
+        downloaded = yf.download(
+            tickers=cleaned_symbols,
+            period=provider_period(period),
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+            group_by="ticker",
+        )
+    except Exception as exc:
+        downloaded = pd.DataFrame()
+        error = f"yfinance simbol gagal: {exc}"
+    else:
+        error = None
+    finally:
+        restore_proxy_env(removed_proxy)
+
+    if downloaded.empty:
+        return pd.DataFrame(), error or "Data simbol online kosong.", "empty"
+
+    records = []
+    if isinstance(downloaded.columns, pd.MultiIndex):
+        for symbol in cleaned_symbols:
+            if symbol not in downloaded.columns.get_level_values(0):
+                continue
+            symbol_data = downloaded[symbol].reset_index()
+            if "Close" not in symbol_data.columns:
+                continue
+            for _, row in symbol_data.iterrows():
+                close = row.get("Close")
+                if pd.isna(close):
+                    continue
+                records.append(
+                    {
+                        "Date": row.get("Date"),
+                        "Symbol": symbol,
+                        "Open": row.get("Open", np.nan),
+                        "High": row.get("High", np.nan),
+                        "Low": row.get("Low", np.nan),
+                        "Close": close,
+                        "Volume": row.get("Volume", np.nan),
+                    }
+                )
+    else:
+        symbol_data = downloaded.reset_index()
+        symbol = cleaned_symbols[0]
+        for _, row in symbol_data.iterrows():
+            close = row.get("Close")
+            if pd.isna(close):
+                continue
+            records.append(
+                {
+                    "Date": row.get("Date"),
+                    "Symbol": symbol,
+                    "Open": row.get("Open", np.nan),
+                    "High": row.get("High", np.nan),
+                    "Low": row.get("Low", np.nan),
+                    "Close": close,
+                    "Volume": row.get("Volume", np.nan),
+                }
+            )
+
+    history = pd.DataFrame(records)
+    if history.empty:
+        return history, "Data simbol online tidak menemukan harga penutupan.", "empty"
+    history["Date"] = pd.to_datetime(history["Date"], errors="coerce")
+    for column in ["Open", "High", "Low", "Close", "Volume"]:
+        history[column] = pd.to_numeric(history[column], errors="coerce")
+    history = history.dropna(subset=["Date", "Close"]).sort_values(["Symbol", "Date"])
+    history = trim_history_to_period(history, period)
     return history, None, "yfinance"
 
 
@@ -2923,6 +3200,18 @@ scored_df = calculate_scores(threshold_df, weights)
 scored_df = add_safety_flags(scored_df)
 scored_df = add_sector_relative_scores(scored_df)
 scored_df = add_decision_explainability(scored_df)
+market_regime = build_market_regime(period="2y")
+breadth_codes = (
+    scored_df.sort_values(["Index_Count", "Volume"], ascending=False)["Kode"]
+    .dropna()
+    .astype(str)
+    .head(50)
+    .tolist()
+)
+market_breadth = build_market_breadth(tuple(breadth_codes), period="1y", limit=50)
+market_context = {**market_regime, **market_breadth}
+scored_df = add_market_context_to_explainability(scored_df, market_context)
+data_freshness = build_data_freshness(scored_df)
 filtered = scored_df.copy()
 
 if sector_filter != "Semua Sektor":
@@ -2962,6 +3251,33 @@ status_cols[0].metric("Universe", f"{len(df):,}", f"{len(raw_df):,} baris sumber
 status_cols[1].metric("Lolos filter", f"{len(filtered):,}")
 status_cols[2].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filtered) else "-")
 status_cols[3].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
+
+market_cols = st.columns(4)
+market_cols[0].metric(
+    "Market Regime",
+    clean_text(market_context.get("Market_Regime")),
+    clean_text(market_context.get("Breadth_Label")),
+    help="Konteks IHSG dan market breadth. Tidak mengubah Score, tetapi memengaruhi checklist risiko entry.",
+)
+market_cols[1].metric(
+    "IHSG 20D / 60D",
+    f"{format_percent(market_context.get('IHSG_Return_20D_%'))}",
+    f"60D {format_percent(market_context.get('IHSG_Return_60D_%'))}",
+)
+market_cols[2].metric(
+    "Breadth MA50 / MA200",
+    f"{format_percent(market_context.get('Above_MA50_%'))}",
+    f"MA200 {format_percent(market_context.get('Above_MA200_%'))}",
+)
+market_cols[3].metric(
+    "Freshness",
+    clean_text(data_freshness.get("Freshness_Label")),
+    f"Lag {data_freshness.get('Online_Data_Lag_Days') if pd.notna(data_freshness.get('Online_Data_Lag_Days')) else '-'} hari",
+)
+if market_context.get("Market_Error"):
+    st.warning(f"Market regime memakai fallback/terbatas. Detail: {market_context.get('Market_Error')}")
+if market_context.get("Breadth_Error"):
+    st.caption(f"Market breadth terbatas: {market_context.get('Breadth_Error')}")
 
 tab_summary, tab_reco, tab_history, tab_explore, tab_sector, tab_quality, tab_method = st.tabs(
     ["Ringkasan", "Rekomendasi", "Harga & Teknikal", "Explorer", "Sektor", "Kualitas Data", "Metodologi"]
@@ -3012,6 +3328,16 @@ with tab_summary:
                 st.caption("Belum ada kandidat kuat pada filter ini. Longgarkan filter atau pilih cakupan Semua universe.")
             else:
                 st.caption("Gunakan insight ini sebagai daftar awal; validasi detail tetap ada di tab Rekomendasi dan Kualitas Data.")
+
+        with st.container(border=True):
+            st.markdown("**Konteks market & freshness**")
+            regime_cols = st.columns(5)
+            regime_cols[0].metric("Regime", clean_text(market_context.get("Market_Regime")), clean_text(market_context.get("Breadth_Label")))
+            regime_cols[1].metric("IHSG", format_number(market_context.get("IHSG_Close")), f"MA200 {format_number(market_context.get('IHSG_MA200'))}")
+            regime_cols[2].metric("Return IHSG 20D", format_percent(market_context.get("IHSG_Return_20D_%")), f"60D {format_percent(market_context.get('IHSG_Return_60D_%'))}")
+            regime_cols[3].metric("Breadth MA50", format_percent(market_context.get("Above_MA50_%")), f"MA200 {format_percent(market_context.get('Above_MA200_%'))}")
+            regime_cols[4].metric("Freshness", clean_text(data_freshness.get("Freshness_Label")), f"Online harga {format_percent(data_freshness.get('Online_Price_Coverage_%'), 0)}")
+            st.caption(clean_text(market_context.get("Regime_Reason"), "Konteks market belum tersedia."))
 
         chart_cols = st.columns([1, 1, 1])
         with chart_cols[0]:
@@ -3252,6 +3578,8 @@ with tab_reco:
             "Top_Strengths",
             "Top_Risks",
             "Action_Checklist",
+            "Market_Regime",
+            "Market_Breadth",
             "Safety_Notes",
             "Score",
             "Sector_Relative_Score",
@@ -3317,6 +3645,7 @@ with tab_reco:
             "Decision_Summary",
             "Top_Strengths",
             "Top_Risks",
+            "Market_Regime",
             "Score",
             "Sector_Relative_Score",
             "Threshold_Pass_Ratio",
@@ -3353,6 +3682,8 @@ with tab_reco:
                 "Top_Strengths": st.column_config.TextColumn("Faktor Kuat", help=HELP_TEXT["explainability"]),
                 "Top_Risks": st.column_config.TextColumn("Faktor Lemah", help=HELP_TEXT["explainability"]),
                 "Action_Checklist": st.column_config.TextColumn("Checklist", help=HELP_TEXT["explainability"]),
+                "Market_Regime": st.column_config.TextColumn("Market Regime", help="Konteks IHSG saat ini. Tidak mengubah Score, tetapi menambah checklist risiko."),
+                "Market_Breadth": st.column_config.TextColumn("Market Breadth", help="Kesehatan pasar dari persentase saham di atas MA50/MA200 pada sample breadth."),
                 "Valuation_Score": st.column_config.NumberColumn("Valuasi", format="%.1f", help=HELP_TEXT["valuation"]),
                 "Quality_Score": st.column_config.NumberColumn("Kualitas", format="%.1f", help=HELP_TEXT["quality"]),
                 "Risk_Score": st.column_config.NumberColumn("Risiko", format="%.1f", help=HELP_TEXT["risk"]),
@@ -4103,6 +4434,36 @@ with tab_quality:
     quality_cols[1].metric("Perlu review", f"{review_count}")
     quality_cols[2].metric("High severity", f"{high_count}")
     quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
+
+    with st.expander("Market regime & freshness audit", expanded=True):
+        freshness_rows = pd.DataFrame(
+            [
+                {"Area": "Market Regime", "Metric": "Regime", "Value": clean_text(market_context.get("Market_Regime")), "Detail": clean_text(market_context.get("Regime_Reason"))},
+                {"Area": "Market Regime", "Metric": "IHSG Last Date", "Value": clean_text(market_context.get("IHSG_Last_Date")), "Detail": f"Source: {clean_text(market_context.get('Market_Source'))}"},
+                {"Area": "Market Breadth", "Metric": "Breadth Label", "Value": clean_text(market_context.get("Breadth_Label")), "Detail": f"{market_context.get('Breadth_Count', 0)} kode; MA50 {format_percent(market_context.get('Above_MA50_%'))}; MA200 {format_percent(market_context.get('Above_MA200_%'))}"},
+                {"Area": "Freshness", "Metric": "Freshness Label", "Value": clean_text(data_freshness.get("Freshness_Label")), "Detail": f"Lag online {data_freshness.get('Online_Data_Lag_Days') if pd.notna(data_freshness.get('Online_Data_Lag_Days')) else '-'} hari"},
+                {"Area": "Freshness", "Metric": "Online Price Coverage", "Value": format_percent(data_freshness.get("Online_Price_Coverage_%"), 0), "Detail": f"Stale rows: {data_freshness.get('Stale_Price_Rows', 0):,}"},
+                {"Area": "Freshness", "Metric": "Online Fundamental Coverage", "Value": format_percent(data_freshness.get("Online_Fundamental_Coverage_%"), 0), "Detail": f"Excel fallback fields {format_percent(data_freshness.get('Excel_Fundamental_Coverage_%'), 0)}"},
+            ]
+        )
+        show_table(freshness_rows, hide_index=True)
+        stale_price = scored_df.copy()
+        if "Online_Last_Date" in stale_price.columns:
+            stale_price["Online_Last_Date"] = pd.to_datetime(stale_price["Online_Last_Date"], errors="coerce")
+            today = pd.Timestamp.today().normalize()
+            stale_price["Online_Lag_Days"] = (today - stale_price["Online_Last_Date"].dt.normalize()).dt.days
+            stale_price = stale_price[stale_price["Online_Lag_Days"].gt(5)].sort_values("Online_Lag_Days", ascending=False)
+            if not stale_price.empty:
+                with st.expander("Kode dengan harga online/cache mulai stale", expanded=False):
+                    show_table(
+                        stale_price[["Kode", "Nama Perusahaan", "Online_Last_Date", "Online_Lag_Days", "Price_Source", "Volume_Source", "Score", "Recommendation"]].head(100),
+                        hide_index=True,
+                        column_config={
+                            "Online_Last_Date": st.column_config.DateColumn("Tanggal Online"),
+                            "Online_Lag_Days": st.column_config.NumberColumn("Lag Hari", format="%d"),
+                            "Score": st.column_config.NumberColumn("Score", format="%.1f"),
+                        },
+                    )
 
     priority_issues = quality_report[
         quality_report["Rows"].gt(0) & quality_report["Severity"].isin(["High", "Medium"])
