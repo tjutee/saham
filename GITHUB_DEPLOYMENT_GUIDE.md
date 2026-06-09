@@ -68,12 +68,22 @@ Grafik utama memakai harga/volume yfinance atau cache online lebih dulu. Excel
 hanya menjadi fallback bila online/cache tidak tersedia, atau mode pembanding
 manual pada tab `Harga & Teknikal`.
 
-Setelah deploy, cek tab `Ringkasan` untuk memastikan sumber harga, status kode,
-dan distribusi rekomendasi terbaca wajar. Lalu cek tab `Kualitas Data` ->
-`Audit sumber kode saham` dan `Kelengkapan kolom & sumber data`. Di sana akan
-terlihat jumlah kode yang match daftar resmi BEI/IDX, kode yang hanya berasal
-dari fallback, serta kolom fundamental, histori, market cap, revenue, dan
-hierarki industri yang masih kosong.
+Setelah deploy, lakukan smoke test cepat:
+
+1. Cek tab `Ringkasan` untuk memastikan sumber harga, status kode, market
+   regime, distribusi rekomendasi, dan distribusi aksi akhir terbaca wajar.
+2. Cek tab `Rekomendasi` untuk memastikan kolom `Aksi Akhir`, `Keyakinan`,
+   `Penghambat`, dan `Langkah Berikutnya` muncul.
+3. Cek tab `Portofolio` dengan beberapa saham default untuk memastikan estimasi
+   alokasi, lot, risk mix, dan konsentrasi sektor muncul tanpa error.
+4. Cek tab `Harga & Teknikal` untuk memastikan histori yfinance/cache dan
+   indikator teknikal tampil.
+5. Cek tab `Kualitas Data` -> `Audit sumber kode saham` dan `Kelengkapan kolom
+   & sumber data`.
+
+Di tab `Kualitas Data` akan terlihat jumlah kode yang match daftar resmi
+BEI/IDX, kode yang hanya berasal dari fallback, serta kolom fundamental,
+histori, market cap, revenue, dan hierarki industri yang masih kosong.
 
 Jika fallback Excel ingin dipakai, pastikan `Ringkasan.xlsx` ada di root
 repository, satu folder dengan `streamlit_app.py`. Nama file harus sama persis

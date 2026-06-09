@@ -20,6 +20,7 @@ belum stabil tersedia online.
 - Market regime dari IHSG `^JKSE`: Risk-On, Neutral, atau Risk-Off berdasarkan MA50/MA200 dan momentum 20D/60D.
 - Market breadth: persentase saham sample yang berada di atas MA50 dan MA200.
 - Data freshness guard untuk melihat tanggal online terakhir, lag data, coverage online, dan fallback Excel.
+- Perencana portofolio untuk membaca alokasi kandidat, konsentrasi sektor, risk mix, final action mix, dan estimasi lot.
 - Filter threshold dari sheet `NonBank` dan `Banking`.
 - Backtest event-based untuk menguji sinyal teknikal historis terhadap return 5/20/60 hari.
 - Histori return 4, 13, 26, 52 minggu, dan YTD dihitung dari yfinance bila tersedia.
@@ -30,7 +31,7 @@ belum stabil tersedia online.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
 - Bobot scoring bisa diatur langsung dari sidebar.
-- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Harga & Teknikal, Backtest, Prediksi, Explorer, Sektor, Kualitas Data, dan Metodologi.
+- Dashboard dinamis dengan tab Ringkasan, Rekomendasi, Portofolio, Harga & Teknikal, Backtest, Prediksi, Explorer, Sektor, Kualitas Data, dan Metodologi.
 - Ringkasan eksekutif berisi distribusi rekomendasi, komposisi risiko, sumber data, top kandidat, dan heatmap faktor.
 - Kualitas Data menampilkan audit sumber kode, audit filter, coverage kolom, serta campuran sumber harga/volume.
 - Tabel hasil bisa di-download sebagai CSV.
@@ -114,6 +115,15 @@ ini untuk menghitung probabilitas statistik.
 - Ini baseline probabilistik berbasis histori, bukan prediksi harga pasti dan belum memakai model ML berat seperti LightGBM.
 - Gunakan bersama fundamental, market regime, backtest, dan trade plan.
 
+## Portofolio
+
+Tab `Portofolio` mengubah kandidat hasil filter menjadi simulasi alokasi.
+
+- Pilih saham dari kandidat `Final_Action` yang paling layak, lalu tentukan modal, metode alokasi, batas per saham, dan batas konsentrasi sektor.
+- Metode alokasi: equal weight, score-weighted, atau berbasis aksi akhir.
+- Output: nilai teralokasi, sisa kas, posisi terbesar, jumlah sektor, jumlah saham high risk, alokasi sektor, alokasi menurut aksi akhir, estimasi lot, dan next step.
+- Simulasi ini tidak mengirim order dan belum memperhitungkan fee, slippage, gap harga, pajak, atau tujuan pribadi.
+
 ## Harga & Teknikal
 
 Tab `Harga & Teknikal` menggabungkan histori harga dan analisa teknikal karena
@@ -177,6 +187,12 @@ Layer explainability dan final decision:
 - `Final_Action` menerjemahkan hasil screening menjadi playbook: `Accumulate Candidate`, `Wait Market Confirmation`, `Watchlist`, `Speculative Monitor`, atau `Avoid / Review`.
 - `Decision_Confidence` membaca seberapa bersih sinyal akhir setelah blocker seperti data belum bersih, risiko tinggi, threshold rendah, lemah relatif sektor, atau market risk-off.
 - `Next_Step` menunjukkan langkah berikutnya, misalnya cek Harga & Teknikal, tunggu konfirmasi market, atau review ulang data.
+
+Layer portofolio:
+
+- Alokasi memakai harga terakhir dari yfinance/cache bila tersedia, dengan Excel sebagai fallback harga.
+- Batas per saham membuat sebagian modal bisa tetap menjadi kas bila kandidat terlalu sedikit atau harga per lot terlalu besar.
+- Konsentrasi sektor ditandai bila melewati batas yang dipilih pengguna.
 
 Penalti diterapkan untuk data yang kurang sehat, seperti PER/PBV negatif,
 profitabilitas negatif, volume rendah, harga nol, perubahan harian ekstrem,

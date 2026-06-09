@@ -194,6 +194,7 @@ HELP_TEXT = {
     "history_period": "Rentang data online: 1 minggu, 2 minggu untuk short swing, 1/3/6 bulan, 1/2/5/10 tahun, atau All sepanjang data tersedia dari sumber.",
     "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
     "final_action": "Final_Action menggabungkan Score, Recommendation, Clean_Data, Risk_Level, Threshold, relatif sektor, momentum, dan market regime menjadi playbook keputusan yang lebih praktis.",
+    "portfolio": "Portofolio memakai saham pilihan dari hasil filter untuk membaca konsentrasi sektor, campuran risiko, aksi akhir, dan estimasi alokasi. Ini alat perencanaan, bukan order otomatis.",
     "risk_level": "Risk_Level adalah kategori risiko relatif dari model berdasarkan rasio, volatilitas, likuiditas, dan penalti. Tetap perlu validasi berita dan laporan keuangan.",
     "turnover": "Turnover = Penutupan x Volume. Grafik utama memakai harga/volume yfinance/cache bila tersedia; Excel hanya fallback saat online kosong.",
     "return": "Return = harga akhir / harga awal - 1. Nilai ditampilkan dalam persen dan hanya menjelaskan performa periode historis.",
@@ -474,6 +475,8 @@ def chart_color_kwargs(color_field):
         return {"color_discrete_map": RECOMMENDATION_COLORS}
     if color_field == "Risk_Level":
         return {"color_discrete_map": RISK_COLORS}
+    if color_field == "Final_Action":
+        return {"color_discrete_map": FINAL_ACTION_COLORS}
     if color_field == "Technical_Signal":
         return {"color_discrete_map": TECHNICAL_SIGNAL_COLORS}
     if color_field == "Entry_Action":
@@ -3581,6 +3584,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         **Menu utama**
         - **Ringkasan**: snapshot eksekutif berisi kondisi universe, sumber data, distribusi rekomendasi, top kandidat, dan matriks faktor.
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
+        - **Portofolio**: simulasi alokasi saham pilihan, konsentrasi sektor, campuran risiko, final action mix, dan estimasi lot.
         - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
         - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, ringkasan teknikal top kandidat, candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Backtest**: uji event historis untuk sinyal teknikal seperti Bullish, Constructive, Weak, Overbought, MA50 Recovery, dan MA50 Breakdown.
@@ -3612,7 +3616,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Exit Risk**: risiko keluar/pengetatan posisi berdasarkan kombinasi fundamental dan teknikal, bukan perhitungan profit pribadi.
         - **Sector Relative Score**: perbandingan valuasi dan kualitas terhadap saham lain dalam sektor yang sama.
         - **Decision Summary / Top Strengths / Top Risks**: ringkasan alasan kuantitatif agar ranking mudah diaudit.
-        - **Final Action**: playbook keputusan yang menggabungkan fundamental, relatif sektor, risiko, kualitas data, dan market regime.
+        - **Final Action / Aksi Akhir**: playbook keputusan yang menggabungkan fundamental, relatif sektor, risiko, kualitas data, dan market regime.
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
         - **Position sizing**: estimasi lot berdasarkan modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan.
         - **Fibonacci Confluence**: support/resistance dari swing high-low, nearest level, jarak harga, dan confluence score.
@@ -3872,8 +3876,8 @@ if market_context.get("Market_Error"):
 if market_context.get("Breadth_Error"):
     st.caption(f"Market breadth terbatas: {market_context.get('Breadth_Error')}")
 
-tab_summary, tab_reco, tab_history, tab_backtest, tab_predict, tab_explore, tab_sector, tab_quality, tab_method = st.tabs(
-    ["Ringkasan", "Rekomendasi", "Harga & Teknikal", "Backtest", "Prediksi", "Explorer", "Sektor", "Kualitas Data", "Metodologi"]
+tab_summary, tab_reco, tab_portfolio, tab_history, tab_backtest, tab_predict, tab_explore, tab_sector, tab_quality, tab_method = st.tabs(
+    ["Ringkasan", "Rekomendasi", "Portofolio", "Harga & Teknikal", "Backtest", "Prediksi", "Explorer", "Sektor", "Kualitas Data", "Metodologi"]
 )
 
 with tab_summary:
@@ -4048,10 +4052,10 @@ with tab_summary:
                     "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f", help="Market cap dibagi total revenue. Dipakai sebagai konteks tambahan, bukan rumus utama score."),
                     "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
                     "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
-                    "Final_Action": st.column_config.TextColumn("Final Action", help=HELP_TEXT["final_action"]),
-                    "Decision_Confidence": st.column_config.TextColumn("Confidence", help=HELP_TEXT["final_action"]),
-                    "Decision_Blockers": st.column_config.TextColumn("Blockers", help=HELP_TEXT["final_action"]),
-                    "Next_Step": st.column_config.TextColumn("Next Step", help=HELP_TEXT["final_action"]),
+                    "Final_Action": st.column_config.TextColumn("Aksi Akhir", help=HELP_TEXT["final_action"]),
+                    "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help=HELP_TEXT["final_action"]),
+                    "Decision_Blockers": st.column_config.TextColumn("Penghambat", help=HELP_TEXT["final_action"]),
+                    "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help=HELP_TEXT["final_action"]),
                 },
             )
         with overview_cols[1]:
@@ -4309,10 +4313,10 @@ with tab_reco:
                 "Top_Strengths": st.column_config.TextColumn("Faktor Kuat", help=HELP_TEXT["explainability"]),
                 "Top_Risks": st.column_config.TextColumn("Faktor Lemah", help=HELP_TEXT["explainability"]),
                 "Action_Checklist": st.column_config.TextColumn("Checklist", help=HELP_TEXT["explainability"]),
-                "Final_Action": st.column_config.TextColumn("Final Action", help=HELP_TEXT["final_action"]),
-                "Decision_Confidence": st.column_config.TextColumn("Confidence", help=HELP_TEXT["final_action"]),
-                "Decision_Blockers": st.column_config.TextColumn("Blockers", help=HELP_TEXT["final_action"]),
-                "Next_Step": st.column_config.TextColumn("Next Step", help=HELP_TEXT["final_action"]),
+                "Final_Action": st.column_config.TextColumn("Aksi Akhir", help=HELP_TEXT["final_action"]),
+                "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help=HELP_TEXT["final_action"]),
+                "Decision_Blockers": st.column_config.TextColumn("Penghambat", help=HELP_TEXT["final_action"]),
+                "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help=HELP_TEXT["final_action"]),
                 "Market_Regime": st.column_config.TextColumn("Market Regime", help="Konteks IHSG saat ini. Tidak mengubah Score, tetapi menambah checklist risiko."),
                 "Market_Breadth": st.column_config.TextColumn("Market Breadth", help="Kesehatan pasar dari persentase saham di atas MA50/MA200 pada sample breadth."),
                 "Valuation_Score": st.column_config.NumberColumn("Valuasi", format="%.1f", help=HELP_TEXT["valuation"]),
@@ -4348,9 +4352,9 @@ with tab_reco:
                 "Return_26W": st.column_config.NumberColumn("26W", format="%.1f%%", help=HELP_TEXT["return"]),
                 "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
                 "Return_YTD": st.column_config.NumberColumn("YTD", format="%.1f%%", help=HELP_TEXT["return"]),
-                "Recommendation": st.column_config.TextColumn("Recommendation", help=HELP_TEXT["recommendation"]),
+                "Recommendation": st.column_config.TextColumn("Rekomendasi", help=HELP_TEXT["recommendation"]),
                 "Safety_Recommendation": st.column_config.TextColumn("Data Check", help="Ringkasan Clean_Data dan Score. Label Bersih berarti lolos filter data minimum, bukan jaminan aman investasi."),
-                "Risk_Level": st.column_config.TextColumn("Risk Level", help=HELP_TEXT["risk_level"]),
+                "Risk_Level": st.column_config.TextColumn("Level Risiko", help=HELP_TEXT["risk_level"]),
                 "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
                 "Safety_Notes": st.column_config.TextColumn("Catatan Data", help="Alasan saham perlu direview jika belum lolos Clean_Data."),
             },
@@ -4363,6 +4367,220 @@ with tab_reco:
             file_name="rekomendasi_saham_multi_factor.csv",
             mime="text/csv",
         )
+
+        with st.expander("Kalibrasi aksi akhir", expanded=False):
+            st.caption(
+                "Panel ini membantu mengecek apakah Aksi Akhir terlalu ketat atau terlalu longgar dibanding label rekomendasi. "
+                "Gunakan untuk audit metodologi, bukan untuk mengubah data secara manual."
+            )
+            calibration_cols = st.columns([1, 1])
+            with calibration_cols[0]:
+                calibration = pd.crosstab(reco_view["Recommendation"], reco_view["Final_Action"])
+                if calibration.empty:
+                    st.info("Kalibrasi belum tersedia untuk hasil filter ini.")
+                else:
+                    show_table(calibration, height=260)
+            with calibration_cols[1]:
+                blocker_text = reco_view.get("Decision_Blockers", pd.Series("", index=reco_view.index)).fillna("").astype(str)
+                blocker_items = []
+                for value in blocker_text:
+                    blocker_items.extend([item.strip() for item in value.split(",") if item.strip() and item.strip().lower() != "none"])
+                if blocker_items:
+                    blocker_counts = pd.Series(blocker_items).value_counts().reset_index()
+                    blocker_counts.columns = ["Penghambat", "Jumlah"]
+                    fig = px.bar(
+                        blocker_counts.head(8),
+                        x="Jumlah",
+                        y="Penghambat",
+                        orientation="h",
+                        title="Penghambat paling sering",
+                        color_discrete_sequence=["#475569"],
+                    )
+                    fig.update_layout(height=300, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                    show_chart(fig)
+                else:
+                    st.info("Tidak ada penghambat dominan pada hasil filter ini.")
+
+with tab_portfolio:
+    st.subheader("Perencana portofolio")
+    st.caption(
+        "Simulasi ini memakai hasil filter saat ini untuk membaca konsentrasi, risiko, final action mix, dan estimasi lot. "
+        "Belum memperhitungkan fee, slippage, fraksi lot tidak bulat, atau kebutuhan pribadi."
+    )
+
+    portfolio_source = filtered.copy()
+    if portfolio_source.empty:
+        st.warning("Tidak ada saham yang sesuai filter. Longgarkan filter sidebar untuk membuat simulasi portofolio.")
+    else:
+        preferred_actions = ["Accumulate Candidate", "Wait Market Confirmation", "Watchlist"]
+        candidate_source = portfolio_source[portfolio_source["Final_Action"].isin(preferred_actions)].copy()
+        if candidate_source.empty:
+            candidate_source = portfolio_source.copy()
+        candidate_source["_Action_Rank"] = candidate_source["Final_Action"].map(
+            {
+                "Accumulate Candidate": 0,
+                "Wait Market Confirmation": 1,
+                "Watchlist": 2,
+                "Speculative Monitor": 3,
+                "Avoid / Review": 4,
+            }
+        ).fillna(5)
+        candidate_source["_Confidence_Rank"] = candidate_source["Decision_Confidence"].map({"High": 0, "Medium": 1, "Low": 2}).fillna(3)
+        candidate_source = candidate_source.sort_values(
+            ["_Action_Rank", "_Confidence_Rank", "Score", "Sector_Relative_Score", "Liquidity_Score"],
+            ascending=[True, True, False, False, False],
+            na_position="last",
+        )
+        candidate_codes = candidate_source["Kode"].dropna().astype(str).str.upper().drop_duplicates().head(40).tolist()
+        default_codes = candidate_codes[: min(8, len(candidate_codes))]
+
+        port_controls = st.columns([1.2, 1, 1, 1])
+        with port_controls[0]:
+            selected_portfolio_codes = st.multiselect(
+                "Saham portofolio",
+                candidate_codes,
+                default=default_codes,
+                help=HELP_TEXT["portfolio"],
+            )
+        with port_controls[1]:
+            portfolio_budget = st.number_input(
+                "Modal simulasi",
+                min_value=1_000_000,
+                max_value=10_000_000_000,
+                value=100_000_000,
+                step=5_000_000,
+                format="%d",
+                help=HELP_TEXT["portfolio"],
+            )
+        with port_controls[2]:
+            allocation_method = st.selectbox(
+                "Metode alokasi",
+                ["Score-weighted", "Equal weight", "Aksi akhir"],
+                help=HELP_TEXT["portfolio"],
+            )
+        with port_controls[3]:
+            max_position_pct = st.slider("Batas per saham (%)", 5, 40, 15, step=1, help=HELP_TEXT["portfolio"])
+
+        max_sector_pct = st.slider("Batas konsentrasi sektor (%)", 20, 80, 35, step=5, help=HELP_TEXT["portfolio"])
+
+        portfolio_view = portfolio_source[portfolio_source["Kode"].isin(selected_portfolio_codes)].copy()
+        portfolio_view["Penutupan"] = pd.to_numeric(portfolio_view.get("Penutupan"), errors="coerce")
+        portfolio_view = portfolio_view[portfolio_view["Penutupan"] > 0].copy()
+        if portfolio_view.empty:
+            st.info("Pilih saham dengan harga valid untuk menghitung estimasi lot.")
+        else:
+            score_weight = pd.to_numeric(portfolio_view.get("Score"), errors="coerce").fillna(0).clip(lower=1)
+            action_weight = portfolio_view.get("Final_Action", pd.Series("", index=portfolio_view.index)).map(
+                {
+                    "Accumulate Candidate": 1.25,
+                    "Wait Market Confirmation": 1.0,
+                    "Watchlist": 0.8,
+                    "Speculative Monitor": 0.45,
+                    "Avoid / Review": 0.2,
+                }
+            ).fillna(0.5)
+            if allocation_method == "Equal weight":
+                base_weight = pd.Series(1.0, index=portfolio_view.index)
+            elif allocation_method == "Aksi akhir":
+                base_weight = action_weight
+            else:
+                base_weight = score_weight * action_weight
+            base_weight = base_weight / base_weight.sum()
+            capped_weight = base_weight.clip(upper=max_position_pct / 100)
+
+            portfolio_view["Target_Weight_%"] = capped_weight * 100
+            portfolio_view["Target_Value"] = capped_weight * portfolio_budget
+            portfolio_view["Lot_Est"] = np.floor(portfolio_view["Target_Value"] / (portfolio_view["Penutupan"] * 100)).clip(lower=0)
+            portfolio_view["Actual_Value"] = portfolio_view["Lot_Est"] * portfolio_view["Penutupan"] * 100
+            portfolio_view["Actual_Weight_%"] = np.where(portfolio_budget > 0, portfolio_view["Actual_Value"] / portfolio_budget * 100, 0)
+
+            invested_value = portfolio_view["Actual_Value"].sum()
+            cash_left = max(portfolio_budget - invested_value, 0)
+            largest_position = portfolio_view["Actual_Weight_%"].max() if not portfolio_view.empty else 0
+            high_risk_count = int(portfolio_view["Risk_Level"].eq("High").sum()) if "Risk_Level" in portfolio_view.columns else 0
+            sector_count = portfolio_view["Sektor"].fillna("Unknown").nunique() if "Sektor" in portfolio_view.columns else 0
+
+            metric_cols = st.columns(5)
+            metric_cols[0].metric("Saham dipilih", f"{portfolio_view['Kode'].nunique():,}")
+            metric_cols[1].metric("Nilai teralokasi", format_large_rupiah(invested_value))
+            metric_cols[2].metric("Sisa kas", format_large_rupiah(cash_left))
+            metric_cols[3].metric("Posisi terbesar", format_percent(largest_position, 1))
+            metric_cols[4].metric("Sektor", f"{sector_count:,}", f"{high_risk_count:,} high risk")
+
+            sector_alloc = portfolio_view.groupby("Sektor", dropna=False)["Actual_Value"].sum().reset_index()
+            sector_alloc["Weight_%"] = np.where(portfolio_budget > 0, sector_alloc["Actual_Value"] / portfolio_budget * 100, 0)
+            over_sector = sector_alloc[sector_alloc["Weight_%"] > max_sector_pct]
+            if not over_sector.empty:
+                st.warning(
+                    "Konsentrasi sektor melewati batas: "
+                    + ", ".join(f"{row['Sektor']} {row['Weight_%']:.1f}%" for _, row in over_sector.iterrows())
+                )
+
+            port_chart_cols = st.columns([1, 1])
+            with port_chart_cols[0]:
+                fig = px.pie(
+                    sector_alloc,
+                    names="Sektor",
+                    values="Actual_Value",
+                    hole=0.45,
+                    title="Alokasi per sektor",
+                    color_discrete_sequence=STOCK_LINE_COLORS,
+                )
+                fig.update_layout(height=360, margin=dict(l=20, r=20, t=60, b=40))
+                show_chart(fig)
+            with port_chart_cols[1]:
+                action_alloc = portfolio_view.groupby("Final_Action", dropna=False)["Actual_Value"].sum().reset_index()
+                fig = px.bar(
+                    action_alloc,
+                    x="Actual_Value",
+                    y="Final_Action",
+                    color="Final_Action",
+                    orientation="h",
+                    title="Alokasi menurut aksi akhir",
+                    color_discrete_map=FINAL_ACTION_COLORS,
+                )
+                fig.update_layout(height=360, xaxis_title="Nilai", yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                show_chart(fig)
+
+            portfolio_columns = [
+                "Kode",
+                "Nama Perusahaan",
+                "Sektor",
+                "Final_Action",
+                "Decision_Confidence",
+                "Recommendation",
+                "Risk_Level",
+                "Score",
+                "Sector_Relative_Score",
+                "Penutupan",
+                "Target_Weight_%",
+                "Target_Value",
+                "Lot_Est",
+                "Actual_Value",
+                "Actual_Weight_%",
+                "Decision_Blockers",
+                "Next_Step",
+            ]
+            show_table(
+                portfolio_view[[column for column in portfolio_columns if column in portfolio_view.columns]].sort_values("Actual_Value", ascending=False),
+                hide_index=True,
+                column_config={
+                    "Final_Action": st.column_config.TextColumn("Aksi Akhir", help=HELP_TEXT["final_action"]),
+                    "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help=HELP_TEXT["final_action"]),
+                    "Recommendation": st.column_config.TextColumn("Rekomendasi", help=HELP_TEXT["recommendation"]),
+                    "Risk_Level": st.column_config.TextColumn("Level Risiko", help=HELP_TEXT["risk_level"]),
+                    "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
+                    "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
+                    "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
+                    "Target_Weight_%": st.column_config.NumberColumn("Target", format="%.1f%%", help=HELP_TEXT["portfolio"]),
+                    "Target_Value": st.column_config.NumberColumn("Target Nilai", format="Rp %.0f", help=HELP_TEXT["portfolio"]),
+                    "Lot_Est": st.column_config.NumberColumn("Lot Est.", format="%.0f", help=HELP_TEXT["portfolio"]),
+                    "Actual_Value": st.column_config.NumberColumn("Nilai Aktual", format="Rp %.0f", help=HELP_TEXT["portfolio"]),
+                    "Actual_Weight_%": st.column_config.NumberColumn("Bobot Aktual", format="%.1f%%", help=HELP_TEXT["portfolio"]),
+                    "Decision_Blockers": st.column_config.TextColumn("Penghambat", help=HELP_TEXT["final_action"]),
+                    "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help=HELP_TEXT["final_action"]),
+                },
+            )
 
 with tab_backtest:
     st.subheader("Backtest sinyal")
