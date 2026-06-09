@@ -112,6 +112,8 @@ ini untuk menghitung probabilitas statistik.
 
 - Output: `Prediction_Bias`, `Probability_Up_20D/60D`, `Expected_Return`, `Downside_Risk`, `Model_Confidence`, dan sample historis.
 - Similarity memakai `Technical_Signal`, `Fibo_Zone`, `Technical_Score`, `RSI`, dan jarak harga ke level Fibonacci.
+- Periode prediksi memakai opsi yang sama dengan Histori/Harga & Teknikal: 1 minggu, 2 minggu, 1/3/6 bulan, 1/2/5/10 tahun, dan all/sepanjang masa.
+- Default 2 tahun dipakai sebagai titik seimbang; periode pendek lebih cepat tetapi sering minim sample, sedangkan 5-10 tahun/All lebih kaya sample tetapi bisa mencampur rezim pasar lama.
 - Ini baseline probabilistik berbasis histori, bukan prediksi harga pasti dan belum memakai model ML berat seperti LightGBM.
 - Gunakan bersama fundamental, market regime, backtest, dan trade plan.
 

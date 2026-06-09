@@ -25,7 +25,6 @@ TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/indonesia/scan"
 STOCKANALYSIS_IDX_URL = "https://stockanalysis.com/list/indonesia-stock-exchange/"
 ONLINE_LOAD_PERIOD = "1y"
 ONLINE_REFRESH_TTL = 6 * 60 * 60
-APP_BUILD = os.environ.get("STREAMLIT_GIT_COMMIT", "technical-visible-ui")
 ONLINE_PERIOD_OPTIONS = ["5d", "2wk", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"]
 ONLINE_PERIOD_LABELS = {
     "5d": "1 minggu",
@@ -191,7 +190,7 @@ HELP_TEXT = {
     "history_scope": "Saham pilihan memakai kode yang dipilih manual. All/top N memakai saham teratas dari hasil filter saat ini, biasanya berdasarkan ranking Score setelah filter.",
     "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
     "history_codes": "Masukkan kode IDX tanpa akhiran .JK, misalnya BBCA atau BBRI. Dashboard otomatis memanggil format online BBCA.JK.",
-    "history_period": "Rentang data online: 1 minggu, 2 minggu untuk short swing, 1/3/6 bulan, 1/2/5/10 tahun, atau All sepanjang data tersedia dari sumber.",
+    "history_period": "Rentang data online yang dipakai bersama oleh Histori, Teknikal, dan Prediksi. 1-2 minggu cocok untuk monitoring cepat; 1-6 bulan untuk swing; 1-2 tahun untuk MA200/52W; 5-10 tahun/All untuk sample historis lebih kaya tetapi lebih lambat.",
     "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
     "final_action": "Final_Action menggabungkan Score, Recommendation, Clean_Data, Risk_Level, Threshold, relatif sektor, momentum, dan market regime menjadi playbook keputusan yang lebih praktis.",
     "portfolio": "Portofolio memakai saham pilihan dari hasil filter untuk membaca konsentrasi sektor, campuran risiko, aksi akhir, dan estimasi alokasi. Ini alat perencanaan, bukan order otomatis.",
@@ -222,7 +221,7 @@ HELP_TEXT = {
     "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih lebih panjang untuk analisis historis, lebih pendek untuk refresh cepat.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
-    "technical_period": "Rentang OHLCV online, sama seperti bagian histori pada tab Harga & Teknikal. Periode pendek cocok untuk RSI/MACD cepat; minimal 1-2 tahun disarankan agar MA200 dan 52W lebih stabil.",
+    "technical_period": "Rentang OHLCV online yang sama dengan Histori. Periode pendek cocok untuk RSI/MACD cepat; minimal 1-2 tahun disarankan agar MA200, 52W, ATR, dan level Fibonacci lebih stabil.",
     "technical_code": "Pilih satu kode saham untuk candlestick dan indikator detail. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif. Kosongkan pilihan untuk menampilkan semua sinyal.",
@@ -233,12 +232,12 @@ HELP_TEXT = {
     "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
     "position_sizing": "Position sizing menghitung estimasi lot dari modal, risiko per transaksi, harga terakhir, dan ATR stop. Ini alat perencanaan risiko, bukan instruksi order.",
     "fibonacci": "Fibonacci confluence membaca support/resistance dari swing high-low pada periode teknikal. Ini layer konfirmasi area harga, bukan prediksi pasti.",
-    "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. Periode lebih panjang memberi lebih banyak event, tetapi lebih lambat.",
+    "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. 6 bulan cocok untuk cek cepat, 1-2 tahun untuk kondisi terkini, 5-10 tahun untuk sample event lebih besar tetapi lebih lambat.",
     "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan simulasi broker penuh.",
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
     "backtest_horizon": "Horizon forward return setelah sinyal muncul. Contoh 20D berarti return 20 hari bursa setelah event.",
     "walk_forward": "Walk-forward membagi event historis secara berurutan: bagian awal sebagai in-sample dan bagian berikutnya sebagai out-of-sample. Ini membantu membaca robustness dan risiko overfitting.",
-    "prediction": "Prediction layer memakai setup historis yang mirip dengan kondisi teknikal saat ini untuk menghitung probabilitas naik, expected return, downside risk, dan confidence. Ini bukan prediksi harga pasti.",
+    "prediction": "Prediksi memakai periode yang sama dengan Histori/Harga & Teknikal. Periode pendek cepat tetapi sering kekurangan sample; default 2 tahun lebih seimbang; 5-10 tahun/All memberi sample lebih banyak tetapi bisa mencampur rezim lama. Output adalah probabilitas historis setup mirip, bukan prediksi harga pasti.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -3568,7 +3567,6 @@ st.title("Dashboard Rekomendasi Saham IDX")
 st.caption(
     f"Data online-first, update {data_update_label}. Universe kode diprioritaskan dari BEI/IDX; yfinance mengisi harga/histori; TradingView scanner mengisi fundamental online; {DATA_FILE} menjadi fallback dan acuan metodologi. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
 )
-st.caption(f"Build UI: `{APP_BUILD}`. Histori dan teknikal digabung di tab **Harga & Teknikal**.")
 if raw_df.attrs.get("universe_error"):
     st.warning(f"Daftar kode online memakai fallback. Detail: {raw_df.attrs.get('universe_error')}")
 if raw_df.attrs.get("market_error"):
@@ -3653,6 +3651,13 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Profil scoring** mengubah bobot Score, misalnya lebih condong ke valuasi, kualitas, risiko, likuiditas, atau momentum.
         - **Preset filter** mengubah batas minimum/maksimum yang dipakai untuk menyaring hasil. Preset `Konservatif Aman` tidak mengubah bobot Score.
         - Kombinasi yang rapi: pilih profil `Defensive` bila ingin bobot lebih hati-hati, lalu pilih preset filter `Konservatif Aman` bila ingin hasil yang lolos data dan rasio lebih ketat.
+
+        **Memilih periode data**
+        - **1-2 minggu**: monitoring cepat dan validasi harga terbaru; terlalu pendek untuk prediksi statistik yang stabil.
+        - **1-6 bulan**: membaca swing/momentum menengah; cocok untuk observasi, tetapi sample backtest/prediksi masih terbatas.
+        - **1-2 tahun**: pilihan seimbang untuk MA200, 52W, ATR, Fibonacci, dan prediksi berbasis setup mirip.
+        - **5-10 tahun / All**: sample historis lebih banyak untuk backtest/prediksi, tetapi bisa mencampur rezim pasar lama dan proses lebih lambat.
+        - Prediksi memakai opsi periode yang sama dengan Histori agar sumber OHLCV konsisten. Bila hasil prediksi kosong, pilih periode lebih panjang atau kurangi jumlah kode.
 
         Gunakan hasil ini sebagai screener awal. Keputusan investasi tetap perlu cek berita, laporan keuangan, aksi korporasi, dan diversifikasi portofolio.
 
@@ -4821,8 +4826,8 @@ with tab_predict:
         with prediction_controls[0]:
             prediction_period = st.selectbox(
                 "Periode histori prediksi",
-                ["1y", "2y", "5y", "10y"],
-                index=2,
+                ONLINE_PERIOD_OPTIONS,
+                index=ONLINE_PERIOD_OPTIONS.index("2y"),
                 format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
                 help=HELP_TEXT["prediction"],
             )
@@ -4860,6 +4865,10 @@ with tab_predict:
         st.caption(
             f"Kode prediksi: {', '.join(selected_prediction_codes[:12])}"
             + (" ..." if len(selected_prediction_codes) > 12 else "")
+        )
+        st.caption(
+            "Panduan periode: 1-2 minggu/1 bulan cepat tetapi sering terlalu sedikit sample; "
+            "1-2 tahun seimbang; 5-10 tahun/All memberi sample lebih besar tetapi lebih lambat dan bisa mencampur rezim lama."
         )
 
         if run_prediction:
