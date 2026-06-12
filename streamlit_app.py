@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 DATA_FILE = "Ringkasan.xlsx"
 HISTORY_CACHE_DIR = Path("history_cache")
 YFINANCE_CACHE_DIR = HISTORY_CACHE_DIR / ".yfinance"
+DATA_CACHE_DIR = Path("data_cache")
 BLOCKING_PROXY_VALUES = {"http://127.0.0.1:9", "https://127.0.0.1:9", "127.0.0.1:9"}
 IDX_COMPANY_PROFILE_URLS = [
     "https://www.idx.co.id/primary/ListedCompany/GetCompanyProfiles?emitenType=s",
@@ -25,6 +26,10 @@ TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/indonesia/scan"
 STOCKANALYSIS_IDX_URL = "https://stockanalysis.com/list/indonesia-stock-exchange/"
 ONLINE_LOAD_PERIOD = "1y"
 ONLINE_REFRESH_TTL = 6 * 60 * 60
+MARKET_SNAPSHOT_FILE = DATA_CACHE_DIR / f"market_snapshot_{ONLINE_LOAD_PERIOD}.csv"
+FUNDAMENTAL_SNAPSHOT_FILE = DATA_CACHE_DIR / "fundamental_snapshot.csv"
+LIVE_ON_START = os.environ.get("SAHAM_LIVE_ON_START", "0").strip().lower() in {"1", "true", "yes", "on"}
+FUNDAMENTAL_LIVE_ON_START = os.environ.get("SAHAM_FUNDAMENTAL_LIVE_ON_START", "0").strip().lower() in {"1", "true", "yes", "on"}
 ONLINE_PERIOD_OPTIONS = ["5d", "2wk", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"]
 ONLINE_PERIOD_LABELS = {
     "5d": "1 minggu",
@@ -516,7 +521,7 @@ def safe_slider(label, min_value, max_value, value, *, step=None, help=None, for
 def has_online_market(data):
     if "Price_Source" not in data.columns:
         return pd.Series(False, index=data.index)
-    return data["Price_Source"].astype(str).str.contains("yfinance|pandas-datareader|cache", case=False, na=False)
+    return data["Price_Source"].astype(str).str.contains("yfinance|pandas-datareader|cache|snapshot", case=False, na=False)
 
 
 def chart_market_frame(data, label="grafik"):
@@ -607,6 +612,45 @@ def get_file_status(path):
         "Ukuran": f"{stat.st_size / 1024 / 1024:.2f} MB",
         "Last Modified": modified,
     }
+
+
+def get_excel_sheet_code_counts():
+    rows = []
+    try:
+        xls = pd.ExcelFile(DATA_FILE)
+    except Exception as exc:
+        return pd.DataFrame([{"Sheet": DATA_FILE, "Rows": 0, "Code Column": "-", "Unique Codes": 0, "Catatan": f"Tidak terbaca: {exc}"}])
+    for sheet_name in xls.sheet_names:
+        try:
+            sheet = pd.read_excel(xls, sheet_name=sheet_name)
+        except Exception as exc:
+            rows.append({"Sheet": sheet_name, "Rows": 0, "Code Column": "-", "Unique Codes": 0, "Catatan": f"Tidak terbaca: {exc}"})
+            continue
+        code_column = next(
+            (
+                column
+                for column in sheet.columns
+                if str(column).strip().lower() in ["kode", "kode saham", "code", "symbol", "ticker"]
+            ),
+            None,
+        )
+        if code_column:
+            codes = sheet[code_column].astype(str).str.upper().str.extract(r"([A-Z0-9]{3,5})")[0].dropna()
+            unique_codes = int(codes.nunique())
+            note = "Dipakai sebagai kode saham" if sheet_name in ["Ringkasan", "Draft", "Metrik"] else "Sheet pendukung"
+        else:
+            unique_codes = 0
+            note = "Tidak ada kolom kode yang dikenali"
+        rows.append(
+            {
+                "Sheet": sheet_name,
+                "Rows": int(len(sheet)),
+                "Code Column": code_column or "-",
+                "Unique Codes": unique_codes,
+                "Catatan": note,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def get_data_update_label(raw, file_status):
@@ -770,8 +814,62 @@ def load_tradingview_universe():
     return normalize_universe_frame(pd.DataFrame(rows), "TradingView online")
 
 
-@st.cache_data(ttl=ONLINE_REFRESH_TTL, show_spinner=False)
-def load_online_fundamentals():
+FUNDAMENTAL_SNAPSHOT_COLUMNS = [
+    "Kode",
+    "Nama_Perusahaan_Online",
+    "Sektor_Online",
+    "Industry_Online",
+    "Market_Cap_Online",
+    "Revenue_Online",
+    "PER_Online",
+    "PBV_Online",
+    "ROE_Online",
+    "ROA_Online",
+    "DER_Online",
+    "NPM_Online",
+    "Fundamental_Source",
+]
+
+
+def read_fundamental_snapshot():
+    if not FUNDAMENTAL_SNAPSHOT_FILE.exists():
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["fundamental_source"] = "snapshot-missing"
+        output.attrs["fundamental_error"] = f"Snapshot fundamental belum ada: {FUNDAMENTAL_SNAPSHOT_FILE}"
+        return output
+    try:
+        snapshot = pd.read_csv(FUNDAMENTAL_SNAPSHOT_FILE)
+    except Exception as exc:
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["fundamental_source"] = "snapshot-error"
+        output.attrs["fundamental_error"] = f"Snapshot fundamental tidak terbaca: {exc}"
+        return output
+    if "Kode" not in snapshot.columns:
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["fundamental_source"] = "snapshot-error"
+        output.attrs["fundamental_error"] = "Snapshot fundamental tidak memiliki kolom Kode."
+        return output
+    snapshot["Kode"] = snapshot["Kode"].astype(str).str.strip().str.upper()
+    for column in ["Market_Cap_Online", "Revenue_Online", "PER_Online", "PBV_Online", "ROE_Online", "ROA_Online", "DER_Online", "NPM_Online"]:
+        if column in snapshot.columns:
+            snapshot[column] = pd.to_numeric(snapshot[column], errors="coerce")
+    snapshot["Fundamental_Source"] = "repo snapshot"
+    snapshot.attrs["fundamental_source"] = "repo snapshot"
+    snapshot.attrs["fundamental_error"] = None
+    return snapshot
+
+
+def write_fundamental_snapshot(fundamental_frame):
+    if fundamental_frame.empty:
+        return None
+    DATA_CACHE_DIR.mkdir(exist_ok=True)
+    output = fundamental_frame[[column for column in FUNDAMENTAL_SNAPSHOT_COLUMNS if column in fundamental_frame.columns]].copy()
+    output["Snapshot_Updated_At"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    output.to_csv(FUNDAMENTAL_SNAPSHOT_FILE, index=False)
+    return FUNDAMENTAL_SNAPSHOT_FILE
+
+
+def fetch_online_fundamentals():
     payload = {
         "columns": TRADINGVIEW_FUNDAMENTAL_COLUMNS,
         "filter": [{"left": "exchange", "operation": "equal", "right": "IDX"}],
@@ -820,7 +918,28 @@ def load_online_fundamentals():
             output[column] = pd.to_numeric(output[column], errors="coerce")
     output.attrs["fundamental_source"] = "TradingView scanner" if not output.empty else "empty"
     output.attrs["fundamental_error"] = None if not output.empty else "TradingView scanner tidak mengembalikan data fundamental."
+    if not output.empty:
+        write_fundamental_snapshot(output)
     return output
+
+
+@st.cache_data(ttl=ONLINE_REFRESH_TTL, show_spinner=False)
+def load_online_fundamentals():
+    if FUNDAMENTAL_LIVE_ON_START:
+        return fetch_online_fundamentals()
+
+    snapshot = read_fundamental_snapshot()
+    if not snapshot.empty:
+        return snapshot
+
+    online = fetch_online_fundamentals()
+    if not online.empty:
+        return online
+
+    snapshot_error = snapshot.attrs.get("fundamental_error")
+    online_error = online.attrs.get("fundamental_error")
+    online.attrs["fundamental_error"] = "; ".join([text for text in [snapshot_error, online_error] if text])
+    return online
 
 
 def load_official_idx_universe():
@@ -2486,12 +2605,11 @@ def calculate_ytd_return(group):
     return (latest_close / start_close - 1) * 100
 
 
-def build_online_market_frame(codes, period=ONLINE_LOAD_PERIOD):
-    history, error, source = fetch_yahoo_history(codes, period=period)
+def build_market_frame_from_history(history, source="cache"):
     if history.empty:
         output = pd.DataFrame(columns=["Kode"])
         output.attrs["market_source"] = source
-        output.attrs["market_error"] = error
+        output.attrs["market_error"] = "Histori pasar kosong."
         return output
 
     history = normalize_history_frame(history)
@@ -2527,7 +2645,107 @@ def build_online_market_frame(codes, period=ONLINE_LOAD_PERIOD):
 
     output = pd.DataFrame(rows)
     output.attrs["market_source"] = source
+    output.attrs["market_error"] = None
+    return output
+
+
+def read_market_snapshot(period=ONLINE_LOAD_PERIOD):
+    snapshot_file = DATA_CACHE_DIR / f"market_snapshot_{period}.csv"
+    if not snapshot_file.exists():
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["market_source"] = "snapshot-missing"
+        output.attrs["market_error"] = f"Snapshot pasar belum ada: {snapshot_file}"
+        return output
+    try:
+        snapshot = pd.read_csv(snapshot_file)
+    except Exception as exc:
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["market_source"] = "snapshot-error"
+        output.attrs["market_error"] = f"Snapshot pasar tidak terbaca: {exc}"
+        return output
+    if "Kode" not in snapshot.columns:
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["market_source"] = "snapshot-error"
+        output.attrs["market_error"] = "Snapshot pasar tidak memiliki kolom Kode."
+        return output
+    snapshot["Kode"] = snapshot["Kode"].astype(str).str.strip().str.upper()
+    for column in ["Penutupan", "Sebelumnya", "%Change", "Open", "High", "Low", "Volume", "Close_Online", "Volume_Online_Latest", "Return_4W", "Return_13W", "Return_26W", "Return_52W", "Return_YTD"]:
+        if column in snapshot.columns:
+            snapshot[column] = pd.to_numeric(snapshot[column], errors="coerce")
+    if "Online_Last_Date" in snapshot.columns:
+        snapshot["Online_Last_Date"] = pd.to_datetime(snapshot["Online_Last_Date"], errors="coerce")
+    snapshot["Price_Source"] = "repo snapshot"
+    snapshot["Volume_Source"] = "repo snapshot"
+    snapshot.attrs["market_source"] = "repo snapshot"
+    snapshot.attrs["market_error"] = None
+    return snapshot
+
+
+def write_market_snapshot(market_frame, period=ONLINE_LOAD_PERIOD):
+    if market_frame.empty:
+        return None
+    DATA_CACHE_DIR.mkdir(exist_ok=True)
+    snapshot_file = DATA_CACHE_DIR / f"market_snapshot_{period}.csv"
+    snapshot_columns = [
+        "Kode",
+        "Penutupan",
+        "Sebelumnya",
+        "%Change",
+        "Open",
+        "High",
+        "Low",
+        "Volume",
+        "Online_Last_Date",
+        "Close_Online",
+        "Volume_Online_Latest",
+        "Return_4W",
+        "Return_13W",
+        "Return_26W",
+        "Return_52W",
+        "Return_YTD",
+        "Price_Source",
+        "Volume_Source",
+    ]
+    output = market_frame[[column for column in snapshot_columns if column in market_frame.columns]].copy()
+    output["Snapshot_Updated_At"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    output.to_csv(snapshot_file, index=False)
+    return snapshot_file
+
+
+def build_market_snapshot_from_history_cache(period=ONLINE_LOAD_PERIOD):
+    if not HISTORY_CACHE_DIR.exists():
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["market_source"] = "history-cache-missing"
+        output.attrs["market_error"] = "Folder history_cache belum ada."
+        return output
+    frames = []
+    for cache_file in HISTORY_CACHE_DIR.glob(f"*_{period}.csv"):
+        try:
+            cached = pd.read_csv(cache_file)
+        except Exception:
+            continue
+        if "Kode" not in cached.columns:
+            parts = cache_file.stem.rsplit("_", 1)
+            cached["Kode"] = parts[0] if parts else cache_file.stem
+        frames.append(cached)
+    if not frames:
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["market_source"] = "history-cache-empty"
+        output.attrs["market_error"] = f"Tidak ada cache histori period {period}."
+        return output
+    history = pd.concat(frames, ignore_index=True)
+    output = build_market_frame_from_history(history, source="history cache snapshot")
+    output.attrs["market_error"] = None
+    return output
+
+
+def build_online_market_frame(codes, period=ONLINE_LOAD_PERIOD):
+    history, error, source = fetch_yahoo_history(codes, period=period)
+    output = build_market_frame_from_history(history, source=source)
+    output.attrs["market_source"] = source
     output.attrs["market_error"] = error
+    if not output.empty:
+        write_market_snapshot(output, period=period)
     return output
 
 
@@ -3161,9 +3379,24 @@ def load_data():
     else:
         universe = merge_universe_with_excel_fallback(universe, excel_summary)
 
-    online_market = build_online_market_frame(universe["Kode"].tolist(), period=ONLINE_LOAD_PERIOD)
+    snapshot_error = None
+    if LIVE_ON_START:
+        online_market = build_online_market_frame(universe["Kode"].tolist(), period=ONLINE_LOAD_PERIOD)
+    else:
+        online_market = read_market_snapshot(period=ONLINE_LOAD_PERIOD)
+        snapshot_error = online_market.attrs.get("market_error")
+        if online_market.empty:
+            online_market = build_market_snapshot_from_history_cache(period=ONLINE_LOAD_PERIOD)
+            if not online_market.empty:
+                write_market_snapshot(online_market, period=ONLINE_LOAD_PERIOD)
+                snapshot_error = None
+            else:
+                snapshot_error = "; ".join([text for text in [snapshot_error, online_market.attrs.get("market_error")] if text])
+                online_market = build_online_market_frame(universe["Kode"].tolist(), period=ONLINE_LOAD_PERIOD)
     market_source = online_market.attrs.get("market_source", "empty")
     market_error = online_market.attrs.get("market_error")
+    if snapshot_error and market_source not in ["yfinance", "pandas-datareader"]:
+        market_error = snapshot_error
     online_fundamentals = load_online_fundamentals()
     fundamental_source = online_fundamentals.attrs.get("fundamental_source", "empty")
     fundamental_error = online_fundamentals.attrs.get("fundamental_error")
@@ -3328,7 +3561,8 @@ def load_data():
     df["Volume_Source"] = df.get("Volume_Source", pd.Series(index=df.index)).fillna("Excel fallback")
     df["Fundamental_Source"] = df.get("Fundamental_Source", pd.Series(index=df.index)).fillna("Excel fallback")
     df["Data_Source"] = np.where(
-        df["Price_Source"].isin(["yfinance", "pandas-datareader", "cache"]) | df["Fundamental_Source"].eq("TradingView scanner"),
+        df["Price_Source"].isin(["yfinance", "pandas-datareader", "cache", "repo snapshot", "history cache snapshot"])
+        | df["Fundamental_Source"].isin(["TradingView scanner", "repo snapshot"]),
         "Online-first mixed",
         "Excel fallback",
     )
@@ -3663,8 +3897,10 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
 
         **Prioritas sumber data**
         1. BEI/IDX resmi untuk universe kode saham dan metadata listing.
-        2. Sumber online pelengkap: yfinance untuk harga/histori dan TradingView scanner untuk fundamental massal.
-        3. Excel dipakai terakhir sebagai fallback, audit pembanding, dan acuan ide algoritme sampai seluruh kolom penting punya sumber online yang stabil.
+        2. Snapshot repo `data_cache/market_snapshot_1y.csv` untuk harga/volume/return startup agar dashboard tidak lag saat jam bursa.
+        3. Snapshot fundamental `data_cache/fundamental_snapshot.csv` untuk rasio massal agar startup tidak selalu menunggu request online.
+        4. Sumber online pelengkap: yfinance untuk refresh harga/histori dan TradingView scanner untuk fundamental massal.
+        5. Excel dipakai terakhir sebagai fallback, audit pembanding, dan acuan ide algoritme sampai seluruh kolom penting punya sumber online yang stabil.
 
         **Makna warna**
         - Hijau: kondisi lebih kuat atau risiko rendah.
@@ -3748,6 +3984,10 @@ with st.sidebar:
         file_status = data_file_status
         st.caption(f"Sumber aktif: {data_update_label}")
         st.caption(f"Excel fallback: {file_status['Status']} | Modified: {file_status['Last Modified']} | Size: {file_status['Ukuran']}")
+        snapshot_status = get_file_status(MARKET_SNAPSHOT_FILE)
+        st.caption(f"Snapshot pasar repo: {snapshot_status['Status']} | Modified: {snapshot_status['Last Modified']} | Size: {snapshot_status['Ukuran']}")
+        fundamental_snapshot_status = get_file_status(FUNDAMENTAL_SNAPSHOT_FILE)
+        st.caption(f"Snapshot fundamental repo: {fundamental_snapshot_status['Status']} | Modified: {fundamental_snapshot_status['Last Modified']} | Size: {fundamental_snapshot_status['Ukuran']}")
         cache_status_sidebar = get_history_cache_status()
         st.caption(f"Cache histori: {len(cache_status_sidebar):,} file di `{HISTORY_CACHE_DIR}`")
         refresh_period = st.selectbox(
@@ -3767,6 +4007,21 @@ with st.sidebar:
                 st.error(refresh_error)
             else:
                 st.success(f"Cache diperbarui dari {refresh_source}: {len(refreshed_history):,} baris histori.")
+        if st.button("Bangun snapshot pasar dari cache"):
+            snapshot_frame = build_market_snapshot_from_history_cache(period=ONLINE_LOAD_PERIOD)
+            if snapshot_frame.empty:
+                st.error(snapshot_frame.attrs.get("market_error", "Snapshot pasar gagal dibuat."))
+            else:
+                snapshot_file = write_market_snapshot(snapshot_frame, period=ONLINE_LOAD_PERIOD)
+                st.success(f"Snapshot pasar disimpan: {snapshot_file} ({len(snapshot_frame):,} kode). Commit/push file ini agar tersedia di Streamlit Cloud.")
+        if st.button("Refresh snapshot fundamental online"):
+            with st.spinner("Mengambil fundamental massal dari TradingView..."):
+                fundamental_frame = fetch_online_fundamentals()
+            if fundamental_frame.empty:
+                st.error(fundamental_frame.attrs.get("fundamental_error", "Snapshot fundamental gagal dibuat."))
+            else:
+                snapshot_file = write_fundamental_snapshot(fundamental_frame)
+                st.success(f"Snapshot fundamental disimpan: {snapshot_file} ({len(fundamental_frame):,} kode). Commit/push file ini agar tersedia di Streamlit Cloud.")
         if st.button("Clear cache aplikasi"):
             st.cache_data.clear()
             st.success("Cache aplikasi dibersihkan. Dashboard akan dimuat ulang.")
@@ -6090,8 +6345,18 @@ with tab_quality:
     with status_left:
         st.write("Status Excel fallback")
         show_table(pd.DataFrame([get_file_status(DATA_FILE)]), hide_index=True)
+        with st.expander("Jumlah kode per sheet Excel", expanded=False):
+            show_table(
+                get_excel_sheet_code_counts(),
+                hide_index=True,
+                column_config={
+                    "Rows": st.column_config.NumberColumn("Rows", format="%d"),
+                    "Unique Codes": st.column_config.NumberColumn("Kode Unik", format="%d"),
+                },
+            )
     with status_right:
-        st.write("Status cache histori")
+        st.write("Status cache & snapshot")
+        show_table(pd.DataFrame([get_file_status(MARKET_SNAPSHOT_FILE), get_file_status(FUNDAMENTAL_SNAPSHOT_FILE)]), hide_index=True)
         cache_status = get_history_cache_status()
         if cache_status.empty:
             st.info("Belum ada cache histori online.")
@@ -6102,12 +6367,14 @@ with tab_quality:
         st.markdown(
             """
             1. Ambil universe kode dari daftar resmi BEI/IDX sebagai sumber utama.
-        2. Lengkapi harga/histori dari yfinance dan fundamental massal dari TradingView scanner; nilai online valid diprioritaskan di atas Excel.
-        3. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
-            4. Buka `Audit sumber kode saham` dan `Kelengkapan kolom & sumber data` untuk memastikan fallback terlihat jelas.
-            5. Jalankan `Refresh cache histori top saham` di sidebar untuk memperbarui cache online.
-            6. Update `Ringkasan.xlsx` hanya bila ada data offline yang lebih baik atau ide algoritme baru yang perlu diuji.
-            7. Simpan/export hasil rekomendasi hanya setelah check High severity terkendali.
+            2. Pakai snapshot repo `data_cache/market_snapshot_1y.csv` untuk startup cepat saat jam bursa.
+            3. Pakai snapshot fundamental `data_cache/fundamental_snapshot.csv` agar rasio massal tidak selalu fetch live.
+            4. Refresh histori online secara terkontrol, lalu bangun snapshot pasar dari cache agar bisa di-commit ke repository.
+            5. Refresh snapshot fundamental online hanya saat perlu update rasio massal.
+            6. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
+            7. Buka `Audit sumber kode saham`, `Jumlah kode per sheet Excel`, dan `Kelengkapan kolom & sumber data` untuk memastikan fallback terlihat jelas.
+            8. Update `Ringkasan.xlsx` hanya bila ada data offline yang lebih baik atau ide algoritme baru yang perlu diuji.
+            9. Simpan/export hasil rekomendasi hanya setelah check High severity terkendali.
             """
         )
 

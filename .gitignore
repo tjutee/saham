@@ -1,7 +1,7 @@
 # Ignore Python
 __pycache__/
 *.py[cod]
-history_cache/
+history_cache/.yfinance/
 repo_meta/
 *$py.class
 *.so

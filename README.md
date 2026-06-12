@@ -7,6 +7,11 @@ fundamental online dilengkapi dari TradingView scanner. `Ringkasan.xlsx`
 dipakai sebagai fallback, pembanding, dan sumber ide algoritme untuk data yang
 belum stabil tersedia online.
 
+Dashboard memakai pola cache-first untuk mengurangi lag saat jam bursa:
+startup membaca snapshot pasar dari `data_cache/market_snapshot_1y.csv` dan
+snapshot fundamental dari `data_cache/fundamental_snapshot.csv` bila tersedia,
+lalu refresh online dilakukan manual/terkontrol.
+
 ## Fitur
 
 - Universe kode saham online dari endpoint resmi BEI/IDX, dengan fallback TradingView, StockAnalysis, dan Excel.
@@ -20,6 +25,8 @@ belum stabil tersedia online.
 - Market regime dari IHSG `^JKSE`: Risk-On, Neutral, atau Risk-Off berdasarkan MA50/MA200 dan momentum 20D/60D.
 - Market breadth: persentase saham sample yang berada di atas MA50 dan MA200.
 - Data freshness guard untuk melihat tanggal online terakhir, lag data, coverage online, dan fallback Excel.
+- Snapshot pasar repo untuk harga, volume, dan return 1 tahun agar Streamlit Cloud tidak selalu mengambil semua ticker saat cold start.
+- Snapshot fundamental repo untuk rasio massal TradingView agar startup tidak selalu menunggu request online besar.
 - Perencana portofolio untuk membaca alokasi kandidat, konsentrasi sektor, risk mix, final action mix, dan estimasi lot.
 - Filter threshold dari sheet `NonBank` dan `Banking`.
 - Backtest event-based untuk menguji sinyal teknikal historis terhadap return 5/20/60 hari.
@@ -41,6 +48,8 @@ belum stabil tersedia online.
 ```text
 streamlit_app.py      # Aplikasi utama Streamlit
 Ringkasan.xlsx        # Fallback rasio/fundamental dan cadangan data
+data_cache/           # Snapshot pasar ringkas yang boleh di-commit
+history_cache/*.csv   # Cache histori OHLCV yang boleh di-commit bila ingin histori tersedia di cloud
 requirements.txt      # Dependency Python
 README.md             # Dokumentasi singkat
 ```
@@ -72,10 +81,24 @@ kolom yang kosong dari `Ringkasan.xlsx` bila file tersedia.
 
 1. Universe kode saham dan metadata listing: endpoint resmi BEI/IDX.
 2. Cadangan universe: TradingView, StockAnalysis, lalu `Ringkasan.xlsx`.
-3. Harga, volume, OHLC, dan histori: `yfinance`.
-4. Fundamental massal: TradingView scanner bila tersedia.
-5. Cadangan histori: `pandas-datareader`, cache lokal, lalu sheet `Metrik`.
-6. Excel fallback: rasio, metrik bank, market cap, revenue, hierarki industri, kode khusus, dan ide algoritme yang belum punya sumber online stabil.
+3. Snapshot pasar repo: `data_cache/market_snapshot_1y.csv` untuk startup cepat.
+4. Snapshot fundamental repo: `data_cache/fundamental_snapshot.csv` untuk rasio massal.
+5. Cache histori repo: CSV OHLCV di `history_cache/` untuk grafik/histori tanpa fetch ulang.
+6. Refresh harga, volume, OHLC, dan histori: `yfinance`.
+7. Fundamental massal live: TradingView scanner bila perlu refresh.
+8. Cadangan histori: `pandas-datareader`, cache lokal, lalu sheet `Metrik`.
+9. Excel fallback: rasio, metrik bank, market cap, revenue, hierarki industri, kode khusus, dan ide algoritme yang belum punya sumber online stabil.
+
+Catatan realtime: `yfinance`/TradingView adalah sumber online praktis dan bisa
+delayed, bukan feed bursa resmi realtime tick-by-tick. Untuk realtime resmi
+perlu provider data pasar/IDX feed berlisensi. Struktur dashboard ini
+menyiapkan snapshot repo agar tetap cepat dan stabil, lalu refresh live
+dilakukan terkontrol.
+
+Catatan jumlah data Excel: sheet `Ringkasan`/`Draft` bisa berisi 959 kode unik,
+sedangkan sheet `Metrik` dapat berisi 957 baris/kode karena cakupannya berbeda.
+Dashboard menampilkan audit jumlah kode per sheet di tab `Kualitas Data` agar
+perbedaan ini terlihat, bukan disamarkan.
 
 Tab `Kualitas Data` menampilkan audit sumber kode agar perbedaan antara daftar
 resmi BEI/IDX, sumber online pelengkap, dan fallback Excel tetap terlihat,

@@ -11,16 +11,24 @@ Pastikan file berikut ada di repository:
 streamlit_app.py
 requirements.txt
 Ringkasan.xlsx
+data_cache/market_snapshot_1y.csv
+data_cache/fundamental_snapshot.csv
+history_cache/*.csv
 README.md
 .gitignore
 ```
 
 `Ringkasan.xlsx` berfungsi sebagai fallback. Aplikasi mengambil universe kode
 saham dari endpoint resmi BEI/IDX lebih dulu, mengambil harga/histori dari
-online, melengkapi fundamental massal dari TradingView scanner, lalu memakai
-Excel untuk rasio/metrik yang masih kosong, metrik bank, sektor, dan cadangan
-data yang belum tersedia online. Sheet `Metrik` juga dipakai untuk market cap,
-revenue, subsektor, industri, subindustri, dan daftar indeks.
+snapshot repo `data_cache/market_snapshot_1y.csv` agar startup cepat. Cache
+histori `history_cache/*.csv` boleh ikut repository agar grafik histori tidak
+selalu fetch ulang di Streamlit Cloud. Refresh online dari yfinance dilakukan
+manual/terkontrol. Fundamental massal dibaca dari snapshot repo
+`data_cache/fundamental_snapshot.csv` bila tersedia, lalu bisa di-refresh dari
+TradingView scanner. Excel mengisi rasio/metrik yang masih kosong, metrik bank,
+sektor, dan cadangan data yang belum tersedia online. Sheet `Metrik` juga
+dipakai untuk market cap, revenue, subsektor, industri, subindustri, dan daftar
+indeks.
 
 File yang tidak perlu di-upload:
 
@@ -58,11 +66,14 @@ Pastikan koneksi internet Streamlit Cloud aktif dan dependency di
 `requirements.txt` berhasil ter-install. Dashboard akan mencoba:
 
 1. daftar kode saham online dari endpoint resmi BEI/IDX, lalu fallback TradingView/StockAnalysis,
-2. harga/histori dari `yfinance`,
-3. fundamental massal dari TradingView scanner,
-4. fallback `pandas-datareader`,
-5. cache lokal,
-6. `Ringkasan.xlsx` untuk kolom yang masih kosong.
+2. snapshot repo `data_cache/market_snapshot_1y.csv` untuk startup cepat,
+3. snapshot fundamental repo `data_cache/fundamental_snapshot.csv`,
+4. cache histori repo `history_cache/*.csv`,
+5. refresh harga/histori dari `yfinance` bila cache belum tersedia atau dipaksa live,
+6. fundamental massal dari TradingView scanner bila snapshot belum tersedia atau dipaksa live,
+7. fallback `pandas-datareader`,
+8. cache lokal,
+9. `Ringkasan.xlsx` untuk kolom yang masih kosong.
 
 Grafik utama memakai harga/volume yfinance atau cache online lebih dulu. Excel
 hanya menjadi fallback bila online/cache tidak tersedia, atau mode pembanding
@@ -80,6 +91,9 @@ Setelah deploy, lakukan smoke test cepat:
    indikator teknikal tampil.
 5. Cek tab `Kualitas Data` -> `Audit sumber kode saham` dan `Kelengkapan kolom
    & sumber data`.
+6. Cek `Kualitas Data` -> `Jumlah kode per sheet Excel`: `Ringkasan`/`Draft`
+   dapat berisi 959 kode unik, sedangkan `Metrik` dapat berisi 957 karena
+   cakupannya berbeda.
 
 Di tab `Kualitas Data` akan terlihat jumlah kode yang match daftar resmi
 BEI/IDX, kode yang hanya berasal dari fallback, serta kolom fundamental,
@@ -106,3 +120,33 @@ git push origin main
 ```
 
 Streamlit Cloud akan otomatis redeploy setelah push.
+
+## Update Snapshot Pasar
+
+Untuk mengurangi lag saat jam bursa, simpan snapshot pasar ringkas ke repository:
+
+1. Jalankan aplikasi lokal.
+2. Buka sidebar `Workflow Update`.
+3. Jalankan `Refresh cache histori top saham` bila perlu.
+4. Klik `Bangun snapshot pasar dari cache`.
+5. Commit dan push file `data_cache/market_snapshot_1y.csv` dan `data_cache/fundamental_snapshot.csv`.
+
+Jika ingin memaksa aplikasi mengambil data live penuh saat startup, set
+environment variable:
+
+```text
+SAHAM_LIVE_ON_START=1
+```
+
+Untuk memaksa refresh fundamental live saat startup:
+
+```text
+SAHAM_FUNDAMENTAL_LIVE_ON_START=1
+```
+
+Default keduanya `0`, yaitu cache-first agar Streamlit Cloud lebih cepat dan
+stabil.
+
+Catatan realtime: `yfinance`/TradingView adalah sumber online praktis dan dapat
+delayed. Jika membutuhkan feed bursa resmi realtime tick-by-tick, gunakan
+provider data pasar/IDX feed berlisensi dan sambungkan sebagai adapter data baru.
