@@ -202,7 +202,7 @@ HELP_TEXT = {
     "reco_ascending": "Aktifkan untuk mengurutkan dari nilai terendah ke tertinggi pada metrik pilihan. Berguna untuk audit saham lemah atau rasio rendah.",
     "table_columns": "Pilih kolom tabel yang ingin ditampilkan. Ini hanya mengatur tampilan, tidak mengubah data, filter, atau scoring.",
     "explorer_axis": "Pilih rasio atau skor untuk sumbu grafik eksplorasi. Pilihan sumbu hanya mengubah visual scatter, bukan rekomendasi.",
-    "explore_color": "Warna titik menunjukkan dimensi tambahan seperti Score, risiko, rekomendasi, atau sektor agar pola lebih mudah dibaca.",
+    "explore_color": "Warna titik menunjukkan dimensi tambahan seperti Score, risiko, rekomendasi, aksi akhir, atau sektor agar pola lebih mudah dibaca.",
     "explore_size": "Ukuran bubble memakai metrik seperti Volume, Turnover, Score, Liquidity_Score, atau Index_Count. Ini hanya encoding visual.",
     "explore_limit": "Membatasi jumlah titik scatter agar grafik tetap cepat dan mudah dibaca. Data rekomendasi utama tidak dipotong.",
     "histogram": "Pilih sampai tiga metrik untuk melihat distribusi nilai. Berguna untuk mendeteksi outlier dan sebaran rasio.",
@@ -4893,11 +4893,13 @@ with tab_predict:
                 expected_column = f"Expected_Return_{primary_horizon}D_%"
                 downside_column = f"Downside_Risk_{primary_horizon}D_%"
                 sample_column = f"Valid_Sample_{primary_horizon}D"
-                prediction_view = prediction_df.sort_values(
-                    ["Model_Confidence", probability_column, expected_column],
+                prediction_view = prediction_df.copy()
+                prediction_view["_Confidence_Rank"] = prediction_view["Model_Confidence"].map({"High": 0, "Medium": 1, "Low": 2}).fillna(3)
+                prediction_view = prediction_view.sort_values(
+                    ["_Confidence_Rank", probability_column, expected_column],
                     ascending=[True, False, False],
                     na_position="last",
-                )
+                ).drop(columns=["_Confidence_Rank"])
                 st.caption(f"Sumber prediksi: {prediction_source_label}. Similarity memakai Technical Signal, Fibo Zone, Technical Score, RSI, dan jarak Fibo.")
                 pred_cols = st.columns(5)
                 pred_cols[0].metric("Kode diprediksi", f"{prediction_df['Kode'].nunique():,}")
@@ -5009,7 +5011,11 @@ with tab_explore:
     with explore_controls[1]:
         explore_y = st.selectbox("Sumbu Y", ANALYSIS_COLUMNS, index=ANALYSIS_COLUMNS.index("ROE"), help=HELP_TEXT["explorer_axis"])
     with explore_controls[2]:
-        explore_color = st.selectbox("Warna", ["Score", "Quality_Score", "Risk_Score", "Threshold_Pass_Ratio", "Recommendation", "Risk_Level", "Sektor"], help=HELP_TEXT["explore_color"])
+        explore_color = st.selectbox(
+            "Warna",
+            ["Score", "Quality_Score", "Risk_Score", "Threshold_Pass_Ratio", "Recommendation", "Final_Action", "Risk_Level", "Sektor"],
+            help=HELP_TEXT["explore_color"],
+        )
     with explore_controls[3]:
         explore_size = st.selectbox("Ukuran bubble", ["Volume", "Turnover", "Score", "Liquidity_Score", "Index_Count"], help=HELP_TEXT["explore_size"])
 
@@ -5029,7 +5035,7 @@ with tab_explore:
             size=explore_size,
             color=explore_color,
             hover_name="Kode",
-            hover_data=["Nama Perusahaan", "Sektor", "PBV", "DER", "NPM", "Recommendation"],
+            hover_data=["Nama Perusahaan", "Sektor", "PBV", "DER", "NPM", "Recommendation", "Final_Action", "Decision_Confidence"],
             title=f"{explore_x} vs {explore_y}",
             **chart_color_kwargs(explore_color),
         )
