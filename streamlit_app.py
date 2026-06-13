@@ -224,9 +224,9 @@ HELP_TEXT = {
     "der_banking": "Jika aktif, filter DER maksimum juga diterapkan ke saham Banking. Default mati karena struktur neraca bank berbeda dari non-bank.",
     "history_source": "Online yfinance memakai ticker KODE.JK dan menjadi sumber utama grafik histori. Excel Metrik hanya mode pembanding/cadangan bila data online kosong.",
     "fundamental_source": "Fundamental diprioritaskan dari online TradingView scanner bila tersedia, lalu Excel mengisi rasio/metadata yang kosong. Sumber BEI/IDX tetap utama untuk universe kode saham.",
-    "history_scope": "Shortlist workspace memakai saham yang sedang dipilih di Workspace saham. All/top N memakai saham teratas dari filter/sidebar saat ini.",
+    "history_scope": "Shortlist mengikuti saham yang sedang dipilih di Detail saham. All/top N memakai saham teratas dari filter/sidebar saat ini.",
     "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
-    "history_codes": "Pilih kode IDX tanpa akhiran .JK. Default mengikuti shortlist aktif di Workspace saham, lalu dashboard memanggil format online KODE.JK.",
+    "history_codes": "Pilih kode IDX tanpa akhiran .JK. Default mengikuti shortlist aktif di Detail saham, lalu dashboard memanggil format online KODE.JK.",
     "history_period": "Rentang data online untuk grafik histori. 1-2 minggu cocok untuk monitoring cepat; 1-6 bulan untuk swing; 1-2 tahun untuk MA200/52W; 5-10 tahun/All lebih kaya sample tetapi lebih lambat.",
     "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
     "final_action": "Final_Action menggabungkan Score, Recommendation, Clean_Data, Risk_Level, Threshold, relatif sektor, momentum, dan market regime menjadi playbook keputusan yang lebih praktis.",
@@ -259,7 +259,7 @@ HELP_TEXT = {
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
     "technical_period": "Rentang OHLCV online untuk analisa teknikal fokus detail. Periode pendek cocok untuk RSI/MACD cepat; 1-2 tahun lebih stabil untuk MA200, 52W, ATR, dan Fibonacci.",
-    "technical_code": "Kode teknikal default mengikuti Fokus detail di Workspace saham. Data diambil dari yfinance/cache memakai format KODE.JK.",
+    "technical_code": "Kode teknikal default mengikuti Fokus detail di Detail saham. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif. Kosongkan pilihan untuk menampilkan semua sinyal.",
     "entry_action": "Entry_Action menggabungkan fundamental dan teknikal: fundamental memilih saham layak, teknikal menentukan timing entry/tunggu/tahan/take profit. Kosongkan filter untuk menampilkan semua aksi entry.",
@@ -1260,7 +1260,7 @@ def build_data_quality_report(scored, raw):
             "Check": "Return 52 minggu kosong",
             "Rows": int(missing_history.sum()),
             "Severity": "Low",
-            "Action": "Gunakan Workspace saham untuk melengkapi konteks tren, berita, dan teknikal.",
+            "Action": "Gunakan Detail saham untuk melengkapi konteks tren, berita, dan teknikal.",
         },
         {
             "Area": "Sumber",
@@ -1510,7 +1510,7 @@ def add_final_decision_layer(scored):
 
         if fundamental_strong and sector_ok and momentum_ok and market_regime != "Risk-Off":
             action = "Accumulate Candidate"
-            next_step = "Cek Workspace saham untuk entry action, Fibo zone, ATR stop, berita, dan position sizing."
+            next_step = "Cek Detail saham untuk entry action, Fibo zone, ATR stop, berita, dan position sizing."
         elif fundamental_strong and market_regime == "Risk-Off":
             action = "Wait Market Confirmation"
             next_step = "Saham layak, tetapi market risk-off. Tunggu breadth/IHSG membaik atau gunakan entry bertahap kecil."
@@ -4348,17 +4348,17 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
     st.markdown(
         """
         **Cara pakai cepat**
-        1. Buka **Dashboard** untuk melihat kondisi filter, market regime, kandidat utama, dan kualitas data.
-        2. Buka **Screener** untuk ranking saham. Pilih tabel `Ringkas`, `Analisis`, atau `Audit` sesuai kebutuhan.
-        3. Buka **Workspace saham** untuk membuat shortlist, memilih fokus detail, membaca prospek/berita, histori, dan teknikal.
-        4. Buka **Validasi & Portofolio** untuk backtest, prediksi probabilistik, dan skenario alokasi.
-        5. Buka **Data & Audit** untuk freshness, sumber data, filter audit, explorer, sektor, dan metodologi.
+        1. Buka **Beranda** untuk melihat kondisi filter, market regime, kandidat utama, dan kualitas data.
+        2. Buka **Cari Saham** untuk ranking saham. Pilih tabel `Ringkas`, `Analisis`, atau `Audit` sesuai kebutuhan.
+        3. Buka **Detail Saham** untuk membuat shortlist, memilih fokus detail, membaca prospek/berita, histori, dan teknikal.
+        4. Buka **Portofolio** untuk skenario alokasi dan konsentrasi risiko.
+        5. Buka **Audit Data** untuk freshness, sumber data, backtest, prediksi probabilistik, explorer, sektor, dan metodologi.
 
         **Definisi inti**
         - `Score`: ranking multi-factor 0-100 dari valuasi, kualitas, risiko, likuiditas, momentum, indeks, dan penalti.
         - `Final_Action`: playbook akhir dari Score, data, risiko, sektor, threshold, momentum, dan market regime.
         - `Technical_Score`: timing dari MA, RSI, MACD, volume, dan ATR; tidak mengganti Score fundamental.
-        - `Workspace`: shortlist membandingkan beberapa saham; fokus detail mengontrol berita, prospek, histori default, dan teknikal.
+        - `Detail Saham`: shortlist membandingkan beberapa saham; fokus detail mengontrol berita, prospek, histori default, dan teknikal.
         - `Astro-Fibo`: konteks timing dari Fibonacci time window, Moon/Sun cycle, dan aspek planet JPL DE421 via Skyfield. Ini heuristic transparan, bukan formula proprietary dan bukan ramalan.
         - `Clean_Data`: data lolos pemeriksaan minimum; ini bukan jaminan aman investasi.
 
@@ -4471,7 +4471,7 @@ with st.sidebar:
                 "Clear cache aplikasi",
             ],
             default=["Refresh histori top saham", "Bangun snapshot pasar dari cache"],
-            help="Pilih aksi update sekali jalan. Saat bursa berjalan, refresh histori dulu lalu bangun snapshot pasar agar data workspace tetap cepat.",
+            help="Pilih aksi update sekali jalan. Saat bursa berjalan, refresh histori dulu lalu bangun snapshot pasar agar data Detail saham tetap cepat.",
         )
         run_update = st.button("Jalankan update terpilih", type="primary", disabled=not update_actions)
         if run_update:
@@ -4613,12 +4613,11 @@ if market_context.get("Market_Error"):
 if market_context.get("Breadth_Error"):
     st.caption(f"Market breadth terbatas: {market_context.get('Breadth_Error')}")
 
-tab_summary, tab_reco, tab_history, tab_validate, tab_data_method = st.tabs(
-    ["Dashboard", "Screener", "Saham Pilihan", "Validasi & Portofolio", "Data & Audit"]
+tab_summary, tab_reco, tab_history, tab_portfolio, tab_data_method = st.tabs(
+    ["Beranda", "Cari Saham", "Detail Saham", "Portofolio", "Audit Data"]
 )
-tab_portfolio = tab_validate
-tab_backtest = tab_validate
-tab_predict = tab_validate
+tab_backtest = tab_data_method
+tab_predict = tab_data_method
 tab_explore_sector = tab_data_method
 tab_explore = tab_data_method
 tab_sector = tab_data_method
@@ -4626,7 +4625,7 @@ tab_quality = tab_data_method
 tab_method = tab_data_method
 
 with tab_summary:
-    st.subheader("Dashboard utama")
+    st.subheader("Beranda")
     summary_scope = st.radio(
         "Cakupan ringkasan",
         ["Hasil filter aktif", "Semua universe"],
@@ -4816,7 +4815,7 @@ with tab_reco:
     if filtered.empty:
         st.warning("Tidak ada saham yang sesuai filter. Longgarkan kriteria di sidebar.")
     else:
-        st.subheader("Screener saham")
+        st.subheader("Cari saham")
         st.caption("Gunakan tabel Ringkas untuk keputusan cepat, Analisis untuk rasio/faktor, dan Audit untuk sumber/kualitas data.")
         reco_controls = st.columns([1, 1, 1, 1])
         with reco_controls[0]:
@@ -4847,83 +4846,84 @@ with tab_reco:
             reco_view = filtered.copy()
         reco_view = reco_view.sort_values(reco_sort, ascending=reco_ascending, na_position="last").head(reco_limit)
 
-        reco_chart_view = chart_market_frame(reco_view, "Grafik screener")
-
-        left, right = st.columns([1.25, 1])
-        with left:
-            chart_data = prepare_chart_frame(reco_chart_view.sort_values(reco_sort), reco_sort)
-            if chart_data.empty:
-                st.warning(f"Tidak ada data valid untuk grafik {reco_sort}. Pilih metrik sort lain.")
-            else:
-                fig = px.bar(
-                    chart_data,
-                    x=reco_sort,
-                    y="Chart_Label",
-                    text="Kode",
-                    orientation="h",
-                    color="Recommendation",
-                    hover_name="Kode",
-                    hover_data={
-                        "Chart_Label": False,
-                        "Nama Perusahaan": True,
-                        "Sektor": True,
-                        "PER": ":.2f",
-                        "PBV": ":.2f",
-                        "ROE": ":.1f",
-                        "DER": ":.2f",
-                        "Threshold_Pass_Ratio": ":.0f",
-                        "Return_52W": ":.1f",
-                        "Volume": ":,.0f",
-                    },
-                    title=f"Top screener berdasarkan {reco_sort}",
-                    color_discrete_map=RECOMMENDATION_COLORS,
-                )
-                fig.update_traces(textposition="outside", cliponaxis=False)
-                fig.update_layout(height=520, xaxis_title=reco_sort, yaxis_title="", margin=dict(l=20, r=80, t=70, b=40))
-                show_chart(fig)
-
-        with right:
-            component_cols = [
-                "Valuation_Score",
-                "Quality_Score",
-                "Risk_Score",
-                "Liquidity_Score",
-                "Momentum_Score",
-                "Index_Score",
-                "Sector_Relative_Score",
-            ]
-            radar_base = reco_chart_view.head(5)
-            fig = go.Figure()
-            for index, (_, row) in enumerate(radar_base.iterrows()):
-                values = [row[col] for col in component_cols]
-                color = STOCK_LINE_COLORS[index % len(STOCK_LINE_COLORS)]
-                fig.add_trace(
-                    go.Scatterpolar(
-                        r=values + [values[0]],
-                        theta=[
-                            "Valuasi",
-                            "Kualitas",
-                            "Risiko",
-                            "Likuiditas",
-                            "Momentum",
-                            "Indeks",
-                            "Relatif Sektor",
-                            "Valuasi",
-                        ],
-                        fill="toself",
-                        name=row["Kode"],
-                        line=dict(color=color),
-                        fillcolor=color,
-                        opacity=0.32,
+        with st.expander("Grafik screener", expanded=False):
+            st.caption("Opsional untuk membaca pola visual. Tabel di bawah tetap menjadi sumber utama keputusan.")
+            reco_chart_view = chart_market_frame(reco_view, "Grafik screener")
+            left, right = st.columns([1.25, 1])
+            with left:
+                chart_data = prepare_chart_frame(reco_chart_view.sort_values(reco_sort), reco_sort)
+                if chart_data.empty:
+                    st.warning(f"Tidak ada data valid untuk grafik {reco_sort}. Pilih metrik sort lain.")
+                else:
+                    fig = px.bar(
+                        chart_data,
+                        x=reco_sort,
+                        y="Chart_Label",
+                        text="Kode",
+                        orientation="h",
+                        color="Recommendation",
+                        hover_name="Kode",
+                        hover_data={
+                            "Chart_Label": False,
+                            "Nama Perusahaan": True,
+                            "Sektor": True,
+                            "PER": ":.2f",
+                            "PBV": ":.2f",
+                            "ROE": ":.1f",
+                            "DER": ":.2f",
+                            "Threshold_Pass_Ratio": ":.0f",
+                            "Return_52W": ":.1f",
+                            "Volume": ":,.0f",
+                        },
+                        title=f"Top screener berdasarkan {reco_sort}",
+                        color_discrete_map=RECOMMENDATION_COLORS,
                     )
+                    fig.update_traces(textposition="outside", cliponaxis=False)
+                    fig.update_layout(height=520, xaxis_title=reco_sort, yaxis_title="", margin=dict(l=20, r=80, t=70, b=40))
+                    show_chart(fig)
+
+            with right:
+                component_cols = [
+                    "Valuation_Score",
+                    "Quality_Score",
+                    "Risk_Score",
+                    "Liquidity_Score",
+                    "Momentum_Score",
+                    "Index_Score",
+                    "Sector_Relative_Score",
+                ]
+                radar_base = reco_chart_view.head(5)
+                fig = go.Figure()
+                for index, (_, row) in enumerate(radar_base.iterrows()):
+                    values = [row[col] for col in component_cols]
+                    color = STOCK_LINE_COLORS[index % len(STOCK_LINE_COLORS)]
+                    fig.add_trace(
+                        go.Scatterpolar(
+                            r=values + [values[0]],
+                            theta=[
+                                "Valuasi",
+                                "Kualitas",
+                                "Risiko",
+                                "Likuiditas",
+                                "Momentum",
+                                "Indeks",
+                                "Relatif Sektor",
+                                "Valuasi",
+                            ],
+                            fill="toself",
+                            name=row["Kode"],
+                            line=dict(color=color),
+                            fillcolor=color,
+                            opacity=0.32,
+                        )
+                    )
+                fig.update_layout(
+                    title="Profil faktor top 5",
+                    polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+                    height=520,
+                    margin=dict(l=30, r=30, t=60, b=30),
                 )
-            fig.update_layout(
-                title="Profil faktor top 5",
-                polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-                height=520,
-                margin=dict(l=30, r=30, t=60, b=30),
-            )
-            show_chart(fig)
+                show_chart(fig)
 
         display_columns = [
             "Kode",
@@ -5890,7 +5890,7 @@ with tab_explore.expander("Explorer saham", expanded=False):
             show_chart(fig)
 
 with tab_history:
-    st.subheader("Workspace saham")
+    st.subheader("Detail saham")
     history_source = filtered if not filtered.empty else scored_df
     focus_codes = history_source["Kode"].dropna().astype(str).str.upper().unique().tolist()
     focus_code = None
@@ -5910,7 +5910,7 @@ with tab_history:
                 min(20, len(focus_codes)),
                 min(5, len(focus_codes)),
                 step=1,
-                help="Jumlah saham yang dibandingkan di workspace.",
+                help="Jumlah saham yang dibandingkan di Detail saham.",
             )
         default_shortlist = focus_codes[:shortlist_size]
         if shortlist_mode == "Pilih manual":
@@ -6039,7 +6039,7 @@ with tab_history:
     )
     chart_scope = st.radio(
         "Cakupan grafik",
-        ["Shortlist workspace", "All/top N hasil filter"],
+        ["Shortlist Detail saham", "All/top N hasil filter"],
         horizontal=True,
         help=HELP_TEXT["history_scope"],
     )
