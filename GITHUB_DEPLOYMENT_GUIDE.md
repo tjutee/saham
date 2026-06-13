@@ -89,13 +89,13 @@ Setelah deploy, lakukan smoke test cepat:
    alokasi, lot, risk mix, dan konsentrasi sektor muncul tanpa error.
 4. Cek tab `Harga & Teknikal` untuk memastikan histori yfinance/cache dan
    indikator teknikal tampil.
-5. Cek tab `Kualitas Data` -> `Audit sumber kode saham` dan `Kelengkapan kolom
+5. Cek tab `Data & Metodologi` -> `Audit sumber kode saham` dan `Kelengkapan kolom
    & sumber data`.
-6. Cek `Kualitas Data` -> `Jumlah kode per sheet Excel`: `Ringkasan`/`Draft`
+6. Cek `Data & Metodologi` -> `Jumlah kode per sheet Excel`: `Ringkasan`/`Draft`
    dapat berisi 959 kode unik, sedangkan `Metrik` dapat berisi 957 karena
    cakupannya berbeda.
 
-Di tab `Kualitas Data` akan terlihat jumlah kode yang match daftar resmi
+Di tab `Data & Metodologi` akan terlihat jumlah kode yang match daftar resmi
 BEI/IDX, kode yang hanya berasal dari fallback, serta kolom fundamental,
 histori, market cap, revenue, dan hierarki industri yang masih kosong.
 
@@ -126,10 +126,11 @@ Streamlit Cloud akan otomatis redeploy setelah push.
 Untuk mengurangi lag saat jam bursa, simpan snapshot pasar ringkas ke repository:
 
 1. Jalankan aplikasi lokal.
-2. Buka sidebar `Workflow Update`.
-3. Jalankan `Refresh cache histori top saham` bila perlu.
-4. Klik `Bangun snapshot pasar dari cache`.
-5. Commit dan push file `data_cache/market_snapshot_1y.csv` dan `data_cache/fundamental_snapshot.csv`.
+2. Buka sidebar `Update data & cache`.
+3. Pilih `Refresh histori top saham` bila perlu.
+4. Pilih `Bangun snapshot pasar dari cache`.
+5. Klik `Jalankan update terpilih`.
+6. Commit dan push file `data_cache/market_snapshot_1y.csv` dan `data_cache/fundamental_snapshot.csv`.
 
 Jika ingin memaksa aplikasi mengambil data live penuh saat startup, set
 environment variable:
@@ -147,6 +148,9 @@ SAHAM_FUNDAMENTAL_LIVE_ON_START=1
 Default keduanya `0`, yaitu cache-first agar Streamlit Cloud lebih cepat dan
 stabil.
 
-Catatan realtime: `yfinance`/TradingView adalah sumber online praktis dan dapat
-delayed. Jika membutuhkan feed bursa resmi realtime tick-by-tick, gunakan
-provider data pasar/IDX feed berlisensi dan sambungkan sebagai adapter data baru.
+Catatan realtime praktis: `yfinance`/TradingView adalah sumber online praktis
+dan dapat delayed. Dashboard menampilkan status jam bursa WIB, freshness, lag
+tanggal online, dan sumber data. Saat bursa berjalan, jalankan update histori
+top saham lalu bangun snapshot pasar dari cache. Jika membutuhkan feed bursa
+resmi realtime tick-by-tick, gunakan provider data pasar/IDX feed berlisensi dan
+sambungkan sebagai adapter data baru.

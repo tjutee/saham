@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from io import StringIO
 from urllib.request import Request, urlopen
+from datetime import timezone, timedelta
 
 
 DATA_FILE = "Ringkasan.xlsx"
@@ -26,6 +27,11 @@ TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/indonesia/scan"
 STOCKANALYSIS_IDX_URL = "https://stockanalysis.com/list/indonesia-stock-exchange/"
 ONLINE_LOAD_PERIOD = "1y"
 ONLINE_REFRESH_TTL = 6 * 60 * 60
+JAKARTA_TZ = timezone(timedelta(hours=7), name="WIB")
+REGULAR_TRADING_SESSIONS = {
+    "weekday": [("09:00", "11:30"), ("13:30", "15:50")],
+    "friday": [("09:00", "11:30"), ("14:00", "15:50")],
+}
 MARKET_SNAPSHOT_FILE = DATA_CACHE_DIR / f"market_snapshot_{ONLINE_LOAD_PERIOD}.csv"
 FUNDAMENTAL_SNAPSHOT_FILE = DATA_CACHE_DIR / "fundamental_snapshot.csv"
 LIVE_ON_START = os.environ.get("SAHAM_LIVE_ON_START", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -409,6 +415,51 @@ def clean_text(value, default="-"):
         return default
     value = str(value).strip()
     return value if value else default
+
+
+def parse_session_time(value):
+    hour, minute = [int(part) for part in value.split(":", 1)]
+    return hour * 60 + minute
+
+
+def get_market_session_status(now=None):
+    now = now or pd.Timestamp.now(tz=JAKARTA_TZ)
+    if now.tzinfo is None:
+        now = now.tz_localize(JAKARTA_TZ)
+    else:
+        now = now.tz_convert(JAKARTA_TZ)
+
+    weekday = now.weekday()
+    current_minutes = now.hour * 60 + now.minute
+    if weekday >= 5:
+        return {
+            "Status": "Bursa tutup",
+            "Detail": "Akhir pekan. Pakai snapshot/cache; refresh live bisa tetap dicoba tetapi data biasanya tidak berubah.",
+            "Now": now.strftime("%Y-%m-%d %H:%M WIB"),
+            "Is_Open": False,
+        }
+
+    sessions = REGULAR_TRADING_SESSIONS["friday" if weekday == 4 else "weekday"]
+    session_ranges = [(parse_session_time(start), parse_session_time(end)) for start, end in sessions]
+    if any(start <= current_minutes <= end for start, end in session_ranges):
+        return {
+            "Status": "Bursa berjalan",
+            "Detail": "Refresh harga/histori terkontrol bisa mengambil data terbaru yang tersedia dari yfinance/provider cache.",
+            "Now": now.strftime("%Y-%m-%d %H:%M WIB"),
+            "Is_Open": True,
+        }
+    if session_ranges[0][1] < current_minutes < session_ranges[1][0]:
+        detail = "Jeda sesi. Snapshot/cache menjaga dashboard tetap cepat; refresh live bisa dilakukan menjelang sesi berikutnya."
+    elif current_minutes < session_ranges[0][0]:
+        detail = "Pra-pembukaan. Cache/snapshot biasanya cukup sampai data provider mulai memperbarui harga."
+    else:
+        detail = "Pasca-penutupan. Refresh live berguna untuk memperbarui cache akhir hari bila provider sudah sinkron."
+    return {
+        "Status": "Di luar sesi reguler",
+        "Detail": detail,
+        "Now": now.strftime("%Y-%m-%d %H:%M WIB"),
+        "Is_Open": False,
+    }
 
 
 def format_number(value, digits=1):
@@ -3796,11 +3847,13 @@ def calculate_scores(df, weights):
 df, raw_df = load_data()
 data_file_status = get_file_status(DATA_FILE)
 data_update_label = get_data_update_label(raw_df, data_file_status)
+market_session_status = get_market_session_status()
 
-st.title("Dashboard Rekomendasi Saham IDX")
+st.title("Dashboard Screener & Rekomendasi Awal Saham IDX")
 st.caption(
-    f"Data online-first, update {data_update_label}. Universe kode diprioritaskan dari BEI/IDX; yfinance mengisi harga/histori; TradingView scanner mengisi fundamental online; {DATA_FILE} menjadi fallback dan acuan metodologi. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
+    f"Data online-first, update {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). Universe kode diprioritaskan dari BEI/IDX; yfinance mengisi harga/histori; TradingView scanner mengisi fundamental online; {DATA_FILE} menjadi fallback dan acuan metodologi. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
 )
+st.caption(market_session_status["Detail"])
 if raw_df.attrs.get("universe_error"):
     st.warning(f"Daftar kode online memakai fallback. Detail: {raw_df.attrs.get('universe_error')}")
 if raw_df.attrs.get("market_error"):
@@ -3817,13 +3870,10 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Ringkasan**: snapshot eksekutif berisi kondisi universe, sumber data, distribusi rekomendasi, top kandidat, dan matriks faktor.
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
         - **Portofolio**: simulasi alokasi saham pilihan, konsentrasi sektor, campuran risiko, final action mix, dan estimasi lot.
-        - **Explorer**: grafik sebar untuk melihat hubungan valuasi, profitabilitas, risiko, likuiditas, sektor, dan outlier.
         - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, ringkasan teknikal top kandidat, candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
-        - **Backtest**: uji event historis untuk sinyal teknikal seperti Bullish, Constructive, Weak, Overbought, MA50 Recovery, dan MA50 Breakdown.
-        - **Prediksi**: probabilitas naik, expected return, downside risk, dan confidence dari setup historis yang mirip dengan kondisi teknikal saat ini.
-        - **Sektor**: ringkasan score, jumlah saham, Strong Buy, ROE, dan turnover per sektor/industri.
-        - **Kualitas Data**: audit data, cache histori, kelengkapan rasio, dan catatan kualitas data.
-        - **Metodologi**: bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
+        - **Validasi & Prediksi**: backtest event historis dan probabilitas setup teknikal yang mirip dengan kondisi saat ini.
+        - **Explorer & Sektor**: scatter, histogram, outlier, dan ringkasan score/turnover per sektor atau industri.
+        - **Data & Metodologi**: audit sumber, freshness, cache, update data, bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
 
         **Istilah penting**
         - **PER**: Price to Earnings Ratio. Lebih rendah umumnya lebih murah, selama laba positif.
@@ -3901,6 +3951,11 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         3. Snapshot fundamental `data_cache/fundamental_snapshot.csv` untuk rasio massal agar startup tidak selalu menunggu request online.
         4. Sumber online pelengkap: yfinance untuk refresh harga/histori dan TradingView scanner untuk fundamental massal.
         5. Excel dipakai terakhir sebagai fallback, audit pembanding, dan acuan ide algoritme sampai seluruh kolom penting punya sumber online yang stabil.
+
+        **Mekanisme realtime praktis**
+        - Saat bursa berjalan, jalankan update histori/harga secara terkontrol untuk saham prioritas, lalu bangun snapshot pasar dari cache.
+        - Saat jeda, akhir pekan, atau pasca-penutupan, utamakan cache/snapshot agar dashboard tetap cepat dan sumber data tidak dipanggil berlebihan.
+        - `yfinance` dan TradingView dapat delayed; dashboard menampilkan freshness, lag tanggal online, dan sumber data agar status terbaru tidak disamarkan.
 
         **Makna warna**
         - Hijau: kondisi lebih kuat atau risiko rendah.
@@ -3980,9 +4035,10 @@ with st.sidebar:
         require_core_thresholds = st.checkbox("Wajib lolos valuasi & profit inti", value=require_core_thresholds, help=HELP_TEXT["core_thresholds"])
 
     st.divider()
-    with st.expander("Workflow Update", expanded=False):
+    with st.expander("Update data & cache", expanded=False):
         file_status = data_file_status
         st.caption(f"Sumber aktif: {data_update_label}")
+        st.caption(f"Jam bursa: {market_session_status['Status']} | {market_session_status['Now']}")
         st.caption(f"Excel fallback: {file_status['Status']} | Modified: {file_status['Last Modified']} | Size: {file_status['Ukuran']}")
         snapshot_status = get_file_status(MARKET_SNAPSHOT_FILE)
         st.caption(f"Snapshot pasar repo: {snapshot_status['Status']} | Modified: {snapshot_status['Last Modified']} | Size: {snapshot_status['Ukuran']}")
@@ -3991,41 +4047,54 @@ with st.sidebar:
         cache_status_sidebar = get_history_cache_status()
         st.caption(f"Cache histori: {len(cache_status_sidebar):,} file di `{HISTORY_CACHE_DIR}`")
         refresh_period = st.selectbox(
-            "Periode refresh cache",
+            "Periode histori",
             ONLINE_PERIOD_OPTIONS,
             index=ONLINE_PERIOD_OPTIONS.index("1y"),
             format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
             help=HELP_TEXT["refresh_period"],
         )
         refresh_top_n = st.slider("Jumlah top saham untuk refresh", 5, 50, 10, step=5, help=HELP_TEXT["refresh_top_n"])
-        if st.button("Refresh cache histori top saham"):
-            with st.spinner("Mengambil data histori online..."):
-                fetch_yahoo_history.clear()
-                top_codes_for_refresh = df.sort_values("Index_Count", ascending=False)["Kode"].head(refresh_top_n).tolist()
-                refreshed_history, refresh_error, refresh_source = fetch_yahoo_history(top_codes_for_refresh, period=refresh_period)
-            if refresh_error and refreshed_history.empty:
-                st.error(refresh_error)
-            else:
-                st.success(f"Cache diperbarui dari {refresh_source}: {len(refreshed_history):,} baris histori.")
-        if st.button("Bangun snapshot pasar dari cache"):
-            snapshot_frame = build_market_snapshot_from_history_cache(period=ONLINE_LOAD_PERIOD)
-            if snapshot_frame.empty:
-                st.error(snapshot_frame.attrs.get("market_error", "Snapshot pasar gagal dibuat."))
-            else:
-                snapshot_file = write_market_snapshot(snapshot_frame, period=ONLINE_LOAD_PERIOD)
-                st.success(f"Snapshot pasar disimpan: {snapshot_file} ({len(snapshot_frame):,} kode). Commit/push file ini agar tersedia di Streamlit Cloud.")
-        if st.button("Refresh snapshot fundamental online"):
-            with st.spinner("Mengambil fundamental massal dari TradingView..."):
-                fundamental_frame = fetch_online_fundamentals()
-            if fundamental_frame.empty:
-                st.error(fundamental_frame.attrs.get("fundamental_error", "Snapshot fundamental gagal dibuat."))
-            else:
-                snapshot_file = write_fundamental_snapshot(fundamental_frame)
-                st.success(f"Snapshot fundamental disimpan: {snapshot_file} ({len(fundamental_frame):,} kode). Commit/push file ini agar tersedia di Streamlit Cloud.")
-        if st.button("Clear cache aplikasi"):
-            st.cache_data.clear()
-            st.success("Cache aplikasi dibersihkan. Dashboard akan dimuat ulang.")
-            st.rerun()
+        update_actions = st.multiselect(
+            "Aksi update",
+            [
+                "Refresh histori top saham",
+                "Bangun snapshot pasar dari cache",
+                "Refresh fundamental online",
+                "Clear cache aplikasi",
+            ],
+            default=["Refresh histori top saham", "Bangun snapshot pasar dari cache"],
+            help="Pilih satu atau beberapa aksi, lalu jalankan sekali. Untuk realtime praktis saat bursa berjalan, refresh histori dulu lalu bangun snapshot pasar.",
+        )
+        run_update = st.button("Jalankan update terpilih", type="primary", disabled=not update_actions)
+        if run_update:
+            if "Refresh histori top saham" in update_actions:
+                with st.spinner("Mengambil data histori online..."):
+                    fetch_yahoo_history.clear()
+                    top_codes_for_refresh = df.sort_values("Index_Count", ascending=False)["Kode"].head(refresh_top_n).tolist()
+                    refreshed_history, refresh_error, refresh_source = fetch_yahoo_history(top_codes_for_refresh, period=refresh_period)
+                if refresh_error and refreshed_history.empty:
+                    st.error(refresh_error)
+                else:
+                    st.success(f"Cache histori diperbarui dari {refresh_source}: {len(refreshed_history):,} baris.")
+            if "Bangun snapshot pasar dari cache" in update_actions:
+                snapshot_frame = build_market_snapshot_from_history_cache(period=ONLINE_LOAD_PERIOD)
+                if snapshot_frame.empty:
+                    st.error(snapshot_frame.attrs.get("market_error", "Snapshot pasar gagal dibuat."))
+                else:
+                    snapshot_file = write_market_snapshot(snapshot_frame, period=ONLINE_LOAD_PERIOD)
+                    st.success(f"Snapshot pasar disimpan: {snapshot_file} ({len(snapshot_frame):,} kode). Commit/push file ini agar tersedia di Streamlit Cloud.")
+            if "Refresh fundamental online" in update_actions:
+                with st.spinner("Mengambil fundamental massal dari TradingView..."):
+                    fundamental_frame = fetch_online_fundamentals()
+                if fundamental_frame.empty:
+                    st.error(fundamental_frame.attrs.get("fundamental_error", "Snapshot fundamental gagal dibuat."))
+                else:
+                    snapshot_file = write_fundamental_snapshot(fundamental_frame)
+                    st.success(f"Snapshot fundamental disimpan: {snapshot_file} ({len(fundamental_frame):,} kode). Commit/push file ini agar tersedia di Streamlit Cloud.")
+            if "Clear cache aplikasi" in update_actions:
+                st.cache_data.clear()
+                st.success("Cache aplikasi dibersihkan. Dashboard akan dimuat ulang.")
+                st.rerun()
 
 active_filter_criteria = make_filter_criteria(
     name="Filter aktif",
@@ -4136,9 +4205,15 @@ if market_context.get("Market_Error"):
 if market_context.get("Breadth_Error"):
     st.caption(f"Market breadth terbatas: {market_context.get('Breadth_Error')}")
 
-tab_summary, tab_reco, tab_portfolio, tab_history, tab_backtest, tab_predict, tab_explore, tab_sector, tab_quality, tab_method = st.tabs(
-    ["Ringkasan", "Rekomendasi", "Portofolio", "Harga & Teknikal", "Backtest", "Prediksi", "Explorer", "Sektor", "Kualitas Data", "Metodologi"]
+tab_summary, tab_reco, tab_portfolio, tab_history, tab_validate, tab_explore_sector, tab_data_method = st.tabs(
+    ["Ringkasan", "Rekomendasi", "Portofolio", "Harga & Teknikal", "Validasi & Prediksi", "Explorer & Sektor", "Data & Metodologi"]
 )
+tab_backtest = tab_validate
+tab_predict = tab_validate
+tab_explore = tab_explore_sector
+tab_sector = tab_explore_sector
+tab_quality = tab_data_method
+tab_method = tab_data_method
 
 with tab_summary:
     st.subheader("Ringkasan eksekutif")
@@ -4184,7 +4259,7 @@ with tab_summary:
             if top_candidates.empty:
                 st.caption("Belum ada kandidat kuat pada filter ini. Longgarkan filter atau pilih cakupan Semua universe.")
             else:
-                st.caption("Gunakan insight ini sebagai daftar awal; validasi detail tetap ada di tab Rekomendasi dan Kualitas Data.")
+                st.caption("Gunakan insight ini sebagai daftar awal; validasi detail tetap ada di tab Rekomendasi dan Data & Metodologi.")
 
         with st.container(border=True):
             st.markdown("**Konteks market & freshness**")
@@ -6073,7 +6148,7 @@ with tab_sector:
     )
 
 with tab_quality:
-    st.subheader("Kualitas data & workflow update")
+    st.subheader("Kualitas data, freshness, dan update")
     quality_report = build_data_quality_report(scored_df, raw_df)
     review_count = int((quality_report["Rows"].gt(0) & ~quality_report["Severity"].eq("Info")).sum())
     high_count = int(((quality_report["Rows"] > 0) & quality_report["Severity"].eq("High")).sum())
