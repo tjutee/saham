@@ -5172,7 +5172,7 @@ with tab_reco:
                 else:
                     st.info("Tidak ada penghambat dominan pada hasil filter ini.")
 
-with tab_portfolio:
+with tab_portfolio.expander("Portofolio - skenario alokasi", expanded=True):
     st.subheader("Perencana portofolio")
     st.caption(
         "Skenario ini memakai hasil filter saat ini untuk membaca konsentrasi, risiko, final action mix, dan estimasi lot. "
@@ -5353,7 +5353,7 @@ with tab_portfolio:
                 },
             )
 
-with tab_backtest:
+with tab_backtest.expander("Backtest sinyal historis", expanded=False):
     st.subheader("Backtest sinyal")
     st.caption(
         "Backtest ini event-based: menghitung forward return setelah sinyal teknikal muncul. "
@@ -5576,7 +5576,7 @@ with tab_backtest:
                     "Tahap ini baru event backtest historis, bukan prediksi masa depan."
                 )
 
-with tab_predict:
+with tab_predict.expander("Prediksi probabilistik", expanded=False):
     st.subheader("Prediksi probabilistik")
     st.caption(
         "Layer ini mencari setup historis yang mirip dengan kondisi teknikal saat ini, lalu menghitung probabilitas naik dan risiko downside. "
@@ -5798,7 +5798,7 @@ with tab_predict:
                     "Tetap validasi dengan fundamental, market regime, backtest, dan trade plan."
                 )
 
-with tab_explore:
+with tab_explore.expander("Explorer saham", expanded=False):
     explorer_data = filtered if not filtered.empty else scored_df
     explorer_chart_data = chart_market_frame(explorer_data, "Explorer")
     explore_controls = st.columns([1, 1, 1, 1])
@@ -6604,7 +6604,7 @@ with tab_history:
                             },
                         )
 
-with tab_sector:
+with tab_sector.expander("Analisis sektor", expanded=False):
     sector_chart_base = chart_market_frame(scored_df, "Grafik sektor")
     sector_controls = st.columns([1, 1, 1, 1])
     with sector_controls[0]:
@@ -6709,7 +6709,7 @@ with tab_sector:
         },
     )
 
-with tab_quality:
+with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True):
     st.subheader("Kualitas data, freshness, dan update")
     quality_report = build_data_quality_report(scored_df, raw_df)
     review_count = int((quality_report["Rows"].gt(0) & ~quality_report["Severity"].eq("Info")).sum())
@@ -7015,7 +7015,7 @@ with tab_quality:
             """
         )
 
-with tab_method:
+with tab_method.expander("Metodologi dan formula", expanded=False):
     st.subheader("Formula scoring multi-factor")
     st.markdown(
         """
