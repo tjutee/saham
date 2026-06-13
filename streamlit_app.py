@@ -39,6 +39,21 @@ PLANETARY_CYCLE_PROXIES = {
     "Jupiter": 398.88,
     "Saturn": 378.09,
 }
+ZODIAC_SIGNS = [
+    "Aries",
+    "Taurus",
+    "Gemini",
+    "Cancer",
+    "Leo",
+    "Virgo",
+    "Libra",
+    "Scorpio",
+    "Sagittarius",
+    "Capricorn",
+    "Aquarius",
+    "Pisces",
+]
+EPHEMERIS_CONTEXT_CACHE = {}
 MARKET_SNAPSHOT_FILE = DATA_CACHE_DIR / f"market_snapshot_{ONLINE_LOAD_PERIOD}.csv"
 FUNDAMENTAL_SNAPSHOT_FILE = DATA_CACHE_DIR / "fundamental_snapshot.csv"
 LIVE_ON_START = os.environ.get("SAHAM_LIVE_ON_START", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -250,7 +265,7 @@ HELP_TEXT = {
     "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
     "position_sizing": "Position sizing menghitung estimasi lot dari modal, risiko per transaksi, harga terakhir, dan ATR stop. Ini alat perencanaan risiko, bukan instruksi order.",
     "fibonacci": "Fibonacci confluence membaca support/resistance dari swing high-low pada periode teknikal. Ini layer konfirmasi area harga, bukan prediksi pasti.",
-    "astro_fibo": "Layer terinspirasi Astronacci yang transparan: membaca jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, dan proxy siklus Mercury/Venus/Mars/Jupiter/Saturn. Ini bukan ephemeris presisi, bukan metode proprietary Astronacci, dan bukan ramalan pasti.",
+    "astro_fibo": "Layer terinspirasi Astronacci yang transparan: membaca jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, dan aspek Mercury/Venus/Mars/Jupiter/Saturn dari Swiss Ephemeris bila tersedia. Jika ephemeris gagal, dashboard fallback ke proxy siklus rata-rata. Ini bukan metode proprietary Astronacci dan bukan ramalan pasti.",
     "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. 6 bulan cocok untuk cek cepat, 1-2 tahun untuk kondisi terkini, 5-10 tahun untuk sample event lebih besar tetapi lebih lambat.",
     "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan simulasi broker penuh.",
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
@@ -2458,12 +2473,41 @@ def sun_cycle_context(date_value):
     )
 
 
-def planet_cycle_context(date_value):
+def zodiac_sign_from_longitude(longitude):
+    if pd.isna(longitude):
+        return "-"
+    return ZODIAC_SIGNS[int(float(longitude) % 360 // 30)]
+
+
+def circular_distance(value, target, period=360.0):
+    raw = abs(float(value) - float(target)) % period
+    return min(raw, period - raw)
+
+
+def nearest_aspect_label(angle):
+    aspects = {
+        "Conjunction": 0.0,
+        "Sextile": 60.0,
+        "Square": 90.0,
+        "Trine": 120.0,
+        "Opposition": 180.0,
+    }
+    label, target = min(aspects.items(), key=lambda item: circular_distance(angle, item[1], 360.0))
+    distance = circular_distance(angle, target, 360.0)
+    if distance <= 3:
+        return label, distance, 12
+    if distance <= 6:
+        return f"Near {label}", distance, 7
+    return "Neutral Aspect", distance, 0
+
+
+def planet_cycle_proxy_context(date_value):
     if pd.isna(date_value):
         empty = {
             "Planetary_Cycle_Score": 0.0,
             "Planetary_Window": "-",
             "Planetary_Detail": "-",
+            "Ephemeris_Source": "Unavailable",
         }
         for planet in PLANETARY_CYCLE_PROXIES:
             empty[f"{planet}_Window"] = "-"
@@ -2510,7 +2554,74 @@ def planet_cycle_context(date_value):
     rows["Planetary_Cycle_Score"] = float(min(100, sum(bonuses) * 5))
     rows["Planetary_Window"] = " | ".join(active_windows[:3]) if active_windows else "Neutral Planet Cycle"
     rows["Planetary_Detail"] = "; ".join(active_windows) if active_windows else "Tidak ada proxy aspek planet besar yang dekat."
+    rows["Ephemeris_Source"] = "Cycle proxy"
     return pd.Series(rows)
+
+
+def planet_cycle_context(date_value):
+    if pd.isna(date_value):
+        return planet_cycle_proxy_context(date_value)
+
+    date_value = pd.Timestamp(date_value).normalize()
+    cache_key = date_value.strftime("%Y-%m-%d")
+    if cache_key in EPHEMERIS_CONTEXT_CACHE:
+        return pd.Series(EPHEMERIS_CONTEXT_CACHE[cache_key])
+
+    try:
+        import swisseph as swe
+
+        jd = swe.julday(date_value.year, date_value.month, date_value.day, 12.0)
+        flags = swe.FLG_MOSEPH | swe.FLG_SPEED
+        body_ids = {
+            "Sun": swe.SUN,
+            "Mercury": swe.MERCURY,
+            "Venus": swe.VENUS,
+            "Mars": swe.MARS,
+            "Jupiter": swe.JUPITER,
+            "Saturn": swe.SATURN,
+        }
+        positions = {}
+        for body, body_id in body_ids.items():
+            values, _ = swe.calc_ut(jd, body_id, flags)
+            positions[body] = {
+                "longitude": float(values[0]) % 360,
+                "speed": float(values[3]) if len(values) > 3 else np.nan,
+            }
+
+        rows = {
+            "Ephemeris_Source": "Swiss Ephemeris Moshier",
+            "Planetary_Window": "Neutral Planet Aspect",
+            "Planetary_Detail": "Tidak ada aspek planet-ke-Sun besar yang dekat.",
+        }
+        sun_longitude = positions["Sun"]["longitude"]
+        active_windows = []
+        bonuses = []
+        for planet in ["Mercury", "Venus", "Mars", "Jupiter", "Saturn"]:
+            longitude = positions[planet]["longitude"]
+            angle_to_sun = circular_distance(longitude, sun_longitude, 360.0)
+            aspect_label, aspect_distance, aspect_bonus = nearest_aspect_label(angle_to_sun)
+            retrograde = positions[planet]["speed"] < 0 if pd.notna(positions[planet]["speed"]) else False
+            bonus = aspect_bonus + (4 if retrograde and aspect_bonus > 0 else 0)
+            rows[f"{planet}_Longitude"] = round(longitude, 2)
+            rows[f"{planet}_Sign"] = zodiac_sign_from_longitude(longitude)
+            rows[f"{planet}_Retrograde"] = bool(retrograde)
+            rows[f"{planet}_Aspect_To_Sun"] = aspect_label
+            rows[f"{planet}_Aspect_Distance"] = round(float(aspect_distance), 2)
+            rows[f"{planet}_Window"] = f"{aspect_label}{' Retrograde' if retrograde else ''}" if aspect_bonus else "Neutral Aspect"
+            bonuses.append(bonus)
+            if aspect_bonus:
+                active_windows.append(f"{planet}: {rows[f'{planet}_Window']} ({rows[f'{planet}_Sign']})")
+
+        rows["Planetary_Cycle_Score"] = float(min(100, sum(bonuses) * 4))
+        rows["Planetary_Window"] = " | ".join(active_windows[:3]) if active_windows else rows["Planetary_Window"]
+        rows["Planetary_Detail"] = "; ".join(active_windows) if active_windows else rows["Planetary_Detail"]
+        EPHEMERIS_CONTEXT_CACHE[cache_key] = rows
+        return pd.Series(rows)
+    except Exception:
+        fallback = planet_cycle_proxy_context(date_value).to_dict()
+        fallback["Ephemeris_Source"] = "Cycle proxy fallback"
+        EPHEMERIS_CONTEXT_CACHE[cache_key] = fallback
+        return pd.Series(fallback)
 
 
 def add_astro_fibo_timing(technical_history):
@@ -3401,8 +3512,13 @@ def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8
             "Sun_Window": current.get("Sun_Window"),
             "Planetary_Cycle_Score": current.get("Planetary_Cycle_Score"),
             "Planetary_Window": current.get("Planetary_Window"),
+            "Ephemeris_Source": current.get("Ephemeris_Source"),
             "Jupiter_Window": current.get("Jupiter_Window"),
+            "Jupiter_Sign": current.get("Jupiter_Sign"),
+            "Jupiter_Retrograde": current.get("Jupiter_Retrograde"),
             "Saturn_Window": current.get("Saturn_Window"),
+            "Saturn_Sign": current.get("Saturn_Sign"),
+            "Saturn_Retrograde": current.get("Saturn_Retrograde"),
             "Mars_Window": current.get("Mars_Window"),
             "RSI14": current.get("RSI14"),
             "Similarity_Sample": len(similar),
@@ -3453,6 +3569,7 @@ def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8
             "Sun_Sign",
             "Sun_Window",
             "Planetary_Window",
+            "Ephemeris_Source",
             "Jupiter_Window",
             "Saturn_Window",
             "RSI14",
@@ -4193,7 +4310,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
         - **Position sizing**: estimasi lot berdasarkan modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan.
         - **Fibonacci Confluence**: support/resistance dari swing high-low, nearest level, jarak harga, dan confluence score.
-        - **Astro-Fibo Timing**: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, proxy siklus Mercury/Venus/Mars/Jupiter/Saturn, Fibonacci price zone, dan konfirmasi teknikal. Ini bukan ephemeris presisi, bukan formula proprietary Astronacci, dan bukan ramalan pasti.
+        - **Astro-Fibo Timing**: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari Swiss Ephemeris bila tersedia, Fibonacci price zone, dan konfirmasi teknikal. Jika ephemeris gagal, dashboard fallback ke proxy siklus rata-rata. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
         - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
         - **Walk-forward**: validasi event berurutan yang membandingkan performa train dan out-of-sample agar sinyal tidak hanya bagus secara agregat.
         - **Prediction Bias**: bias probabilistik dari setup historis yang mirip, bukan ramalan harga pasti.
@@ -5556,8 +5673,13 @@ with tab_predict:
                     "Sun_Window",
                     "Planetary_Cycle_Score",
                     "Planetary_Window",
+                    "Ephemeris_Source",
                     "Jupiter_Window",
+                    "Jupiter_Sign",
+                    "Jupiter_Retrograde",
                     "Saturn_Window",
+                    "Saturn_Sign",
+                    "Saturn_Retrograde",
                     "Mars_Window",
                     "RSI14",
                     "Score",
@@ -5593,7 +5715,7 @@ with tab_predict:
                     size=sample_column,
                     color="Prediction_Bias",
                     hover_name="Kode",
-                    hover_data=["Nama Perusahaan", "Technical_Signal", "Fibo_Zone", "Astro_Fibo_Bias", "Time_Window", "Moon_Phase", "Sun_Sign", "Sun_Window", "Planetary_Window", "Jupiter_Window", "Saturn_Window", "Model_Confidence", downside_column],
+                    hover_data=["Nama Perusahaan", "Technical_Signal", "Fibo_Zone", "Astro_Fibo_Bias", "Time_Window", "Moon_Phase", "Sun_Sign", "Sun_Window", "Ephemeris_Source", "Planetary_Window", "Jupiter_Window", "Saturn_Window", "Model_Confidence", downside_column],
                     title=f"Probability vs expected return {primary_horizon}D",
                     color_discrete_map={
                         "Bullish Probability": "#15803d",
@@ -5625,6 +5747,7 @@ with tab_predict:
                             "Sun_Sign",
                             "Sun_Window",
                             "Planetary_Window",
+                            "Ephemeris_Source",
                             "Jupiter_Window",
                             "Saturn_Window",
                             "RSI14",
@@ -6000,11 +6123,16 @@ with tab_history:
                             "Sun_Window",
                             "Planetary_Cycle_Score",
                             "Planetary_Window",
+                            "Ephemeris_Source",
                             "Mercury_Window",
                             "Venus_Window",
                             "Mars_Window",
                             "Jupiter_Window",
+                            "Jupiter_Sign",
+                            "Jupiter_Retrograde",
                             "Saturn_Window",
+                            "Saturn_Sign",
+                            "Saturn_Retrograde",
                             "ATR_Stop_2x",
                             "ATR_Stop_Distance_%",
                             "Position_Risk_Bucket",
@@ -6063,8 +6191,9 @@ with tab_history:
                 sun_cols[1].metric("Sun Window", clean_text(latest_tech.get("Sun_Window")), help=HELP_TEXT["astro_fibo"])
                 planet_cols = st.columns(3)
                 planet_cols[0].metric("Planet Score", format_number(latest_tech.get("Planetary_Cycle_Score")), help=HELP_TEXT["astro_fibo"])
-                planet_cols[1].metric("Jupiter", clean_text(latest_tech.get("Jupiter_Window")), help=HELP_TEXT["astro_fibo"])
-                planet_cols[2].metric("Saturn", clean_text(latest_tech.get("Saturn_Window")), help=HELP_TEXT["astro_fibo"])
+                planet_cols[1].metric("Jupiter", clean_text(latest_tech.get("Jupiter_Window")), clean_text(latest_tech.get("Jupiter_Sign")), help=HELP_TEXT["astro_fibo"])
+                planet_cols[2].metric("Saturn", clean_text(latest_tech.get("Saturn_Window")), clean_text(latest_tech.get("Saturn_Sign")), help=HELP_TEXT["astro_fibo"])
+                st.caption(f"Ephemeris: {clean_text(latest_tech.get('Ephemeris_Source'))}. {clean_text(latest_tech.get('Planetary_Detail'))}")
                 tech_start = tech_history["Date"].min()
                 tech_end = tech_history["Date"].max()
                 tech_range_label = f"{tech_start:%Y-%m-%d} s.d. {tech_end:%Y-%m-%d}" if pd.notna(tech_start) and pd.notna(tech_end) else "-"
@@ -6093,11 +6222,16 @@ with tab_history:
                     "Sun_Window",
                     "Planetary_Cycle_Score",
                     "Planetary_Window",
+                    "Ephemeris_Source",
                     "Mercury_Window",
                     "Venus_Window",
                     "Mars_Window",
                     "Jupiter_Window",
+                    "Jupiter_Sign",
+                    "Jupiter_Retrograde",
                     "Saturn_Window",
+                    "Saturn_Sign",
+                    "Saturn_Retrograde",
                     "Entry_Action",
                     "Position_Action",
                     "Exit_Risk",
@@ -6282,11 +6416,16 @@ with tab_history:
                     "Sun_Window",
                     "Planetary_Cycle_Score",
                     "Planetary_Window",
+                    "Ephemeris_Source",
                     "Mercury_Window",
                     "Venus_Window",
                     "Mars_Window",
                     "Jupiter_Window",
+                    "Jupiter_Sign",
+                    "Jupiter_Retrograde",
                     "Saturn_Window",
+                    "Saturn_Sign",
+                    "Saturn_Retrograde",
                     "Distance_52W_High_%",
                     "Distance_52W_Low_%",
                 ]
@@ -6407,11 +6546,16 @@ with tab_history:
                                     "Sun_Window",
                                     "Planetary_Cycle_Score",
                                     "Planetary_Window",
+                                    "Ephemeris_Source",
                                     "Mercury_Window",
                                     "Venus_Window",
                                     "Mars_Window",
                                     "Jupiter_Window",
+                                    "Jupiter_Sign",
+                                    "Jupiter_Retrograde",
                                     "Saturn_Window",
+                                    "Saturn_Sign",
+                                    "Saturn_Retrograde",
                                     "RSI14",
                                     "Volume_Ratio",
                                     "ATR_%",
