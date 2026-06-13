@@ -243,6 +243,7 @@ HELP_TEXT = {
     "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
     "position_sizing": "Position sizing menghitung estimasi lot dari modal, risiko per transaksi, harga terakhir, dan ATR stop. Ini alat perencanaan risiko, bukan instruksi order.",
     "fibonacci": "Fibonacci confluence membaca support/resistance dari swing high-low pada periode teknikal. Ini layer konfirmasi area harga, bukan prediksi pasti.",
+    "astro_fibo": "Layer terinspirasi Astronacci yang transparan: membaca jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, dan konfirmasi Fibo/teknikal. Ini bukan metode proprietary Astronacci dan bukan ramalan pasti.",
     "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. 6 bulan cocok untuk cek cepat, 1-2 tahun untuk kondisi terkini, 5-10 tahun untuk sample event lebih besar tetapi lebih lambat.",
     "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan simulasi broker penuh.",
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
@@ -2368,6 +2369,120 @@ def add_fibonacci_confluence(technical_history):
     return pd.concat(frames, ignore_index=True) if frames else technical_history
 
 
+def moon_phase_label(date_value):
+    if pd.isna(date_value):
+        return "-"
+    date_value = pd.Timestamp(date_value)
+    synodic_month = 29.53058867
+    known_new_moon = pd.Timestamp("2000-01-06")
+    days_since = (date_value.normalize() - known_new_moon).days
+    phase = days_since % synodic_month
+    if phase < 1.5 or phase >= synodic_month - 1.5:
+        return "New Moon Window"
+    if 6.0 <= phase <= 9.5:
+        return "First Quarter Window"
+    if 13.0 <= phase <= 16.5:
+        return "Full Moon Window"
+    if 20.5 <= phase <= 24.0:
+        return "Last Quarter Window"
+    return "Neutral Moon Phase"
+
+
+def add_astro_fibo_timing(technical_history):
+    if technical_history.empty:
+        return technical_history
+
+    fib_days = np.array([5, 8, 13, 21, 34, 55, 89, 144])
+    frames = []
+    for code, group in technical_history.groupby("Kode"):
+        timing = group.sort_values("Date").copy()
+        timing["Date"] = pd.to_datetime(timing["Date"], errors="coerce")
+        high = pd.to_numeric(timing.get("High", timing["Close"]), errors="coerce")
+        low = pd.to_numeric(timing.get("Low", timing["Close"]), errors="coerce")
+        close = pd.to_numeric(timing["Close"], errors="coerce")
+
+        valid_high = high.dropna()
+        valid_low = low.dropna()
+        if valid_high.empty or valid_low.empty:
+            timing["Last_Swing_Type"] = "-"
+            timing["Days_From_Swing"] = np.nan
+            timing["Nearest_Fibo_Time_Day"] = np.nan
+            timing["Distance_To_Fibo_Time_Day"] = np.nan
+            timing["Time_Window"] = "Unavailable"
+            timing["Moon_Phase"] = timing["Date"].map(moon_phase_label)
+            timing["Astro_Fibo_Timing_Score"] = 0.0
+            timing["Astro_Fibo_Bias"] = "Unavailable"
+            timing["Astro_Fibo_Reason"] = "Swing high/low belum cukup untuk time forecast."
+            frames.append(timing)
+            continue
+
+        swing_high_idx = valid_high.idxmax()
+        swing_low_idx = valid_low.idxmin()
+        swing_high_date = timing.loc[swing_high_idx, "Date"]
+        swing_low_date = timing.loc[swing_low_idx, "Date"]
+        use_low_swing = pd.notna(swing_low_date) and (pd.isna(swing_high_date) or swing_low_date >= swing_high_date)
+        swing_date = swing_low_date if use_low_swing else swing_high_date
+        swing_type = "Swing Low" if use_low_swing else "Swing High"
+
+        days_from_swing = (timing["Date"].dt.normalize() - pd.Timestamp(swing_date).normalize()).dt.days
+        nearest_fibo_day = pd.Series(np.nan, index=timing.index, dtype="float64")
+        distance_to_fibo_day = pd.Series(np.nan, index=timing.index, dtype="float64")
+        valid_days = days_from_swing.ge(0) & days_from_swing.notna()
+        if valid_days.any():
+            distances = np.abs(days_from_swing.loc[valid_days].to_numpy(dtype=float)[:, None] - fib_days[None, :])
+            nearest_positions = distances.argmin(axis=1)
+            nearest_values = fib_days[nearest_positions]
+            nearest_fibo_day.loc[valid_days] = nearest_values
+            distance_to_fibo_day.loc[valid_days] = np.abs(days_from_swing.loc[valid_days].to_numpy(dtype=float) - nearest_values)
+
+        moon_phase = timing["Date"].map(moon_phase_label)
+        moon_bonus = moon_phase.isin(["New Moon Window", "Full Moon Window"]).astype(int) * 10
+        time_score = (100 - distance_to_fibo_day.fillna(8).clip(0, 8) / 8 * 100).clip(0, 100)
+        fibo_score = pd.to_numeric(timing.get("Fibo_Confluence_Score", pd.Series(0, index=timing.index)), errors="coerce").fillna(0)
+        technical_score = pd.to_numeric(timing.get("Technical_Score", pd.Series(50, index=timing.index)), errors="coerce").fillna(50)
+        trend_bonus = np.where(timing.get("Trend_Bullish", pd.Series(False, index=timing.index)), 8, 0)
+        astro_score = (time_score * 0.45 + fibo_score * 0.25 + technical_score * 0.20 + moon_bonus + trend_bonus).clip(0, 100).round(1)
+
+        timing["Last_Swing_Type"] = swing_type
+        timing["Days_From_Swing"] = days_from_swing.where(valid_days)
+        timing["Nearest_Fibo_Time_Day"] = nearest_fibo_day
+        timing["Distance_To_Fibo_Time_Day"] = distance_to_fibo_day
+        timing["Time_Window"] = np.select(
+            [
+                distance_to_fibo_day.le(1),
+                distance_to_fibo_day.le(3),
+                distance_to_fibo_day.le(5),
+            ],
+            ["Exact Fibo Time", "Near Fibo Time", "Watch Window"],
+            default="Neutral Timing",
+        )
+        timing["Moon_Phase"] = moon_phase
+        timing["Astro_Fibo_Timing_Score"] = astro_score
+        timing["Astro_Fibo_Bias"] = np.select(
+            [
+                astro_score.ge(75) & close.gt(timing.get("MA50", close)),
+                astro_score.ge(60),
+                astro_score.lt(40),
+            ],
+            ["Timing Confluence", "Timing Watch", "Low Timing Edge"],
+            default="Neutral Timing",
+        )
+        timing["Astro_Fibo_Reason"] = (
+            timing["Last_Swing_Type"]
+            + " + "
+            + timing["Days_From_Swing"].fillna(-1).astype(int).astype(str)
+            + " hari; Fibo time "
+            + timing["Nearest_Fibo_Time_Day"].fillna(-1).astype(int).astype(str)
+            + "D; "
+            + timing["Moon_Phase"].astype(str)
+            + "; "
+            + timing["Fibo_Zone"].astype(str)
+        )
+        frames.append(timing)
+
+    return pd.concat(frames, ignore_index=True) if frames else technical_history
+
+
 def summarize_technical_indicators(technical_history):
     if technical_history.empty:
         return pd.DataFrame()
@@ -3049,7 +3164,7 @@ def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8
     if history.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    technical = add_fibonacci_confluence(add_historical_technical_scores(build_technical_indicators(history)))
+    technical = add_astro_fibo_timing(add_fibonacci_confluence(add_historical_technical_scores(build_technical_indicators(history))))
     if technical.empty:
         return pd.DataFrame(), pd.DataFrame()
 
@@ -3091,6 +3206,8 @@ def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8
         current_score = pd.to_numeric(current.get("Technical_Score"), errors="coerce")
         current_rsi = pd.to_numeric(current.get("RSI14"), errors="coerce")
         current_fibo_distance = pd.to_numeric(current.get("Distance_To_Fibo_%"), errors="coerce")
+        astro_bias = clean_text(current.get("Astro_Fibo_Bias"), "Neutral Timing")
+        current_astro_score = pd.to_numeric(current.get("Astro_Fibo_Timing_Score"), errors="coerce")
 
         similar = history_rows[history_rows["Technical_Signal"].eq(signal)].copy()
         if "Fibo_Zone" in similar.columns:
@@ -3110,6 +3227,14 @@ def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8
             bounded = similar[(similar["Distance_To_Fibo_%"] - current_fibo_distance).abs().le(8)]
             if len(bounded) >= min_sample:
                 similar = bounded
+        if "Astro_Fibo_Bias" in similar.columns:
+            bounded = similar[similar["Astro_Fibo_Bias"].eq(astro_bias)]
+            if len(bounded) >= min_sample:
+                similar = bounded
+        if pd.notna(current_astro_score) and "Astro_Fibo_Timing_Score" in similar.columns:
+            bounded = similar[(similar["Astro_Fibo_Timing_Score"] - current_astro_score).abs().le(18)]
+            if len(bounded) >= min_sample:
+                similar = bounded
 
         row = {
             "Kode": code,
@@ -3120,6 +3245,11 @@ def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8
             "Fibo_Zone": zone,
             "Nearest_Fibo_Level": current.get("Nearest_Fibo_Level"),
             "Fibo_Confluence_Score": current.get("Fibo_Confluence_Score"),
+            "Astro_Fibo_Timing_Score": current.get("Astro_Fibo_Timing_Score"),
+            "Astro_Fibo_Bias": astro_bias,
+            "Time_Window": current.get("Time_Window"),
+            "Nearest_Fibo_Time_Day": current.get("Nearest_Fibo_Time_Day"),
+            "Moon_Phase": current.get("Moon_Phase"),
             "RSI14": current.get("RSI14"),
             "Similarity_Sample": len(similar),
         }
@@ -3164,6 +3294,8 @@ def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8
             "Technical_Score",
             "Technical_Signal",
             "Fibo_Zone",
+            "Astro_Fibo_Bias",
+            "Time_Window",
             "RSI14",
         ] + [f"Forward_Return_{horizon}D_%" for horizon in horizons]
         detail_frames.append(similar[[column for column in detail_columns if column in similar.columns]].tail(100))
@@ -3870,7 +4002,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **Ringkasan**: snapshot eksekutif berisi kondisi universe, sumber data, distribusi rekomendasi, top kandidat, dan matriks faktor.
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
         - **Portofolio**: simulasi alokasi saham pilihan, konsentrasi sektor, campuran risiko, final action mix, dan estimasi lot.
-        - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, ringkasan teknikal top kandidat, candlestick/line, MA20/50/200, RSI, MACD, ATR, technical score, entry action, dan position action dari OHLCV yfinance/cache.
+        - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, ringkasan teknikal top kandidat, candlestick/line, MA20/50/200, RSI, MACD, ATR, Fibonacci, Astro-Fibo timing, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Validasi & Prediksi**: backtest event historis dan probabilitas setup teknikal yang mirip dengan kondisi saat ini.
         - **Explorer & Sektor**: scatter, histogram, outlier, dan ringkasan score/turnover per sektor atau industri.
         - **Data & Metodologi**: audit sumber, freshness, cache, update data, bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
@@ -3902,6 +4034,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
         - **Position sizing**: estimasi lot berdasarkan modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan.
         - **Fibonacci Confluence**: support/resistance dari swing high-low, nearest level, jarak harga, dan confluence score.
+        - **Astro-Fibo Timing**: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Fibonacci price zone, dan konfirmasi teknikal. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
         - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
         - **Walk-forward**: validasi event berurutan yang membandingkan performa train dan out-of-sample agar sinyal tidak hanya bagus secara agregat.
         - **Prediction Bias**: bias probabilistik dari setup historis yang mirip, bukan ramalan harga pasti.
@@ -3923,6 +4056,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - `Lot estimasi = min(risk budget / risk per share, max position value / close) / 100`, lalu dibulatkan ke bawah.
         - `Fibo retracement = Swing High - (Swing High - Swing Low) x rasio Fibonacci`.
         - `Fibo Confluence Score`: kedekatan harga ke level Fibo + zona golden ratio + konfirmasi trend/RSI.
+        - `Astro_Fibo_Timing_Score = Time window 45% + Fibo score 25% + Technical score 20% + moon/trend bonus`, dibatasi 0-100.
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
         - `Walk-forward Decay = Avg Return out-of-sample - Avg Return train`.
         - `Probability_Up_nD = jumlah setup historis mirip yang return nD positif / total setup valid`.
@@ -5230,7 +5364,7 @@ with tab_predict:
                     ascending=[True, False, False],
                     na_position="last",
                 ).drop(columns=["_Confidence_Rank"])
-                st.caption(f"Sumber prediksi: {prediction_source_label}. Similarity memakai Technical Signal, Fibo Zone, Technical Score, RSI, dan jarak Fibo.")
+                st.caption(f"Sumber prediksi: {prediction_source_label}. Similarity memakai Technical Signal, Fibo Zone, Technical Score, RSI, jarak Fibo, dan Astro-Fibo timing bila sampel cukup.")
                 pred_cols = st.columns(5)
                 pred_cols[0].metric("Kode diprediksi", f"{prediction_df['Kode'].nunique():,}")
                 pred_cols[1].metric("Bullish bias", f"{prediction_df['Prediction_Bias'].eq('Bullish Probability').sum():,}")
@@ -5254,6 +5388,11 @@ with tab_predict:
                     "Fibo_Zone",
                     "Nearest_Fibo_Level",
                     "Fibo_Confluence_Score",
+                    "Astro_Fibo_Timing_Score",
+                    "Astro_Fibo_Bias",
+                    "Time_Window",
+                    "Nearest_Fibo_Time_Day",
+                    "Moon_Phase",
                     "RSI14",
                     "Score",
                     "Recommendation",
@@ -5272,6 +5411,8 @@ with tab_predict:
                         "Similarity_Sample": st.column_config.NumberColumn("Similarity Sample", format="%d"),
                         "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
                         "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f"),
+                        "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
+                        "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
                         "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                         "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                         "Sector_Relative_Score": st.column_config.NumberColumn("Relatif Sektor", format="%.1f"),
@@ -5285,7 +5426,7 @@ with tab_predict:
                     size=sample_column,
                     color="Prediction_Bias",
                     hover_name="Kode",
-                    hover_data=["Nama Perusahaan", "Technical_Signal", "Fibo_Zone", "Model_Confidence", downside_column],
+                    hover_data=["Nama Perusahaan", "Technical_Signal", "Fibo_Zone", "Astro_Fibo_Bias", "Time_Window", "Model_Confidence", downside_column],
                     title=f"Probability vs expected return {primary_horizon}D",
                     color_discrete_map={
                         "Bullish Probability": "#15803d",
@@ -5311,6 +5452,9 @@ with tab_predict:
                             "Technical_Signal",
                             "Technical_Score",
                             "Fibo_Zone",
+                            "Astro_Fibo_Timing_Score",
+                            "Astro_Fibo_Bias",
+                            "Time_Window",
                             "RSI14",
                             *detail_return_columns,
                         ]
@@ -5321,6 +5465,7 @@ with tab_predict:
                                 "Date": st.column_config.DateColumn("Tanggal"),
                                 "Close": st.column_config.NumberColumn("Close", format="%.0f"),
                                 "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                                "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                                 "Forward_Return_20D_%": st.column_config.NumberColumn("Forward 20D", format="%.1f%%"),
                                 "Forward_Return_60D_%": st.column_config.NumberColumn("Forward 60D", format="%.1f%%"),
@@ -5645,7 +5790,7 @@ with tab_history:
                     with st.spinner("Menghitung ringkasan teknikal top kandidat..."):
                         auto_history, auto_error, auto_source_label = fetch_yahoo_history(auto_scan_codes, period=technical_period)
                         auto_indicators = build_technical_indicators(auto_history)
-                        auto_indicators = add_fibonacci_confluence(auto_indicators)
+                        auto_indicators = add_astro_fibo_timing(add_fibonacci_confluence(auto_indicators))
                         auto_summary = summarize_technical_indicators(auto_indicators)
                     if auto_error:
                         st.warning(auto_error)
@@ -5674,10 +5819,16 @@ with tab_history:
                             "Nearest_Fibo_Level",
                             "Distance_To_Fibo_%",
                             "Fibo_Confluence_Score",
+                            "Astro_Fibo_Timing_Score",
+                            "Astro_Fibo_Bias",
+                            "Time_Window",
+                            "Nearest_Fibo_Time_Day",
+                            "Moon_Phase",
                             "ATR_Stop_2x",
                             "ATR_Stop_Distance_%",
                             "Position_Risk_Bucket",
                             "Timing_Reason",
+                            "Astro_Fibo_Reason",
                             "Position_Reason",
                         ]
                         show_table(
@@ -5689,6 +5840,8 @@ with tab_history:
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                                 "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
                                 "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
+                                "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
+                                "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
                                 "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
                                 "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                             },
@@ -5701,7 +5854,7 @@ with tab_history:
                 st.info("Data OHLCV online/cache belum tersedia untuk teknikal. Coba periode lain atau refresh cache histori.")
             else:
                 tech_history = build_technical_indicators(tech_history)
-                tech_history = add_fibonacci_confluence(tech_history)
+                tech_history = add_astro_fibo_timing(add_fibonacci_confluence(tech_history))
                 tech_summary = summarize_technical_indicators(tech_history)
                 tech_decision = add_entry_decision(tech_summary, scored_df)
                 latest_tech = tech_decision.iloc[0] if not tech_decision.empty else pd.Series(dtype=object)
@@ -5718,6 +5871,11 @@ with tab_history:
                 fib_cols[1].metric("Nearest Fibo", clean_text(latest_tech.get("Nearest_Fibo_Level")), format_percent(latest_tech.get("Distance_To_Fibo_%")), help=HELP_TEXT["fibonacci"])
                 fib_cols[2].metric("Fibo Score", format_number(latest_tech.get("Fibo_Confluence_Score")), help=HELP_TEXT["fibonacci"])
                 fib_cols[3].metric("Fibo Price", format_rupiah(latest_tech.get("Nearest_Fibo_Price")), help=HELP_TEXT["fibonacci"])
+                astro_cols = st.columns(4)
+                astro_cols[0].metric("Astro-Fibo", clean_text(latest_tech.get("Astro_Fibo_Bias")), format_number(latest_tech.get("Astro_Fibo_Timing_Score")), help=HELP_TEXT["astro_fibo"])
+                astro_cols[1].metric("Time Window", clean_text(latest_tech.get("Time_Window")), help=HELP_TEXT["astro_fibo"])
+                astro_cols[2].metric("Fibo Time", f"{format_number(latest_tech.get('Nearest_Fibo_Time_Day'), 0)}D", help=HELP_TEXT["astro_fibo"])
+                astro_cols[3].metric("Moon Phase", clean_text(latest_tech.get("Moon_Phase")), help=HELP_TEXT["astro_fibo"])
                 tech_start = tech_history["Date"].min()
                 tech_end = tech_history["Date"].max()
                 tech_range_label = f"{tech_start:%Y-%m-%d} s.d. {tech_end:%Y-%m-%d}" if pd.notna(tech_start) and pd.notna(tech_end) else "-"
@@ -5737,6 +5895,11 @@ with tab_history:
                     "Nearest_Fibo_Level",
                     "Distance_To_Fibo_%",
                     "Fibo_Confluence_Score",
+                    "Astro_Fibo_Timing_Score",
+                    "Astro_Fibo_Bias",
+                    "Time_Window",
+                    "Nearest_Fibo_Time_Day",
+                    "Moon_Phase",
                     "Entry_Action",
                     "Position_Action",
                     "Exit_Risk",
@@ -5744,6 +5907,7 @@ with tab_history:
                     "ATR_Stop_Distance_%",
                     "Position_Risk_Bucket",
                     "Timing_Reason",
+                    "Astro_Fibo_Reason",
                     "Position_Reason",
                 ]
                 st.markdown("**Ringkasan keputusan teknikal**")
@@ -5755,6 +5919,8 @@ with tab_history:
                         "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
                         "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
                         "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
+                        "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
+                        "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
                         "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
                         "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                     },
@@ -5908,6 +6074,11 @@ with tab_history:
                     "Nearest_Fibo_Price",
                     "Distance_To_Fibo_%",
                     "Fibo_Confluence_Score",
+                    "Astro_Fibo_Timing_Score",
+                    "Astro_Fibo_Bias",
+                    "Time_Window",
+                    "Nearest_Fibo_Time_Day",
+                    "Moon_Phase",
                     "Distance_52W_High_%",
                     "Distance_52W_Low_%",
                 ]
@@ -5929,6 +6100,8 @@ with tab_history:
                             "Nearest_Fibo_Price": st.column_config.NumberColumn("Harga Fibo", format="%.0f", help=HELP_TEXT["fibonacci"]),
                             "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
                             "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
+                            "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
+                            "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
                             "Distance_52W_High_%": st.column_config.NumberColumn("Jarak 52W High", format="%.1f%%"),
                             "Distance_52W_Low_%": st.column_config.NumberColumn("Jarak 52W Low", format="%.1f%%"),
                         },
@@ -5965,7 +6138,7 @@ with tab_history:
                 with st.spinner("Mengambil OHLCV dan menghitung indikator teknikal..."):
                     scan_history, scan_error, scan_source_label = fetch_yahoo_history(scan_codes, period=technical_period)
                     scan_indicators = build_technical_indicators(scan_history)
-                    scan_indicators = add_fibonacci_confluence(scan_indicators)
+                    scan_indicators = add_astro_fibo_timing(add_fibonacci_confluence(scan_indicators))
                     scan_summary = summarize_technical_indicators(scan_indicators)
                 if scan_error:
                     st.warning(scan_error)
@@ -6016,6 +6189,11 @@ with tab_history:
                                     "Nearest_Fibo_Level",
                                     "Distance_To_Fibo_%",
                                     "Fibo_Confluence_Score",
+                                    "Astro_Fibo_Timing_Score",
+                                    "Astro_Fibo_Bias",
+                                    "Time_Window",
+                                    "Nearest_Fibo_Time_Day",
+                                    "Moon_Phase",
                                     "RSI14",
                                     "Volume_Ratio",
                                     "ATR_%",
@@ -6024,6 +6202,7 @@ with tab_history:
                                     "Position_Risk_Bucket",
                                     "Distance_52W_High_%",
                                     "Timing_Reason",
+                                    "Astro_Fibo_Reason",
                                     "Position_Reason",
                                 ]
                             ].head(50),
@@ -6033,6 +6212,8 @@ with tab_history:
                                 "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
                                 "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
                                 "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
+                                "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
+                                "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                                 "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
                                 "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),

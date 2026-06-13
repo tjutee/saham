@@ -34,7 +34,7 @@ lalu refresh online dilakukan manual/terkontrol.
 - Grafik utama memprioritaskan harga/volume yfinance atau cache online; Excel hanya dipakai bila online/cache kosong.
 - Sheet `Metrik` dimanfaatkan untuk market cap, revenue, subsektor, industri, subindustri, dan daftar indeks gabungan.
 - Grafik histori online fleksibel untuk saham IDX dengan ticker `KODE.JK`.
-- Analisa teknikal berbasis OHLCV yfinance/cache: candlestick, MA20/50/200, RSI, MACD, ATR, Technical Score, Entry Action, Position Action, dan ATR stop zone.
+- Analisa teknikal berbasis OHLCV yfinance/cache: candlestick, MA20/50/200, RSI, MACD, ATR, Fibonacci Confluence, Astro-Fibo Timing, Technical Score, Entry Action, Position Action, dan ATR stop zone.
 - Sumber harga/histori online utama: `yfinance`, fallback: `pandas-datareader`, cache lokal, lalu Excel bila tersedia.
 - Profil scoring: Balanced, Defensive, Growth, dan Value.
 - Bobot scoring bisa diatur langsung dari sidebar.
@@ -136,7 +136,7 @@ Area prediksi pada tab `Validasi & Prediksi` memakai setup historis yang mirip d
 ini untuk menghitung probabilitas statistik.
 
 - Output: `Prediction_Bias`, `Probability_Up_20D/60D`, `Expected_Return`, `Downside_Risk`, `Model_Confidence`, dan sample historis.
-- Similarity memakai `Technical_Signal`, `Fibo_Zone`, `Technical_Score`, `RSI`, dan jarak harga ke level Fibonacci.
+- Similarity memakai `Technical_Signal`, `Fibo_Zone`, `Technical_Score`, `RSI`, jarak harga ke level Fibonacci, dan Astro-Fibo timing bila sampel historis cukup.
 - Periode prediksi memakai opsi yang sama dengan Histori/Harga & Teknikal: 1 minggu, 2 minggu, 1/3/6 bulan, 1/2/5/10 tahun, dan all/sepanjang masa.
 - Default 2 tahun dipakai sebagai titik seimbang; periode pendek lebih cepat tetapi sering minim sample, sedangkan 5-10 tahun/All lebih kaya sample tetapi bisa mencampur rezim pasar lama.
 - Ini baseline probabilistik berbasis histori, bukan prediksi harga pasti dan belum memakai model ML berat seperti LightGBM.
@@ -175,6 +175,7 @@ score fundamental utama.
 - `ATR_Stop_2x`: zona risiko teknikal berbasis dua kali ATR dari harga terakhir, bukan instruksi order otomatis.
 - `Trade Plan & Position Sizing`: estimasi lot dari modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan. Hasil belum memperhitungkan fee, slippage, atau gap harga.
 - `Fibonacci Confluence`: level retracement/extension dari swing high-low periode teknikal untuk membaca support/resistance dan nearest level. Ini bukan prediksi pasti.
+- `Astro-Fibo Timing`: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Fibonacci price zone, dan konfirmasi teknikal. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
 
 Dashboard tidak memakai harga beli pribadi, sehingga `Position_Action` adalah
 arah umum berbasis kondisi saham terbaru.
@@ -204,6 +205,7 @@ Layer teknikal terpisah dari score fundamental:
 - ATR Stop 2x membantu membaca zona risiko teknikal.
 - Position sizing menghitung lot estimasi dengan risk budget / risk per share dan dibatasi maksimum nilai posisi.
 - Fibonacci Confluence memakai level 23.6%, 38.2%, 50%, 61.8%, 78.6%, 127.2%, dan 161.8% sebagai area support/resistance yang perlu dikonfirmasi oleh trend, RSI/MACD, volume, dan backtest.
+- Astro-Fibo Timing memakai hitungan hari Fibonacci 5, 8, 13, 21, 34, 55, 89, dan 144 dari swing terakhir, fase bulan sederhana, Fibo score, dan technical score untuk membaca jendela timing yang perlu dikonfirmasi.
 
 Layer explainability dan final decision:
 
