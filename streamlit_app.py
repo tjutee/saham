@@ -32,12 +32,15 @@ REGULAR_TRADING_SESSIONS = {
     "weekday": [("09:00", "11:30"), ("13:30", "15:50")],
     "friday": [("09:00", "11:30"), ("14:00", "15:50")],
 }
-PLANETARY_CYCLE_PROXIES = {
-    "Mercury": 115.88,
-    "Venus": 583.92,
-    "Mars": 779.94,
-    "Jupiter": 398.88,
-    "Saturn": 378.09,
+EPHEMERIS_FILE = "de421.bsp"
+EPHEMERIS_PLANETS = ["Mercury", "Venus", "Mars", "Jupiter", "Saturn"]
+SKYFIELD_BODY_NAMES = {
+    "Sun": "sun",
+    "Mercury": "mercury",
+    "Venus": "venus",
+    "Mars": "mars",
+    "Jupiter": "jupiter barycenter",
+    "Saturn": "saturn barycenter",
 }
 ZODIAC_SIGNS = [
     "Aries",
@@ -265,9 +268,9 @@ HELP_TEXT = {
     "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
     "position_sizing": "Position sizing menghitung estimasi lot dari modal, risiko per transaksi, harga terakhir, dan ATR stop. Ini alat perencanaan risiko, bukan instruksi order.",
     "fibonacci": "Fibonacci confluence membaca support/resistance dari swing high-low pada periode teknikal. Ini layer konfirmasi area harga, bukan prediksi pasti.",
-    "astro_fibo": "Layer terinspirasi Astronacci yang transparan: membaca jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, dan aspek Mercury/Venus/Mars/Jupiter/Saturn dari Swiss Ephemeris bila tersedia. Jika ephemeris gagal, dashboard fallback ke proxy siklus rata-rata. Ini bukan metode proprietary Astronacci dan bukan ramalan pasti.",
+    "astro_fibo": "Layer terinspirasi Astronacci yang transparan: membaca jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, dan aspek Mercury/Venus/Mars/Jupiter/Saturn dari JPL DE421 via Skyfield. Jika ephemeris asli tidak tersedia, komponen planet ditandai unavailable dan tidak ikut skor. Ini bukan metode proprietary Astronacci dan bukan ramalan pasti.",
     "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. 6 bulan cocok untuk cek cepat, 1-2 tahun untuk kondisi terkini, 5-10 tahun untuk sample event lebih besar tetapi lebih lambat.",
-    "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan simulasi broker penuh.",
+    "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan backtest broker penuh.",
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
     "backtest_horizon": "Horizon forward return setelah sinyal muncul. Contoh 20D berarti return 20 hari bursa setelah event.",
     "walk_forward": "Walk-forward membagi event historis secara berurutan: bagian awal sebagai in-sample dan bagian berikutnya sebagai out-of-sample. Ini membantu membaca robustness dan risiko overfitting.",
@@ -2501,66 +2504,30 @@ def nearest_aspect_label(angle):
     return "Neutral Aspect", distance, 0
 
 
-def planet_cycle_proxy_context(date_value):
-    if pd.isna(date_value):
-        empty = {
-            "Planetary_Cycle_Score": 0.0,
-            "Planetary_Window": "-",
-            "Planetary_Detail": "-",
-            "Ephemeris_Source": "Unavailable",
-        }
-        for planet in PLANETARY_CYCLE_PROXIES:
-            empty[f"{planet}_Window"] = "-"
-        return pd.Series(empty)
-
-    date_value = pd.Timestamp(date_value).normalize()
-    reference_date = pd.Timestamp("2000-01-01")
-    days_since = (date_value - reference_date).days
-    rows = {}
-    bonuses = []
-    active_windows = []
-    for planet, period in PLANETARY_CYCLE_PROXIES.items():
-        phase_day = days_since % period
-        markers = {
-            "Conjunction Proxy": 0.0,
-            "Square Proxy": period * 0.25,
-            "Opposition Proxy": period * 0.50,
-            "Trine Proxy": period * 0.75,
-        }
-        nearest_label, nearest_day, distance = min(
-            (
-                (label, marker_day, min(abs(phase_day - marker_day), period - abs(phase_day - marker_day)))
-                for label, marker_day in markers.items()
-            ),
-            key=lambda item: item[2],
-        )
-        exact_window = max(2.0, period * 0.015)
-        near_window = max(4.0, period * 0.030)
-        if distance <= exact_window:
-            window = nearest_label
-            bonus = 10 if planet in {"Jupiter", "Saturn"} else 7
-        elif distance <= near_window:
-            window = f"Near {nearest_label}"
-            bonus = 6 if planet in {"Jupiter", "Saturn"} else 4
-        else:
-            window = "Neutral Cycle"
-            bonus = 0
-        rows[f"{planet}_Window"] = window
-        rows[f"{planet}_Cycle_Day"] = round(float(phase_day), 1)
-        bonuses.append(bonus)
-        if bonus > 0:
-            active_windows.append(f"{planet}: {window}")
-
-    rows["Planetary_Cycle_Score"] = float(min(100, sum(bonuses) * 5))
-    rows["Planetary_Window"] = " | ".join(active_windows[:3]) if active_windows else "Neutral Planet Cycle"
-    rows["Planetary_Detail"] = "; ".join(active_windows) if active_windows else "Tidak ada proxy aspek planet besar yang dekat."
-    rows["Ephemeris_Source"] = "Cycle proxy"
+def unavailable_ephemeris_context(reason="Ephemeris unavailable"):
+    rows = {
+        "Planetary_Cycle_Score": 0.0,
+        "Planetary_Window": "Ephemeris unavailable",
+        "Planetary_Detail": reason,
+        "Ephemeris_Source": "Unavailable",
+    }
+    for planet in EPHEMERIS_PLANETS:
+        rows[f"{planet}_Longitude"] = np.nan
+        rows[f"{planet}_Sign"] = "-"
+        rows[f"{planet}_Retrograde"] = False
+        rows[f"{planet}_Aspect_To_Sun"] = "-"
+        rows[f"{planet}_Aspect_Distance"] = np.nan
+        rows[f"{planet}_Window"] = "Ephemeris unavailable"
     return pd.Series(rows)
+
+
+def signed_angle_delta(current, previous):
+    return ((float(current) - float(previous) + 180) % 360) - 180
 
 
 def planet_cycle_context(date_value):
     if pd.isna(date_value):
-        return planet_cycle_proxy_context(date_value)
+        return unavailable_ephemeris_context("Tanggal kosong; ephemeris tidak dihitung.")
 
     date_value = pd.Timestamp(date_value).normalize()
     cache_key = date_value.strftime("%Y-%m-%d")
@@ -2568,39 +2535,39 @@ def planet_cycle_context(date_value):
         return pd.Series(EPHEMERIS_CONTEXT_CACHE[cache_key])
 
     try:
-        import swisseph as swe
+        from skyfield.api import load
+        from skyfield.framelib import ecliptic_frame
 
-        jd = swe.julday(date_value.year, date_value.month, date_value.day, 12.0)
-        flags = swe.FLG_MOSEPH | swe.FLG_SPEED
-        body_ids = {
-            "Sun": swe.SUN,
-            "Mercury": swe.MERCURY,
-            "Venus": swe.VENUS,
-            "Mars": swe.MARS,
-            "Jupiter": swe.JUPITER,
-            "Saturn": swe.SATURN,
-        }
-        positions = {}
-        for body, body_id in body_ids.items():
-            values, _ = swe.calc_ut(jd, body_id, flags)
-            positions[body] = {
-                "longitude": float(values[0]) % 360,
-                "speed": float(values[3]) if len(values) > 3 else np.nan,
-            }
+        ts = load.timescale()
+        planets = load(EPHEMERIS_FILE)
+
+        def planet_longitude(day_offset=0):
+            target_date = date_value + pd.Timedelta(days=day_offset)
+            t = ts.utc(target_date.year, target_date.month, target_date.day, 12)
+            earth = planets["earth"]
+            output = {}
+            for body, skyfield_name in SKYFIELD_BODY_NAMES.items():
+                astrometric = earth.at(t).observe(planets[skyfield_name]).apparent()
+                _, lon, _ = astrometric.frame_latlon(ecliptic_frame)
+                output[body] = float(lon.degrees) % 360
+            return output
+
+        positions_today = planet_longitude(0)
+        positions_previous = planet_longitude(-1)
 
         rows = {
-            "Ephemeris_Source": "Swiss Ephemeris Moshier",
+            "Ephemeris_Source": f"JPL DE421 via Skyfield ({EPHEMERIS_FILE})",
             "Planetary_Window": "Neutral Planet Aspect",
             "Planetary_Detail": "Tidak ada aspek planet-ke-Sun besar yang dekat.",
         }
-        sun_longitude = positions["Sun"]["longitude"]
+        sun_longitude = positions_today["Sun"]
         active_windows = []
         bonuses = []
-        for planet in ["Mercury", "Venus", "Mars", "Jupiter", "Saturn"]:
-            longitude = positions[planet]["longitude"]
+        for planet in EPHEMERIS_PLANETS:
+            longitude = positions_today[planet]
             angle_to_sun = circular_distance(longitude, sun_longitude, 360.0)
             aspect_label, aspect_distance, aspect_bonus = nearest_aspect_label(angle_to_sun)
-            retrograde = positions[planet]["speed"] < 0 if pd.notna(positions[planet]["speed"]) else False
+            retrograde = signed_angle_delta(longitude, positions_previous[planet]) < 0
             bonus = aspect_bonus + (4 if retrograde and aspect_bonus > 0 else 0)
             rows[f"{planet}_Longitude"] = round(longitude, 2)
             rows[f"{planet}_Sign"] = zodiac_sign_from_longitude(longitude)
@@ -2617,11 +2584,10 @@ def planet_cycle_context(date_value):
         rows["Planetary_Detail"] = "; ".join(active_windows) if active_windows else rows["Planetary_Detail"]
         EPHEMERIS_CONTEXT_CACHE[cache_key] = rows
         return pd.Series(rows)
-    except Exception:
-        fallback = planet_cycle_proxy_context(date_value).to_dict()
-        fallback["Ephemeris_Source"] = "Cycle proxy fallback"
-        EPHEMERIS_CONTEXT_CACHE[cache_key] = fallback
-        return pd.Series(fallback)
+    except Exception as exc:
+        unavailable = unavailable_ephemeris_context(f"Ephemeris asli tidak tersedia: {exc}").to_dict()
+        EPHEMERIS_CONTEXT_CACHE[cache_key] = unavailable
+        return pd.Series(unavailable)
 
 
 def add_astro_fibo_timing(technical_history):
@@ -4277,7 +4243,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         **Menu utama**
         - **Ringkasan**: snapshot eksekutif berisi kondisi universe, sumber data, distribusi rekomendasi, top kandidat, dan matriks faktor.
         - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
-        - **Portofolio**: simulasi alokasi saham pilihan, konsentrasi sektor, campuran risiko, final action mix, dan estimasi lot.
+        - **Portofolio**: skenario alokasi saham pilihan, konsentrasi sektor, campuran risiko, final action mix, dan estimasi lot berbasis harga yang tersedia.
         - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, ringkasan teknikal top kandidat, candlestick/line, MA20/50/200, RSI, MACD, ATR, Fibonacci, Astro-Fibo timing, technical score, entry action, dan position action dari OHLCV yfinance/cache.
         - **Validasi & Prediksi**: backtest event historis dan probabilitas setup teknikal yang mirip dengan kondisi saat ini.
         - **Explorer & Sektor**: scatter, histogram, outlier, dan ringkasan score/turnover per sektor atau industri.
@@ -4310,7 +4276,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
         - **Position sizing**: estimasi lot berdasarkan modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan.
         - **Fibonacci Confluence**: support/resistance dari swing high-low, nearest level, jarak harga, dan confluence score.
-        - **Astro-Fibo Timing**: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari Swiss Ephemeris bila tersedia, Fibonacci price zone, dan konfirmasi teknikal. Jika ephemeris gagal, dashboard fallback ke proxy siklus rata-rata. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
+        - **Astro-Fibo Timing**: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari JPL DE421 via Skyfield, Fibonacci price zone, dan konfirmasi teknikal. Jika ephemeris asli tidak tersedia, komponen planet ditandai unavailable dan tidak ikut skor. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
         - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
         - **Walk-forward**: validasi event berurutan yang membandingkan performa train dan out-of-sample agar sinyal tidak hanya bagus secara agregat.
         - **Prediction Bias**: bias probabilistik dari setup historis yang mirip, bukan ramalan harga pasti.
@@ -5149,13 +5115,13 @@ with tab_reco:
 with tab_portfolio:
     st.subheader("Perencana portofolio")
     st.caption(
-        "Simulasi ini memakai hasil filter saat ini untuk membaca konsentrasi, risiko, final action mix, dan estimasi lot. "
+        "Skenario ini memakai hasil filter saat ini untuk membaca konsentrasi, risiko, final action mix, dan estimasi lot. "
         "Belum memperhitungkan fee, slippage, fraksi lot tidak bulat, atau kebutuhan pribadi."
     )
 
     portfolio_source = filtered.copy()
     if portfolio_source.empty:
-        st.warning("Tidak ada saham yang sesuai filter. Longgarkan filter sidebar untuk membuat simulasi portofolio.")
+        st.warning("Tidak ada saham yang sesuai filter. Longgarkan filter sidebar untuk membuat skenario alokasi portofolio.")
     else:
         preferred_actions = ["Accumulate Candidate", "Wait Market Confirmation", "Watchlist"]
         candidate_source = portfolio_source[portfolio_source["Final_Action"].isin(preferred_actions)].copy()
@@ -5189,7 +5155,7 @@ with tab_portfolio:
             )
         with port_controls[1]:
             portfolio_budget = st.number_input(
-                "Modal simulasi",
+                "Modal skenario",
                 min_value=1_000_000,
                 max_value=10_000_000_000,
                 value=100_000_000,
@@ -5331,7 +5297,7 @@ with tab_backtest:
     st.subheader("Backtest sinyal")
     st.caption(
         "Backtest ini event-based: menghitung forward return setelah sinyal teknikal muncul. "
-        "Ini bukan simulasi broker penuh dan belum memakai fundamental historis point-in-time."
+        "Ini bukan backtest broker penuh dan belum memakai fundamental historis point-in-time."
     )
 
     backtest_source = filtered if not filtered.empty else scored_df
@@ -7001,6 +6967,10 @@ with tab_method:
     st.subheader("Formula scoring multi-factor")
     st.markdown(
         """
+        Dashboard ini adalah screener kuantitatif awal. Data yang dipakai berasal dari sumber online, snapshot/cache repo,
+        cache histori, atau fallback Excel yang ditandai sumbernya; tidak ada data dummy/acak yang dibuat untuk menggantikan
+        data asli. Jika data asli tidak tersedia, status fallback/unavailable tetap ditampilkan agar keputusan bisa diaudit.
+
         Score akhir memakai normalisasi percentile yang dipotong di persentil 3 dan 97 agar outlier ekstrem tidak mendominasi.
 
         Faktor yang dihitung:
@@ -7016,18 +6986,30 @@ with tab_method:
         Penalti diterapkan untuk PER/PBV negatif, profitabilitas negatif, NPM negatif, volume rendah, harga nol, pergerakan harian ekstrem, dan kelulusan threshold yang terlalu rendah.
 
         Layer teknikal terpisah dari Score fundamental:
+        - MA20/50/200 memakai simple moving average dari harga penutupan.
+        - RSI14 memakai pendekatan 14 periode J. Welles Wilder untuk membaca momentum relatif.
+        - MACD memakai selisih EMA12 dan EMA26, dengan EMA9 sebagai signal line.
+        - ATR14 memakai rata-rata true range 14 periode sebagai ukuran volatilitas.
         - Technical Score memakai trend MA20/50/200, RSI, MACD, volume ratio, dan ATR.
         - Entry Action dipakai untuk calon pembelian: fundamental menjadi gerbang awal, teknikal menentukan timing.
         - Position Action dipakai untuk saham yang sudah dimiliki: Hold, Add on Pullback, Review Position, Tight Stop, Take Profit, Reduce, atau Exit / Sell.
         - Tidak ada harga beli pribadi yang dipakai; sinyal posisi adalah arahan umum berbasis data pasar terbaru.
         - ATR Stop 2x adalah zona risiko teknikal berbasis volatilitas, bukan instruksi order otomatis.
         - Fibonacci Confluence membaca area support/resistance dari swing high-low periode teknikal. Ini bukan prediksi pasti dan harus dibaca bersama trend, RSI/MACD, volume, serta backtest.
+        - Astro-Fibo Timing memakai jendela waktu Fibonacci, fase Bulan, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari JPL DE421 via Skyfield, Fibo score, dan technical score. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
 
         Explainability:
         - Decision Summary merangkum rekomendasi, posisi relatif sektor, dan risiko.
         - Top Strengths menunjukkan faktor skor tertinggi.
         - Top Risks menunjukkan faktor skor terlemah.
         - Action Checklist menunjukkan hal yang perlu dikonfirmasi sebelum entry/posisi.
+
+        Referensi:
+        - Data harga/histori: yfinance, pandas-datareader, cache repo, dan fallback Excel.
+        - RSI/ATR: J. Welles Wilder Jr., New Concepts in Technical Trading Systems.
+        - MACD: Gerald Appel, Moving Average Convergence/Divergence.
+        - Fibonacci retracement/extension: swing high-low dengan rasio 23.6%, 38.2%, 50%, 61.8%, 78.6%, 127.2%, dan 161.8%.
+        - Ephemeris planet: Skyfield + JPL DE421 (`de421.bsp`), dengan longitude geosentris ekliptika.
         """
     )
 

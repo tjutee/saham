@@ -1,4 +1,4 @@
-# Dashboard Rekomendasi Saham IDX
+# Dashboard Screener & Rekomendasi Awal Saham IDX
 
 Dashboard Streamlit interaktif untuk screening dan rekomendasi awal saham Indonesia
 dengan alur data online-first. Universe kode saham diprioritaskan dari daftar
@@ -11,6 +11,19 @@ Dashboard memakai pola cache-first untuk mengurangi lag saat jam bursa:
 startup membaca snapshot pasar dari `data_cache/market_snapshot_1y.csv` dan
 snapshot fundamental dari `data_cache/fundamental_snapshot.csv` bila tersedia,
 lalu refresh online dilakukan manual/terkontrol.
+
+## Tujuan & Batasan
+
+Tujuan dashboard ini adalah membantu menyaring saham IDX secara kuantitatif,
+menjelaskan alasan score, dan menyiapkan checklist analisis lanjutan. Output
+dashboard adalah rekomendasi awal berbasis data, bukan saran investasi personal,
+bukan order otomatis, dan bukan pengganti laporan keuangan, berita material,
+atau pertimbangan risiko portofolio pengguna.
+
+Data yang dipakai bukan dummy dan bukan data acak. Setiap angka berasal dari
+sumber online, snapshot/cache repo, cache histori, atau fallback Excel yang
+ditandai sumbernya. Jika data asli tidak tersedia, dashboard menampilkan status
+fallback/unavailable; komponen tersebut tidak dibuat seolah-olah valid.
 
 ## Fitur
 
@@ -106,6 +119,17 @@ Tab `Data & Metodologi` menampilkan audit sumber kode agar perbedaan antara daft
 resmi BEI/IDX, sumber online pelengkap, dan fallback Excel tetap terlihat,
 bukan diabaikan.
 
+## Definisi Output Utama
+
+- `Score`: ranking multi-factor internal 0-100 dari valuasi, kualitas, risiko, likuiditas, momentum, kekuatan indeks, dan penyesuaian sektor.
+- `Recommendation`: label screening awal dari `Score`, risiko, kualitas data, dan threshold fundamental.
+- `Final_Action`: playbook praktis setelah score, risiko, sektor, kualitas data, teknikal, dan market regime digabung.
+- `Decision_Confidence`: kebersihan sinyal akhir setelah blocker seperti data stale, risiko tinggi, threshold rendah, atau market risk-off diperhitungkan.
+- `Technical_Score`: konfirmasi timing berbasis MA, RSI, MACD, volume, dan ATR. Ini terpisah dari score fundamental.
+- `Astro_Fibo_Timing_Score`: konteks timing tambahan dari jendela waktu Fibonacci, Fibo price zone, fase Bulan, Sun cycle, aspek planet dari ephemeris asli, dan konfirmasi teknikal. Ini heuristic transparan, bukan formula proprietary Astronacci.
+- `Prediction_Bias`: probabilitas statistik dari setup historis yang mirip, bukan ramalan harga pasti.
+- `Portofolio`: skenario alokasi dari kandidat dan harga yang tersedia, bukan transaksi broker.
+
 ## Market Regime & Freshness
 
 Dashboard menambahkan konteks pasar besar agar saham bagus tidak dibaca lepas
@@ -122,7 +146,7 @@ lag data, dan fallback tetap transparan.
 ## Backtest
 
 Tab `Validasi & Prediksi` menguji sinyal historis dari OHLCV online/cache. Backtest awal
-ini event-based, bukan simulasi broker penuh.
+ini event-based, bukan backtest broker penuh.
 
 - Sinyal yang bisa diuji: `Bullish`, `Constructive`, `Weak`, `Overbought`, `MA50 Recovery`, dan `MA50 Breakdown`.
 - Metrik hasil: event count, hit rate 5/20/60 hari, average return, median return, dan max drawdown setelah event.
@@ -144,12 +168,12 @@ ini untuk menghitung probabilitas statistik.
 
 ## Portofolio
 
-Tab `Portofolio` mengubah kandidat hasil filter menjadi simulasi alokasi.
+Tab `Portofolio` mengubah kandidat hasil filter menjadi skenario alokasi berbasis harga dan skor aktual yang tersedia di dashboard.
 
 - Pilih saham dari kandidat `Final_Action` yang paling layak, lalu tentukan modal, metode alokasi, batas per saham, dan batas konsentrasi sektor.
 - Metode alokasi: equal weight, score-weighted, atau berbasis aksi akhir.
 - Output: nilai teralokasi, sisa kas, posisi terbesar, jumlah sektor, jumlah saham high risk, alokasi sektor, alokasi menurut aksi akhir, estimasi lot, dan next step.
-- Simulasi ini tidak mengirim order dan belum memperhitungkan fee, slippage, gap harga, pajak, atau tujuan pribadi.
+- Skenario ini tidak mengirim order dan belum memperhitungkan fee, slippage, gap harga, pajak, atau tujuan pribadi.
 
 ## Harga & Teknikal
 
@@ -175,7 +199,7 @@ score fundamental utama.
 - `ATR_Stop_2x`: zona risiko teknikal berbasis dua kali ATR dari harga terakhir, bukan instruksi order otomatis.
 - `Trade Plan & Position Sizing`: estimasi lot dari modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan. Hasil belum memperhitungkan fee, slippage, atau gap harga.
 - `Fibonacci Confluence`: level retracement/extension dari swing high-low periode teknikal untuk membaca support/resistance dan nearest level. Ini bukan prediksi pasti.
-- `Astro-Fibo Timing`: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari Swiss Ephemeris bila tersedia, Fibonacci price zone, dan konfirmasi teknikal. Jika ephemeris gagal, dashboard fallback ke proxy siklus rata-rata. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
+- `Astro-Fibo Timing`: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari JPL DE421 via Skyfield, Fibonacci price zone, dan konfirmasi teknikal. Jika ephemeris asli tidak tersedia, komponen planet ditandai unavailable dan tidak ikut skor. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
 
 Dashboard tidak memakai harga beli pribadi, sehingga `Position_Action` adalah
 arah umum berbasis kondisi saham terbaru.
@@ -199,13 +223,17 @@ Faktor yang dihitung:
 
 Layer teknikal terpisah dari score fundamental:
 
+- MA20/50/200 memakai simple moving average dari harga penutupan.
+- RSI14 memakai pendekatan 14 periode J. Welles Wilder untuk membaca momentum relatif, dengan skor terbaik di area sehat dan penalti saat terlalu panas/lemah.
+- MACD memakai selisih EMA12 dan EMA26, dengan EMA9 sebagai signal line.
+- ATR14 memakai rata-rata true range 14 periode sebagai ukuran volatilitas.
 - Technical Score memakai trend MA20/50/200, RSI, MACD, volume ratio, dan ATR.
 - Entry Action memakai fundamental sebagai gerbang awal, lalu teknikal untuk timing pembelian.
 - Position Action memberi arahan umum hold/reduce/take profit/exit untuk saham yang sudah dimiliki tanpa memakai harga beli pribadi.
 - ATR Stop 2x membantu membaca zona risiko teknikal.
 - Position sizing menghitung lot estimasi dengan risk budget / risk per share dan dibatasi maksimum nilai posisi.
 - Fibonacci Confluence memakai level 23.6%, 38.2%, 50%, 61.8%, 78.6%, 127.2%, dan 161.8% sebagai area support/resistance yang perlu dikonfirmasi oleh trend, RSI/MACD, volume, dan backtest.
-- Astro-Fibo Timing memakai hitungan hari Fibonacci 5, 8, 13, 21, 34, 55, 89, dan 144 dari swing terakhir, fase bulan sederhana, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari Swiss Ephemeris, Fibo score, dan technical score untuk membaca jendela timing yang perlu dikonfirmasi. Jika library ephemeris tidak tersedia, dashboard memakai proxy siklus rata-rata sebagai fallback transparan.
+- Astro-Fibo Timing memakai hitungan hari Fibonacci 5, 8, 13, 21, 34, 55, 89, dan 144 dari swing terakhir, fase bulan sederhana, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari JPL DE421 via Skyfield, Fibo score, dan technical score untuk membaca jendela timing yang perlu dikonfirmasi. Jika ephemeris asli tidak tersedia, komponen planet ditandai unavailable dan tidak ikut skor.
 
 Layer explainability dan final decision:
 
@@ -226,6 +254,28 @@ Layer portofolio:
 Penalti diterapkan untuk data yang kurang sehat, seperti PER/PBV negatif,
 profitabilitas negatif, volume rendah, harga nol, perubahan harian ekstrem,
 dan kelulusan threshold yang terlalu rendah.
+
+## Referensi Formula & Sumber Data
+
+Sumber data dan library:
+
+- Harga/histori utama: [`yfinance`](https://ranaroussi.github.io/yfinance/) untuk Yahoo Finance public API. Dokumentasi yfinance menegaskan library ini untuk riset/edukasi dan tunduk pada ketentuan Yahoo Finance.
+- Fallback histori: [`pandas-datareader`](https://pandas-datareader.readthedocs.io/en/latest/remote_data.html) bila pengambilan yfinance gagal.
+- Universe/fundamental pelengkap: endpoint BEI/IDX bila tersedia, TradingView scanner, StockAnalysis, cache repo, dan fallback `Ringkasan.xlsx`.
+- Ephemeris planet: [Skyfield](https://rhodesmill.org/skyfield/) dengan JPL `de421.bsp`; dokumentasi Skyfield menyebut DE421 mencakup 1900-2050 dan menghitung posisi planet dari file ephemeris JPL.
+
+Formula teknikal:
+
+- RSI dan ATR: J. Welles Wilder Jr., *New Concepts in Technical Trading Systems* (1978). Dashboard memakai periode umum 14.
+- MACD: Gerald Appel, Moving Average Convergence/Divergence; implementasi umum `MACD = EMA12 - EMA26`, `Signal = EMA9(MACD)`.
+- Fibonacci retracement/extension: level 23.6%, 38.2%, 50%, 61.8%, 78.6%, 127.2%, dan 161.8% dari swing high-low. Referensi praktis: [Investopedia Fibonacci Retracement](https://www.investopedia.com/terms/f/fibonacciretracement.asp).
+- Ecliptic longitude/zodiac: planet dibaca sebagai posisi geosentris terhadap ekliptika; zodiac sign dibagi per 30 derajat dari longitude 0-360. Ini dipakai sebagai label konteks, bukan prediksi ilmiah return saham.
+
+Rumus internal dashboard:
+
+- `Score`, `Technical_Score`, `Final_Action`, `Decision_Confidence`, `Fibo Confluence Score`, dan `Astro_Fibo_Timing_Score` adalah model scoring internal yang transparan di kode dan panel metodologi. Bobotnya bersifat rule-based dan dapat diaudit, bukan rumus akademik baku.
+- Astro-Fibo adalah layer timing terinspirasi pendekatan siklus waktu Astronacci secara umum, tetapi tidak mengklaim sebagai metode proprietary Dr. Gema Goeyardi. Komponen planet memakai ephemeris asli; bila file/library ephemeris gagal, skor planet menjadi 0 dan status ditandai unavailable.
+- Backtest bersifat event-based dari histori OHLCV online/cache. Ini bukan backtest broker penuh, belum memasukkan biaya, slippage, pajak, antrian order, atau fundamental historis point-in-time.
 
 ## Catatan
 
