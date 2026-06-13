@@ -2090,10 +2090,13 @@ def fetch_yahoo_history(codes, period="max"):
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_yahoo_news(code, limit=6):
+def fetch_yahoo_news(code, company_name="", limit=6, source_mode="Auto"):
     clean_code = clean_stock_code(code)
     if not clean_code:
         return pd.DataFrame(), "Pilih kode saham untuk mengambil berita.", "empty"
+
+    if source_mode == "Google News":
+        return fetch_google_news_rss(clean_code, company_name=company_name, limit=limit)
 
     try:
         import yfinance as yf
@@ -2143,13 +2146,19 @@ def fetch_yahoo_news(code, limit=6):
 
     news = pd.DataFrame(rows)
     if news.empty:
-        return fetch_google_news_rss(clean_code, limit=limit, prior_error="Yahoo Finance tidak menyediakan berita untuk kode ini.")
+        if source_mode == "Yahoo Finance":
+            return news, "Yahoo Finance tidak menyediakan berita untuk kode ini.", "empty"
+        return fetch_google_news_rss(clean_code, company_name=company_name, limit=limit, prior_error="Yahoo Finance tidak menyediakan berita untuk kode ini.")
     return news, None, "Yahoo Finance via yfinance"
 
 
-def fetch_google_news_rss(code, limit=6, prior_error=None):
+def fetch_google_news_rss(code, company_name="", limit=6, prior_error=None):
     clean_code = clean_stock_code(code)
-    query = quote_plus(f"{clean_code} saham OR {clean_code}.JK")
+    company_query = clean_text(company_name, "").replace("Tbk", "").replace("TBK", "").strip()
+    query_text = f'{clean_code} saham OR {clean_code}.JK'
+    if company_query:
+        query_text = f'{query_text} OR "{company_query}"'
+    query = quote_plus(query_text)
     url = f"https://news.google.com/rss/search?q={query}&hl=id&gl=ID&ceid=ID:id"
     try:
         import xml.etree.ElementTree as ET
@@ -5875,27 +5884,51 @@ with tab_explore.expander("Explorer saham", expanded=False):
             show_chart(fig)
 
 with tab_history:
-    st.subheader("Saham pilihan")
+    st.subheader("Workspace saham")
     history_source = filtered if not filtered.empty else scored_df
     focus_codes = history_source["Kode"].dropna().astype(str).str.upper().unique().tolist()
     focus_code = None
     if focus_codes:
-        default_shortlist = focus_codes[: min(5, len(focus_codes))]
-        selected_focus_codes = st.multiselect(
-            "Shortlist saham",
-            focus_codes,
-            default=default_shortlist,
-            help="Pilih beberapa saham untuk dibandingkan. Shortlist ini dipakai untuk tabel perbandingan dan grafik histori.",
-        )
+        workspace_cols = st.columns([1, 1, 1])
+        with workspace_cols[0]:
+            shortlist_mode = st.segmented_control(
+                "Mode shortlist",
+                ["Top hasil filter", "Pilih manual"],
+                default="Top hasil filter",
+                help="Top hasil filter mengikuti ranking/filter sidebar. Pilih manual memberi kontrol penuh atas daftar saham.",
+            )
+        with workspace_cols[1]:
+            shortlist_size = safe_slider(
+                "Jumlah shortlist",
+                1,
+                min(20, len(focus_codes)),
+                min(5, len(focus_codes)),
+                step=1,
+                help="Jumlah saham yang dibandingkan di workspace.",
+            )
+        default_shortlist = focus_codes[:shortlist_size]
+        if shortlist_mode == "Pilih manual":
+            selected_focus_codes = st.multiselect(
+                "Shortlist saham",
+                focus_codes,
+                default=default_shortlist,
+                help="Pilih beberapa saham untuk dibandingkan. Shortlist ini dipakai untuk tabel perbandingan dan grafik histori.",
+            )
+        else:
+            selected_focus_codes = default_shortlist
+            st.caption("Shortlist otomatis mengikuti top hasil filter saat ini. Ubah filter/sidebar untuk mengubah kandidat otomatis.")
         if not selected_focus_codes:
             selected_focus_codes = default_shortlist
             st.info("Minimal satu saham diperlukan. Dashboard memakai shortlist teratas dari hasil filter.")
-        focus_code = st.selectbox(
-            "Fokus detail",
-            selected_focus_codes,
-            index=0,
-            help="Pilih satu saham dari shortlist untuk berita, prospek, dan analisa teknikal detail.",
-        )
+        if st.session_state.get("workspace_focus_code") not in selected_focus_codes:
+            st.session_state["workspace_focus_code"] = selected_focus_codes[0]
+        with workspace_cols[2]:
+            focus_code = st.selectbox(
+                "Fokus detail",
+                selected_focus_codes,
+                help="Pilih satu saham dari shortlist untuk berita, prospek, dan analisa teknikal detail.",
+                key="workspace_focus_code",
+            )
         shortlist_view = scored_df[scored_df["Kode"].astype(str).str.upper().isin(selected_focus_codes)].copy()
         shortlist_columns = [
             "Kode",
@@ -5953,11 +5986,28 @@ with tab_history:
                 st.write(f"Langkah berikutnya: {clean_text(focus_row.get('Next_Step'), '-')}")
             with focus_info_cols[1]:
                 st.markdown("**Berita & issue terbaru**")
-                news_df, news_error, news_source = fetch_yahoo_news(focus_code, limit=5)
+                news_controls = st.columns([1, 1, 1])
+                with news_controls[0]:
+                    news_source_mode = st.selectbox(
+                        "Sumber berita",
+                        ["Auto", "Google News", "Yahoo Finance"],
+                        help="Auto mencoba Yahoo Finance lalu Google News. Google News biasanya lebih lengkap untuk IDX.",
+                    )
+                with news_controls[1]:
+                    news_limit = safe_slider("Jumlah berita", 3, 10, 5, step=1)
+                with news_controls[2]:
+                    if st.button("Refresh berita", help="Hapus cache berita dan ambil ulang dari sumber live."):
+                        fetch_yahoo_news.clear()
+                news_df, news_error, news_source = fetch_yahoo_news(
+                    focus_code,
+                    company_name=focus_row.get("Nama Perusahaan"),
+                    limit=news_limit,
+                    source_mode=news_source_mode,
+                )
                 if news_error:
                     st.info(news_error)
                 else:
-                    st.caption(f"Sumber: {news_source}. Berita ditampilkan apa adanya dari provider.")
+                    st.caption(f"Fokus: {focus_code} - {clean_text(focus_row.get('Nama Perusahaan'))}. Sumber: {news_source}. Berita ditampilkan apa adanya dari provider.")
                     show_table(
                         news_df,
                         hide_index=True,
