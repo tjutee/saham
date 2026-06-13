@@ -2483,8 +2483,13 @@ def planet_cycle_context(date_value):
             "Opposition Proxy": period * 0.50,
             "Trine Proxy": period * 0.75,
         }
-        nearest_label, nearest_day = min(markers.items(), key=lambda item: abs(phase_day - item[1]))
-        distance = min(abs(phase_day - nearest_day), period - abs(phase_day - nearest_day))
+        nearest_label, nearest_day, distance = min(
+            (
+                (label, marker_day, min(abs(phase_day - marker_day), period - abs(phase_day - marker_day)))
+                for label, marker_day in markers.items()
+            ),
+            key=lambda item: item[2],
+        )
         exact_window = max(2.0, period * 0.015)
         near_window = max(4.0, period * 0.030)
         if distance <= exact_window:
