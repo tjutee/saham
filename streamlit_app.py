@@ -5880,7 +5880,59 @@ with tab_history:
     focus_codes = history_source["Kode"].dropna().astype(str).str.upper().unique().tolist()
     focus_code = None
     if focus_codes:
-        focus_code = st.selectbox("Saham fokus", focus_codes, index=0, help="Pilih saham utama untuk ringkasan, berita, histori, dan teknikal.")
+        default_shortlist = focus_codes[: min(5, len(focus_codes))]
+        selected_focus_codes = st.multiselect(
+            "Shortlist saham",
+            focus_codes,
+            default=default_shortlist,
+            help="Pilih beberapa saham untuk dibandingkan. Shortlist ini dipakai untuk tabel perbandingan dan grafik histori.",
+        )
+        if not selected_focus_codes:
+            selected_focus_codes = default_shortlist
+            st.info("Minimal satu saham diperlukan. Dashboard memakai shortlist teratas dari hasil filter.")
+        focus_code = st.selectbox(
+            "Fokus detail",
+            selected_focus_codes,
+            index=0,
+            help="Pilih satu saham dari shortlist untuk berita, prospek, dan analisa teknikal detail.",
+        )
+        shortlist_view = scored_df[scored_df["Kode"].astype(str).str.upper().isin(selected_focus_codes)].copy()
+        shortlist_columns = [
+            "Kode",
+            "Nama Perusahaan",
+            "Final_Action",
+            "Decision_Confidence",
+            "Recommendation",
+            "Risk_Level",
+            "Clean_Data",
+            "Score",
+            "Sector_Relative_Score",
+            "Threshold_Pass_Ratio",
+            "Penutupan",
+            "PER",
+            "PBV",
+            "ROE",
+            "Return_52W",
+            "Price_Source",
+            "Next_Step",
+        ]
+        st.markdown("**Perbandingan shortlist**")
+        show_table(
+            shortlist_view[[column for column in shortlist_columns if column in shortlist_view.columns]].sort_values("Score", ascending=False),
+            hide_index=True,
+            column_config={
+                "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
+                "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
+                "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
+                "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
+                "PER": st.column_config.NumberColumn("PER", format="%.2f", help=HELP_TEXT["per"]),
+                "PBV": st.column_config.NumberColumn("PBV", format="%.2f", help=HELP_TEXT["pbv"]),
+                "ROE": st.column_config.NumberColumn("ROE", format="%.1f%%", help=HELP_TEXT["roe"]),
+                "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
+                "Clean_Data": st.column_config.CheckboxColumn("Clean", help=HELP_TEXT["clean_data"]),
+            },
+        )
+
         focus_stock = scored_df[scored_df["Kode"].astype(str).str.upper().eq(focus_code)].head(1)
         if not focus_stock.empty:
             focus_row = focus_stock.iloc[0]
@@ -5919,6 +5971,7 @@ with tab_history:
                     )
     else:
         st.warning("Tidak ada kode saham pada filter saat ini.")
+        selected_focus_codes = []
 
     st.divider()
     st.subheader("Histori harga")
@@ -5951,7 +6004,7 @@ with tab_history:
         selected_codes = history_source.head(top_n_history)["Kode"].tolist()
         st.caption(f"Mode all memakai top {len(selected_codes)} saham dari hasil filter/ranking saat ini.")
     else:
-        default_codes = [focus_code] if focus_code else history_source.head(5)["Kode"].tolist()
+        default_codes = selected_focus_codes if selected_focus_codes else ([focus_code] if focus_code else history_source.head(5)["Kode"].tolist())
         selected_codes = st.multiselect(
             "Pilih saham untuk grafik histori",
             options=scored_df["Kode"].tolist(),
