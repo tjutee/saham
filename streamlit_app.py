@@ -224,24 +224,24 @@ HELP_TEXT = {
     "der_banking": "Jika aktif, filter DER maksimum juga diterapkan ke saham Banking. Default mati karena struktur neraca bank berbeda dari non-bank.",
     "history_source": "Online yfinance memakai ticker KODE.JK dan menjadi sumber utama grafik histori. Excel Metrik hanya mode pembanding/cadangan bila data online kosong.",
     "fundamental_source": "Fundamental diprioritaskan dari online TradingView scanner bila tersedia, lalu Excel mengisi rasio/metadata yang kosong. Sumber BEI/IDX tetap utama untuk universe kode saham.",
-    "history_scope": "Saham pilihan memakai kode yang dipilih manual. All/top N memakai saham teratas dari hasil filter saat ini, biasanya berdasarkan ranking Score setelah filter.",
+    "history_scope": "Shortlist workspace memakai saham yang sedang dipilih di Workspace saham. All/top N memakai saham teratas dari filter/sidebar saat ini.",
     "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
-    "history_codes": "Masukkan kode IDX tanpa akhiran .JK, misalnya BBCA atau BBRI. Dashboard otomatis memanggil format online BBCA.JK.",
-    "history_period": "Rentang data online yang dipakai bersama oleh Histori, Teknikal, dan Prediksi. 1-2 minggu cocok untuk monitoring cepat; 1-6 bulan untuk swing; 1-2 tahun untuk MA200/52W; 5-10 tahun/All untuk sample historis lebih kaya tetapi lebih lambat.",
+    "history_codes": "Pilih kode IDX tanpa akhiran .JK. Default mengikuti shortlist aktif di Workspace saham, lalu dashboard memanggil format online KODE.JK.",
+    "history_period": "Rentang data online untuk grafik histori. 1-2 minggu cocok untuk monitoring cepat; 1-6 bulan untuk swing; 1-2 tahun untuk MA200/52W; 5-10 tahun/All lebih kaya sample tetapi lebih lambat.",
     "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
     "final_action": "Final_Action menggabungkan Score, Recommendation, Clean_Data, Risk_Level, Threshold, relatif sektor, momentum, dan market regime menjadi playbook keputusan yang lebih praktis.",
-    "portfolio": "Portofolio memakai saham pilihan dari hasil filter untuk membaca konsentrasi sektor, campuran risiko, aksi akhir, dan estimasi alokasi. Ini alat perencanaan, bukan order otomatis.",
+    "portfolio": "Portofolio memakai kandidat dari hasil filter/Screener untuk membaca konsentrasi sektor, campuran risiko, aksi akhir, dan estimasi alokasi. Ini alat perencanaan, bukan order otomatis.",
     "risk_level": "Risk_Level adalah kategori risiko relatif dari model berdasarkan rasio, volatilitas, likuiditas, dan penalti. Tetap perlu validasi berita dan laporan keuangan.",
     "turnover": "Turnover = Penutupan x Volume. Grafik utama memakai harga/volume yfinance/cache bila tersedia; Excel hanya fallback saat online kosong.",
     "return": "Return = harga akhir / harga awal - 1. Nilai ditampilkan dalam persen dan hanya menjelaskan performa periode historis.",
-    "reco_sort": "Metrik untuk mengurutkan grafik dan tabel rekomendasi. Mengubah urutan tampilan saja, bukan rumus Score.",
-    "reco_limit": "Jumlah saham yang ditampilkan setelah seluruh filter sidebar, label rekomendasi, dan sort diterapkan.",
+    "reco_sort": "Metrik untuk mengurutkan grafik dan tabel Screener. Mengubah urutan tampilan saja, bukan rumus Score.",
+    "reco_limit": "Jumlah saham yang ditampilkan di Screener setelah seluruh filter sidebar, label score, dan sort diterapkan.",
     "reco_ascending": "Aktifkan untuk mengurutkan dari nilai terendah ke tertinggi pada metrik pilihan. Berguna untuk audit saham lemah atau rasio rendah.",
     "table_columns": "Pilih kolom tabel yang ingin ditampilkan. Ini hanya mengatur tampilan, tidak mengubah data, filter, atau scoring.",
-    "explorer_axis": "Pilih rasio atau skor untuk sumbu grafik eksplorasi. Pilihan sumbu hanya mengubah visual scatter, bukan rekomendasi.",
-    "explore_color": "Warna titik menunjukkan dimensi tambahan seperti Score, risiko, rekomendasi, aksi akhir, atau sektor agar pola lebih mudah dibaca.",
+    "explorer_axis": "Pilih rasio atau skor untuk sumbu grafik eksplorasi. Pilihan sumbu hanya mengubah visual scatter, bukan hasil scoring.",
+    "explore_color": "Warna titik menunjukkan dimensi tambahan seperti Score, risiko, label score, aksi akhir, atau sektor agar pola lebih mudah dibaca.",
     "explore_size": "Ukuran bubble memakai metrik seperti Volume, Turnover, Score, Liquidity_Score, atau Index_Count. Ini hanya encoding visual.",
-    "explore_limit": "Membatasi jumlah titik scatter agar grafik tetap cepat dan mudah dibaca. Data rekomendasi utama tidak dipotong.",
+    "explore_limit": "Membatasi jumlah titik scatter agar grafik tetap cepat dan mudah dibaca. Data Screener utama tidak dipotong.",
     "histogram": "Pilih sampai tiga metrik untuk melihat distribusi nilai. Berguna untuk mendeteksi outlier dan sebaran rasio.",
     "history_chart_type": "Line cocok untuk perbandingan presisi banyak saham. Area lebih enak untuk satu atau sedikit saham karena area bisa menumpuk secara visual.",
     "history_table": "Menampilkan ringkasan angka histori seperti tanggal terakhir, harga awal/akhir, dan return total di bawah grafik.",
@@ -251,15 +251,15 @@ HELP_TEXT = {
     "sector_chart": "Bar untuk ranking, Treemap untuk komposisi market cap, Scatter untuk membaca hubungan score dan ukuran kelompok.",
     "factor_inspect": "Pilih faktor untuk melihat distribusi dan contoh saham teratas. Ini alat audit metodologi, bukan filter baru.",
     "factor_top_n": "Jumlah contoh saham teratas yang ditampilkan untuk faktor yang sedang diinspeksi.",
-    "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai rekomendasi.",
+    "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai hasil Screener.",
     "audit_code": "Pilih satu atau beberapa kode saham untuk melihat alasan lolos/gagal pada filter aktif dan preset pembanding.",
     "audit_scope": "Cakupan audit filter. Semua saham mengecek seluruh universe final, Hasil filter aktif hanya saham yang lolos filter sidebar, Kode pilihan untuk investigasi manual.",
     "universe_audit": "Universe kode saham diprioritaskan dari daftar resmi BEI/IDX. Setelah itu dashboard melengkapi data dari sumber online seperti yfinance dan TradingView scanner, lalu Excel hanya sebagai fallback/ide algoritme.",
-    "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih lebih panjang untuk analisis historis, lebih pendek untuk refresh cepat.",
+    "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih pendek untuk refresh cepat, panjang untuk analisis/teknikal yang lebih stabil.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
-    "technical_period": "Rentang OHLCV online yang sama dengan Histori. Periode pendek cocok untuk RSI/MACD cepat; minimal 1-2 tahun disarankan agar MA200, 52W, ATR, dan level Fibonacci lebih stabil.",
-    "technical_code": "Pilih satu kode saham untuk candlestick dan indikator detail. Data diambil dari yfinance/cache memakai format KODE.JK.",
+    "technical_period": "Rentang OHLCV online untuk analisa teknikal fokus detail. Periode pendek cocok untuk RSI/MACD cepat; 1-2 tahun lebih stabil untuk MA200, 52W, ATR, dan Fibonacci.",
+    "technical_code": "Kode teknikal default mengikuti Fokus detail di Workspace saham. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif. Kosongkan pilihan untuk menampilkan semua sinyal.",
     "entry_action": "Entry_Action menggabungkan fundamental dan teknikal: fundamental memilih saham layak, teknikal menentukan timing entry/tunggu/tahan/take profit. Kosongkan filter untuk menampilkan semua aksi entry.",
@@ -275,7 +275,10 @@ HELP_TEXT = {
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
     "backtest_horizon": "Horizon forward return setelah sinyal muncul. Contoh 20D berarti return 20 hari bursa setelah event.",
     "walk_forward": "Walk-forward membagi event historis secara berurutan: bagian awal sebagai in-sample dan bagian berikutnya sebagai out-of-sample. Ini membantu membaca robustness dan risiko overfitting.",
-    "prediction": "Prediksi memakai periode yang sama dengan Histori/Harga & Teknikal. Periode pendek cepat tetapi sering kekurangan sample; default 2 tahun lebih seimbang; 5-10 tahun/All memberi sample lebih banyak tetapi bisa mencampur rezim lama. Output adalah probabilitas historis setup mirip, bukan prediksi harga pasti.",
+    "prediction": "Prediksi memakai OHLCV online/cache untuk mencari setup historis yang mirip. Periode pendek cepat tetapi sering kekurangan sample; default 2 tahun lebih seimbang; 5-10 tahun/All lebih kaya sample tetapi bisa mencampur rezim lama. Output adalah probabilitas historis, bukan prediksi harga pasti.",
+    "workspace_shortlist": "Top hasil filter otomatis mengikuti filter/sidebar dan ranking saat ini. Pilih manual memberi kontrol penuh untuk membandingkan beberapa saham tertentu.",
+    "workspace_focus": "Fokus detail adalah satu saham aktif dari shortlist. Berita, prospek, histori default, dan teknikal akan mengikuti kode ini.",
+    "news_source": "Auto mencoba Yahoo Finance lalu Google News. Google News biasanya lebih lengkap untuk emiten IDX; Yahoo Finance kadang kosong untuk sebagian kode.",
 }
 
 ANALYSIS_COLUMNS = [
@@ -403,7 +406,7 @@ CHART_AXIS_COLOR = "#64748b"
 
 
 st.set_page_config(
-    page_title="Dashboard Rekomendasi Saham IDX",
+    page_title="Screener Saham IDX",
     page_icon=":chart_with_upwards_trend:",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1257,7 +1260,7 @@ def build_data_quality_report(scored, raw):
             "Check": "Return 52 minggu kosong",
             "Rows": int(missing_history.sum()),
             "Severity": "Low",
-            "Action": "Gunakan tab Harga & Teknikal untuk melengkapi konteks tren.",
+            "Action": "Gunakan Workspace saham untuk melengkapi konteks tren, berita, dan teknikal.",
         },
         {
             "Area": "Sumber",
@@ -1507,7 +1510,7 @@ def add_final_decision_layer(scored):
 
         if fundamental_strong and sector_ok and momentum_ok and market_regime != "Risk-Off":
             action = "Accumulate Candidate"
-            next_step = "Cek Harga & Teknikal untuk entry action, Fibo zone, ATR stop, dan position sizing."
+            next_step = "Cek Workspace saham untuk entry action, Fibo zone, ATR stop, berita, dan position sizing."
         elif fundamental_strong and market_regime == "Risk-Off":
             action = "Wait Market Confirmation"
             next_step = "Saham layak, tetapi market risk-off. Tunggu breadth/IHSG membaik atau gunakan entry bertahap kecil."
@@ -4329,9 +4332,9 @@ data_file_status = get_file_status(DATA_FILE)
 data_update_label = get_data_update_label(raw_df, data_file_status)
 market_session_status = get_market_session_status()
 
-st.title("Dashboard Screener & Rekomendasi Awal Saham IDX")
+st.title("Screener Saham IDX")
 st.caption(
-    f"Data online-first, update {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). Universe kode diprioritaskan dari BEI/IDX; yfinance mengisi harga/histori; TradingView scanner mengisi fundamental online; {DATA_FILE} menjadi fallback dan acuan metodologi. Sistem scoring multi-factor untuk screening awal, bukan nasihat investasi."
+    f"Workspace screening saham IDX berbasis data online/cache. Update data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). BEI/IDX dipakai untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya sebagai fallback/audit. Hasil adalah screener awal, bukan nasihat investasi."
 )
 st.caption(market_session_status["Detail"])
 if raw_df.attrs.get("universe_error"):
@@ -4341,20 +4344,21 @@ if raw_df.attrs.get("market_error"):
 if raw_df.attrs.get("fundamental_error"):
     st.warning(f"Sebagian data fundamental online memakai fallback Excel. Detail: {raw_df.attrs.get('fundamental_error')}")
 
-with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=False):
+with st.expander("Panduan singkat penggunaan", expanded=False):
     st.markdown(
         """
         **Cara pakai cepat**
-        1. Mulai dari **Ringkasan** untuk melihat kondisi filter, market regime, kandidat utama, dan kualitas data.
-        2. Buka **Rekomendasi** untuk ranking saham. Pilih tampilan tabel `Ringkas`, `Analisis`, atau `Audit` sesuai kebutuhan.
-        3. Cek **Harga & Teknikal** hanya untuk kandidat terpilih: Entry Action, Position Action, RSI, Fibonacci, ATR stop, dan Astro-Fibo.
-        4. Gunakan **Validasi & Prediksi** untuk membaca bukti historis, bukan untuk menganggap return masa depan pasti.
-        5. Pakai **Data & Metodologi** saat perlu audit sumber, freshness, threshold, bobot, dan formula.
+        1. Buka **Dashboard** untuk melihat kondisi filter, market regime, kandidat utama, dan kualitas data.
+        2. Buka **Screener** untuk ranking saham. Pilih tabel `Ringkas`, `Analisis`, atau `Audit` sesuai kebutuhan.
+        3. Buka **Workspace saham** untuk membuat shortlist, memilih fokus detail, membaca prospek/berita, histori, dan teknikal.
+        4. Buka **Validasi & Portofolio** untuk backtest, prediksi probabilistik, dan skenario alokasi.
+        5. Buka **Data & Audit** untuk freshness, sumber data, filter audit, explorer, sektor, dan metodologi.
 
         **Definisi inti**
         - `Score`: ranking multi-factor 0-100 dari valuasi, kualitas, risiko, likuiditas, momentum, indeks, dan penalti.
         - `Final_Action`: playbook akhir dari Score, data, risiko, sektor, threshold, momentum, dan market regime.
         - `Technical_Score`: timing dari MA, RSI, MACD, volume, dan ATR; tidak mengganti Score fundamental.
+        - `Workspace`: shortlist membandingkan beberapa saham; fokus detail mengontrol berita, prospek, histori default, dan teknikal.
         - `Astro-Fibo`: konteks timing dari Fibonacci time window, Moon/Sun cycle, dan aspek planet JPL DE421 via Skyfield. Ini heuristic transparan, bukan formula proprietary dan bukan ramalan.
         - `Clean_Data`: data lolos pemeriksaan minimum; ini bukan jaminan aman investasi.
 
@@ -4371,12 +4375,12 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
     )
 
 with st.sidebar:
-    st.header("Filter & Strategi")
+    st.header("Filter screener")
     ui_mode = st.radio(
         "Mode filter",
         ["Cepat", "Lengkap"],
         horizontal=True,
-        help="Cepat menampilkan kontrol utama saja. Lengkap membuka rasio, threshold, dan bobot untuk analisis detail.",
+        help="Cepat menampilkan kontrol utama untuk screening harian. Lengkap membuka rasio, threshold, dan bobot untuk audit detail.",
     )
     advanced_mode = ui_mode == "Lengkap"
     profile = st.selectbox("Profil scoring", list(PROFILE_WEIGHTS), index=0, help=HELP_TEXT["profile"])
@@ -4386,7 +4390,7 @@ with st.sidebar:
     if safe_preset:
         st.info("Preset filter konservatif aktif: filter dibuat lebih ketat. Bobot Score tetap mengikuti Profil scoring yang dipilih.")
 
-    with st.expander("Sesuaikan bobot", expanded=advanced_mode):
+    with st.expander("Bobot score", expanded=advanced_mode):
         weights["valuation"] = st.slider("Valuasi", 0, 50, weights["valuation"], help=HELP_TEXT["valuation"])
         weights["quality"] = st.slider("Kualitas profit", 0, 50, weights["quality"], help=HELP_TEXT["quality"])
         weights["risk"] = st.slider("Risiko relatif", 0, 40, weights["risk"], help=HELP_TEXT["risk"])
@@ -4426,7 +4430,7 @@ with st.sidebar:
     min_threshold_ratio = 65 if safe_preset else 50
     require_core_thresholds = safe_preset
 
-    with st.expander("Filter rasio & threshold", expanded=advanced_mode):
+    with st.expander("Rasio & threshold", expanded=advanced_mode):
         per_range = st.slider("PER", 0.0, 80.0, per_range, step=0.5, help=HELP_TEXT["per"])
         pbv_max = st.slider("PBV maksimum", 0.0, 15.0, pbv_max, step=0.1, help=HELP_TEXT["pbv"])
         roe_min = st.slider("ROE minimum (%)", -50.0, 100.0, roe_min, step=0.5, help=HELP_TEXT["roe"])
@@ -4439,7 +4443,7 @@ with st.sidebar:
         require_core_thresholds = st.checkbox("Wajib lolos valuasi & profit inti", value=require_core_thresholds, help=HELP_TEXT["core_thresholds"])
 
     st.divider()
-    with st.expander("Update data & cache", expanded=False):
+    with st.expander("Update data live/cache", expanded=False):
         file_status = data_file_status
         st.caption(f"Sumber aktif: {data_update_label}")
         st.caption(f"Jam bursa: {market_session_status['Status']} | {market_session_status['Now']}")
@@ -4467,7 +4471,7 @@ with st.sidebar:
                 "Clear cache aplikasi",
             ],
             default=["Refresh histori top saham", "Bangun snapshot pasar dari cache"],
-            help="Pilih satu atau beberapa aksi, lalu jalankan sekali. Untuk realtime praktis saat bursa berjalan, refresh histori dulu lalu bangun snapshot pasar.",
+            help="Pilih aksi update sekali jalan. Saat bursa berjalan, refresh histori dulu lalu bangun snapshot pasar agar data workspace tetap cepat.",
         )
         run_update = st.button("Jalankan update terpilih", type="primary", disabled=not update_actions)
         if run_update:
@@ -4622,7 +4626,7 @@ tab_quality = tab_data_method
 tab_method = tab_data_method
 
 with tab_summary:
-    st.subheader("Ringkasan eksekutif")
+    st.subheader("Dashboard utama")
     summary_scope = st.radio(
         "Cakupan ringkasan",
         ["Hasil filter aktif", "Semua universe"],
@@ -4665,7 +4669,7 @@ with tab_summary:
             if top_candidates.empty:
                 st.caption("Belum ada kandidat kuat pada filter ini. Longgarkan filter atau pilih cakupan Semua universe.")
             else:
-                st.caption("Gunakan insight ini sebagai daftar awal; validasi detail tetap ada di tab Rekomendasi dan Data & Metodologi.")
+                st.caption("Gunakan insight ini sebagai daftar awal; ranking detail ada di Screener dan audit sumber ada di Data & Audit.")
 
         with st.container(border=True):
             st.markdown("**Konteks market & freshness**")
@@ -4745,7 +4749,7 @@ with tab_summary:
 
         overview_cols = st.columns([1.2, 1])
         with overview_cols[0]:
-            st.write("Top kandidat profesional")
+            st.write("Top kandidat")
             top_summary_columns = [
                 "Kode",
                 "Nama Perusahaan",
@@ -4812,6 +4816,8 @@ with tab_reco:
     if filtered.empty:
         st.warning("Tidak ada saham yang sesuai filter. Longgarkan kriteria di sidebar.")
     else:
+        st.subheader("Screener saham")
+        st.caption("Gunakan tabel Ringkas untuk keputusan cepat, Analisis untuk rasio/faktor, dan Audit untuk sumber/kualitas data.")
         reco_controls = st.columns([1, 1, 1, 1])
         with reco_controls[0]:
             reco_max = max(1, min(100, len(filtered)))
@@ -4829,7 +4835,7 @@ with tab_reco:
             reco_ascending = st.toggle("Urut naik", value=False, help=HELP_TEXT["reco_ascending"])
         with reco_controls[3]:
             reco_labels = st.multiselect(
-                "Label rekomendasi",
+                "Label score",
                 ["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"],
                 default=["Strong Buy", "Buy", "Watchlist"],
                 help=HELP_TEXT["recommendation"],
@@ -4837,11 +4843,11 @@ with tab_reco:
 
         reco_view = filtered[filtered["Recommendation"].isin(reco_labels)].copy()
         if reco_view.empty:
-            st.info("Tidak ada saham pada label rekomendasi yang dipilih.")
+            st.info("Tidak ada saham pada label score yang dipilih. Menampilkan hasil filter aktif.")
             reco_view = filtered.copy()
         reco_view = reco_view.sort_values(reco_sort, ascending=reco_ascending, na_position="last").head(reco_limit)
 
-        reco_chart_view = chart_market_frame(reco_view, "Grafik rekomendasi")
+        reco_chart_view = chart_market_frame(reco_view, "Grafik screener")
 
         left, right = st.columns([1.25, 1])
         with left:
@@ -4869,7 +4875,7 @@ with tab_reco:
                         "Return_52W": ":.1f",
                         "Volume": ":,.0f",
                     },
-                    title=f"Top rekomendasi berdasarkan {reco_sort}",
+                    title=f"Top screener berdasarkan {reco_sort}",
                     color_discrete_map=RECOMMENDATION_COLORS,
                 )
                 fig.update_traces(textposition="outside", cliponaxis=False)
@@ -5142,15 +5148,15 @@ with tab_reco:
 
         csv = reco_view[display_columns].to_csv(index=False).encode("utf-8")
         st.download_button(
-            "Download hasil rekomendasi CSV",
+            "Download hasil screener CSV",
             data=csv,
-            file_name="rekomendasi_saham_multi_factor.csv",
+            file_name="screener_saham_idx.csv",
             mime="text/csv",
         )
 
         with st.expander("Kalibrasi aksi akhir", expanded=False):
             st.caption(
-                "Panel ini membantu mengecek apakah Aksi Akhir terlalu ketat atau terlalu longgar dibanding label rekomendasi. "
+            "Panel ini membantu mengecek apakah Aksi Akhir terlalu ketat atau terlalu longgar dibanding label Score. "
                 "Gunakan untuk audit metodologi, bukan untuk mengubah data secara manual."
             )
             calibration_cols = st.columns([1, 1])
@@ -5895,7 +5901,7 @@ with tab_history:
                 "Mode shortlist",
                 ["Top hasil filter", "Pilih manual"],
                 default="Top hasil filter",
-                help="Top hasil filter mengikuti ranking/filter sidebar. Pilih manual memberi kontrol penuh atas daftar saham.",
+                help=HELP_TEXT["workspace_shortlist"],
             )
         with workspace_cols[1]:
             shortlist_size = safe_slider(
@@ -5926,7 +5932,7 @@ with tab_history:
             focus_code = st.selectbox(
                 "Fokus detail",
                 selected_focus_codes,
-                help="Pilih satu saham dari shortlist untuk berita, prospek, dan analisa teknikal detail.",
+                help=HELP_TEXT["workspace_focus"],
                 key="workspace_focus_code",
             )
         shortlist_view = scored_df[scored_df["Kode"].astype(str).str.upper().isin(selected_focus_codes)].copy()
@@ -5991,10 +5997,10 @@ with tab_history:
                     news_source_mode = st.selectbox(
                         "Sumber berita",
                         ["Auto", "Google News", "Yahoo Finance"],
-                        help="Auto mencoba Yahoo Finance lalu Google News. Google News biasanya lebih lengkap untuk IDX.",
+                        help=HELP_TEXT["news_source"],
                     )
                 with news_controls[1]:
-                    news_limit = safe_slider("Jumlah berita", 3, 10, 5, step=1)
+                    news_limit = safe_slider("Jumlah berita", 3, 10, 5, step=1, help="Jumlah headline live untuk fokus detail. Lebih banyak berita bisa membuat tabel lebih panjang.")
                 with news_controls[2]:
                     if st.button("Refresh berita", help="Hapus cache berita dan ambil ulang dari sumber live."):
                         fetch_yahoo_news.clear()
@@ -6033,7 +6039,7 @@ with tab_history:
     )
     chart_scope = st.radio(
         "Cakupan grafik",
-        ["Saham pilihan", "All/top N hasil filter"],
+        ["Shortlist workspace", "All/top N hasil filter"],
         horizontal=True,
         help=HELP_TEXT["history_scope"],
     )
@@ -7114,7 +7120,7 @@ with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True)
             6. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
             7. Buka `Audit sumber kode saham`, `Jumlah kode per sheet Excel`, dan `Kelengkapan kolom & sumber data` untuk memastikan fallback terlihat jelas.
             8. Update `Ringkasan.xlsx` hanya bila ada data offline yang lebih baik atau ide algoritme baru yang perlu diuji.
-            9. Simpan/export hasil rekomendasi hanya setelah check High severity terkendali.
+            9. Simpan/export hasil Screener hanya setelah check High severity terkendali.
             """
         )
 
