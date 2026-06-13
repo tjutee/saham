@@ -32,6 +32,13 @@ REGULAR_TRADING_SESSIONS = {
     "weekday": [("09:00", "11:30"), ("13:30", "15:50")],
     "friday": [("09:00", "11:30"), ("14:00", "15:50")],
 }
+PLANETARY_CYCLE_PROXIES = {
+    "Mercury": 115.88,
+    "Venus": 583.92,
+    "Mars": 779.94,
+    "Jupiter": 398.88,
+    "Saturn": 378.09,
+}
 MARKET_SNAPSHOT_FILE = DATA_CACHE_DIR / f"market_snapshot_{ONLINE_LOAD_PERIOD}.csv"
 FUNDAMENTAL_SNAPSHOT_FILE = DATA_CACHE_DIR / "fundamental_snapshot.csv"
 LIVE_ON_START = os.environ.get("SAHAM_LIVE_ON_START", "0").strip().lower() in {"1", "true", "yes", "on"}
@@ -243,7 +250,7 @@ HELP_TEXT = {
     "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
     "position_sizing": "Position sizing menghitung estimasi lot dari modal, risiko per transaksi, harga terakhir, dan ATR stop. Ini alat perencanaan risiko, bukan instruksi order.",
     "fibonacci": "Fibonacci confluence membaca support/resistance dari swing high-low pada periode teknikal. Ini layer konfirmasi area harga, bukan prediksi pasti.",
-    "astro_fibo": "Layer terinspirasi Astronacci yang transparan: membaca jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, dan konfirmasi Fibo/teknikal. Ini bukan metode proprietary Astronacci dan bukan ramalan pasti.",
+    "astro_fibo": "Layer terinspirasi Astronacci yang transparan: membaca jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, dan proxy siklus Mercury/Venus/Mars/Jupiter/Saturn. Ini bukan ephemeris presisi, bukan metode proprietary Astronacci, dan bukan ramalan pasti.",
     "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. 6 bulan cocok untuk cek cepat, 1-2 tahun untuk kondisi terkini, 5-10 tahun untuk sample event lebih besar tetapi lebih lambat.",
     "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan simulasi broker penuh.",
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
@@ -2451,6 +2458,56 @@ def sun_cycle_context(date_value):
     )
 
 
+def planet_cycle_context(date_value):
+    if pd.isna(date_value):
+        empty = {
+            "Planetary_Cycle_Score": 0.0,
+            "Planetary_Window": "-",
+            "Planetary_Detail": "-",
+        }
+        for planet in PLANETARY_CYCLE_PROXIES:
+            empty[f"{planet}_Window"] = "-"
+        return pd.Series(empty)
+
+    date_value = pd.Timestamp(date_value).normalize()
+    reference_date = pd.Timestamp("2000-01-01")
+    days_since = (date_value - reference_date).days
+    rows = {}
+    bonuses = []
+    active_windows = []
+    for planet, period in PLANETARY_CYCLE_PROXIES.items():
+        phase_day = days_since % period
+        markers = {
+            "Conjunction Proxy": 0.0,
+            "Square Proxy": period * 0.25,
+            "Opposition Proxy": period * 0.50,
+            "Trine Proxy": period * 0.75,
+        }
+        nearest_label, nearest_day = min(markers.items(), key=lambda item: abs(phase_day - item[1]))
+        distance = min(abs(phase_day - nearest_day), period - abs(phase_day - nearest_day))
+        exact_window = max(2.0, period * 0.015)
+        near_window = max(4.0, period * 0.030)
+        if distance <= exact_window:
+            window = nearest_label
+            bonus = 10 if planet in {"Jupiter", "Saturn"} else 7
+        elif distance <= near_window:
+            window = f"Near {nearest_label}"
+            bonus = 6 if planet in {"Jupiter", "Saturn"} else 4
+        else:
+            window = "Neutral Cycle"
+            bonus = 0
+        rows[f"{planet}_Window"] = window
+        rows[f"{planet}_Cycle_Day"] = round(float(phase_day), 1)
+        bonuses.append(bonus)
+        if bonus > 0:
+            active_windows.append(f"{planet}: {window}")
+
+    rows["Planetary_Cycle_Score"] = float(min(100, sum(bonuses) * 5))
+    rows["Planetary_Window"] = " | ".join(active_windows[:3]) if active_windows else "Neutral Planet Cycle"
+    rows["Planetary_Detail"] = "; ".join(active_windows) if active_windows else "Tidak ada proxy aspek planet besar yang dekat."
+    return pd.Series(rows)
+
+
 def add_astro_fibo_timing(technical_history):
     if technical_history.empty:
         return technical_history
@@ -2474,7 +2531,8 @@ def add_astro_fibo_timing(technical_history):
             timing["Time_Window"] = "Unavailable"
             timing["Moon_Phase"] = timing["Date"].map(moon_phase_label)
             sun_context = timing["Date"].apply(sun_cycle_context)
-            timing = pd.concat([timing, sun_context], axis=1)
+            planet_context = timing["Date"].apply(planet_cycle_context)
+            timing = pd.concat([timing, sun_context, planet_context], axis=1)
             timing["Astro_Fibo_Timing_Score"] = 0.0
             timing["Astro_Fibo_Bias"] = "Unavailable"
             timing["Astro_Fibo_Reason"] = "Swing high/low belum cukup untuk time forecast."
@@ -2503,7 +2561,8 @@ def add_astro_fibo_timing(technical_history):
         moon_phase = timing["Date"].map(moon_phase_label)
         moon_bonus = moon_phase.isin(["New Moon Window", "Full Moon Window"]).astype(int) * 10
         sun_context = timing["Date"].apply(sun_cycle_context)
-        timing = pd.concat([timing, sun_context], axis=1)
+        planet_context = timing["Date"].apply(planet_cycle_context)
+        timing = pd.concat([timing, sun_context, planet_context], axis=1)
         sun_bonus = np.select(
             [
                 timing["Sun_Window"].eq("Sun Ingress Window"),
@@ -2516,8 +2575,9 @@ def add_astro_fibo_timing(technical_history):
         time_score = (100 - distance_to_fibo_day.fillna(8).clip(0, 8) / 8 * 100).clip(0, 100)
         fibo_score = pd.to_numeric(timing.get("Fibo_Confluence_Score", pd.Series(0, index=timing.index)), errors="coerce").fillna(0)
         technical_score = pd.to_numeric(timing.get("Technical_Score", pd.Series(50, index=timing.index)), errors="coerce").fillna(50)
+        planet_bonus = (pd.to_numeric(timing.get("Planetary_Cycle_Score", pd.Series(0, index=timing.index)), errors="coerce").fillna(0) * 0.12).clip(0, 12)
         trend_bonus = np.where(timing.get("Trend_Bullish", pd.Series(False, index=timing.index)), 8, 0)
-        astro_score = (time_score * 0.40 + fibo_score * 0.23 + technical_score * 0.19 + moon_bonus + sun_bonus + trend_bonus).clip(0, 100).round(1)
+        astro_score = (time_score * 0.37 + fibo_score * 0.22 + technical_score * 0.18 + moon_bonus + sun_bonus + planet_bonus + trend_bonus).clip(0, 100).round(1)
 
         timing["Last_Swing_Type"] = swing_type
         timing["Days_From_Swing"] = days_from_swing.where(valid_days)
@@ -2555,6 +2615,8 @@ def add_astro_fibo_timing(technical_history):
             + timing["Sun_Sign"].astype(str)
             + " / "
             + timing["Sun_Window"].astype(str)
+            + "; Planet "
+            + timing["Planetary_Window"].astype(str)
             + "; "
             + timing["Fibo_Zone"].astype(str)
         )
@@ -3332,6 +3394,11 @@ def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8
             "Moon_Phase": current.get("Moon_Phase"),
             "Sun_Sign": current.get("Sun_Sign"),
             "Sun_Window": current.get("Sun_Window"),
+            "Planetary_Cycle_Score": current.get("Planetary_Cycle_Score"),
+            "Planetary_Window": current.get("Planetary_Window"),
+            "Jupiter_Window": current.get("Jupiter_Window"),
+            "Saturn_Window": current.get("Saturn_Window"),
+            "Mars_Window": current.get("Mars_Window"),
             "RSI14": current.get("RSI14"),
             "Similarity_Sample": len(similar),
         }
@@ -3380,6 +3447,9 @@ def build_similarity_prediction(history, scored, horizons=(20, 60), min_sample=8
             "Time_Window",
             "Sun_Sign",
             "Sun_Window",
+            "Planetary_Window",
+            "Jupiter_Window",
+            "Saturn_Window",
             "RSI14",
         ] + [f"Forward_Return_{horizon}D_%" for horizon in horizons]
         detail_frames.append(similar[[column for column in detail_columns if column in similar.columns]].tail(100))
@@ -4118,7 +4188,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
         - **Position sizing**: estimasi lot berdasarkan modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan.
         - **Fibonacci Confluence**: support/resistance dari swing high-low, nearest level, jarak harga, dan confluence score.
-        - **Astro-Fibo Timing**: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, Fibonacci price zone, dan konfirmasi teknikal. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
+        - **Astro-Fibo Timing**: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, proxy siklus Mercury/Venus/Mars/Jupiter/Saturn, Fibonacci price zone, dan konfirmasi teknikal. Ini bukan ephemeris presisi, bukan formula proprietary Astronacci, dan bukan ramalan pasti.
         - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
         - **Walk-forward**: validasi event berurutan yang membandingkan performa train dan out-of-sample agar sinyal tidak hanya bagus secara agregat.
         - **Prediction Bias**: bias probabilistik dari setup historis yang mirip, bukan ramalan harga pasti.
@@ -4140,7 +4210,7 @@ with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=
         - `Lot estimasi = min(risk budget / risk per share, max position value / close) / 100`, lalu dibulatkan ke bawah.
         - `Fibo retracement = Swing High - (Swing High - Swing Low) x rasio Fibonacci`.
         - `Fibo Confluence Score`: kedekatan harga ke level Fibo + zona golden ratio + konfirmasi trend/RSI.
-        - `Astro_Fibo_Timing_Score = Time window 40% + Fibo score 23% + Technical score 19% + moon/sun/trend bonus`, dibatasi 0-100.
+        - `Astro_Fibo_Timing_Score = Time window 37% + Fibo score 22% + Technical score 18% + moon/sun/planet/trend bonus`, dibatasi 0-100.
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
         - `Walk-forward Decay = Avg Return out-of-sample - Avg Return train`.
         - `Probability_Up_nD = jumlah setup historis mirip yang return nD positif / total setup valid`.
@@ -5479,6 +5549,11 @@ with tab_predict:
                     "Moon_Phase",
                     "Sun_Sign",
                     "Sun_Window",
+                    "Planetary_Cycle_Score",
+                    "Planetary_Window",
+                    "Jupiter_Window",
+                    "Saturn_Window",
+                    "Mars_Window",
                     "RSI14",
                     "Score",
                     "Recommendation",
@@ -5499,6 +5574,7 @@ with tab_predict:
                         "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f"),
                         "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                         "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
+                        "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                         "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                         "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                         "Sector_Relative_Score": st.column_config.NumberColumn("Relatif Sektor", format="%.1f"),
@@ -5512,7 +5588,7 @@ with tab_predict:
                     size=sample_column,
                     color="Prediction_Bias",
                     hover_name="Kode",
-                    hover_data=["Nama Perusahaan", "Technical_Signal", "Fibo_Zone", "Astro_Fibo_Bias", "Time_Window", "Moon_Phase", "Sun_Sign", "Sun_Window", "Model_Confidence", downside_column],
+                    hover_data=["Nama Perusahaan", "Technical_Signal", "Fibo_Zone", "Astro_Fibo_Bias", "Time_Window", "Moon_Phase", "Sun_Sign", "Sun_Window", "Planetary_Window", "Jupiter_Window", "Saturn_Window", "Model_Confidence", downside_column],
                     title=f"Probability vs expected return {primary_horizon}D",
                     color_discrete_map={
                         "Bullish Probability": "#15803d",
@@ -5543,6 +5619,9 @@ with tab_predict:
                             "Time_Window",
                             "Sun_Sign",
                             "Sun_Window",
+                            "Planetary_Window",
+                            "Jupiter_Window",
+                            "Saturn_Window",
                             "RSI14",
                             *detail_return_columns,
                         ]
@@ -5914,6 +5993,13 @@ with tab_history:
                             "Moon_Phase",
                             "Sun_Sign",
                             "Sun_Window",
+                            "Planetary_Cycle_Score",
+                            "Planetary_Window",
+                            "Mercury_Window",
+                            "Venus_Window",
+                            "Mars_Window",
+                            "Jupiter_Window",
+                            "Saturn_Window",
                             "ATR_Stop_2x",
                             "ATR_Stop_Distance_%",
                             "Position_Risk_Bucket",
@@ -5932,6 +6018,7 @@ with tab_history:
                                 "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                                 "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                                 "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
+                                "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                                 "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
                                 "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                             },
@@ -5969,6 +6056,10 @@ with tab_history:
                 sun_cols = st.columns(2)
                 sun_cols[0].metric("Sun Sign", clean_text(latest_tech.get("Sun_Sign")), clean_text(latest_tech.get("Sun_Element")), help=HELP_TEXT["astro_fibo"])
                 sun_cols[1].metric("Sun Window", clean_text(latest_tech.get("Sun_Window")), help=HELP_TEXT["astro_fibo"])
+                planet_cols = st.columns(3)
+                planet_cols[0].metric("Planet Score", format_number(latest_tech.get("Planetary_Cycle_Score")), help=HELP_TEXT["astro_fibo"])
+                planet_cols[1].metric("Jupiter", clean_text(latest_tech.get("Jupiter_Window")), help=HELP_TEXT["astro_fibo"])
+                planet_cols[2].metric("Saturn", clean_text(latest_tech.get("Saturn_Window")), help=HELP_TEXT["astro_fibo"])
                 tech_start = tech_history["Date"].min()
                 tech_end = tech_history["Date"].max()
                 tech_range_label = f"{tech_start:%Y-%m-%d} s.d. {tech_end:%Y-%m-%d}" if pd.notna(tech_start) and pd.notna(tech_end) else "-"
@@ -5995,6 +6086,13 @@ with tab_history:
                     "Moon_Phase",
                     "Sun_Sign",
                     "Sun_Window",
+                    "Planetary_Cycle_Score",
+                    "Planetary_Window",
+                    "Mercury_Window",
+                    "Venus_Window",
+                    "Mars_Window",
+                    "Jupiter_Window",
+                    "Saturn_Window",
                     "Entry_Action",
                     "Position_Action",
                     "Exit_Risk",
@@ -6016,6 +6114,7 @@ with tab_history:
                         "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                         "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                         "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
+                        "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                         "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
                         "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
                     },
@@ -6176,6 +6275,13 @@ with tab_history:
                     "Moon_Phase",
                     "Sun_Sign",
                     "Sun_Window",
+                    "Planetary_Cycle_Score",
+                    "Planetary_Window",
+                    "Mercury_Window",
+                    "Venus_Window",
+                    "Mars_Window",
+                    "Jupiter_Window",
+                    "Saturn_Window",
                     "Distance_52W_High_%",
                     "Distance_52W_Low_%",
                 ]
@@ -6199,6 +6305,7 @@ with tab_history:
                             "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                             "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                             "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
+                            "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                             "Distance_52W_High_%": st.column_config.NumberColumn("Jarak 52W High", format="%.1f%%"),
                             "Distance_52W_Low_%": st.column_config.NumberColumn("Jarak 52W Low", format="%.1f%%"),
                         },
@@ -6293,6 +6400,13 @@ with tab_history:
                                     "Moon_Phase",
                                     "Sun_Sign",
                                     "Sun_Window",
+                                    "Planetary_Cycle_Score",
+                                    "Planetary_Window",
+                                    "Mercury_Window",
+                                    "Venus_Window",
+                                    "Mars_Window",
+                                    "Jupiter_Window",
+                                    "Saturn_Window",
                                     "RSI14",
                                     "Volume_Ratio",
                                     "ATR_%",
@@ -6313,6 +6427,7 @@ with tab_history:
                                 "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                                 "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                                 "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
+                                "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help=HELP_TEXT["astro_fibo"]),
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                                 "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
                                 "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),

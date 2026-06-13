@@ -175,7 +175,7 @@ score fundamental utama.
 - `ATR_Stop_2x`: zona risiko teknikal berbasis dua kali ATR dari harga terakhir, bukan instruksi order otomatis.
 - `Trade Plan & Position Sizing`: estimasi lot dari modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan. Hasil belum memperhitungkan fee, slippage, atau gap harga.
 - `Fibonacci Confluence`: level retracement/extension dari swing high-low periode teknikal untuk membaca support/resistance dan nearest level. Ini bukan prediksi pasti.
-- `Astro-Fibo Timing`: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, Fibonacci price zone, dan konfirmasi teknikal. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
+- `Astro-Fibo Timing`: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, proxy siklus Mercury/Venus/Mars/Jupiter/Saturn, Fibonacci price zone, dan konfirmasi teknikal. Ini bukan ephemeris presisi, bukan formula proprietary Astronacci, dan bukan ramalan pasti.
 
 Dashboard tidak memakai harga beli pribadi, sehingga `Position_Action` adalah
 arah umum berbasis kondisi saham terbaru.
@@ -205,7 +205,7 @@ Layer teknikal terpisah dari score fundamental:
 - ATR Stop 2x membantu membaca zona risiko teknikal.
 - Position sizing menghitung lot estimasi dengan risk budget / risk per share dan dibatasi maksimum nilai posisi.
 - Fibonacci Confluence memakai level 23.6%, 38.2%, 50%, 61.8%, 78.6%, 127.2%, dan 161.8% sebagai area support/resistance yang perlu dikonfirmasi oleh trend, RSI/MACD, volume, dan backtest.
-- Astro-Fibo Timing memakai hitungan hari Fibonacci 5, 8, 13, 21, 34, 55, 89, dan 144 dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, Fibo score, dan technical score untuk membaca jendela timing yang perlu dikonfirmasi.
+- Astro-Fibo Timing memakai hitungan hari Fibonacci 5, 8, 13, 21, 34, 55, 89, dan 144 dari swing terakhir, fase bulan sederhana, siklus Sun/zodiak musiman, proxy siklus Mercury/Venus/Mars/Jupiter/Saturn, Fibo score, dan technical score untuk membaca jendela timing yang perlu dikonfirmasi.
 
 Layer explainability dan final decision:
 
