@@ -4238,107 +4238,29 @@ if raw_df.attrs.get("fundamental_error"):
 with st.expander("Panduan dashboard, istilah, dan cara membaca hasil", expanded=False):
     st.markdown(
         """
-        Arahkan kursor ke ikon bantuan pada menu/filter untuk melihat penjelasan singkat langsung di tempatnya.
+        **Cara pakai cepat**
+        1. Mulai dari **Ringkasan** untuk melihat kondisi filter, market regime, kandidat utama, dan kualitas data.
+        2. Buka **Rekomendasi** untuk ranking saham. Pilih tampilan tabel `Ringkas`, `Analisis`, atau `Audit` sesuai kebutuhan.
+        3. Cek **Harga & Teknikal** hanya untuk kandidat terpilih: Entry Action, Position Action, RSI, Fibonacci, ATR stop, dan Astro-Fibo.
+        4. Gunakan **Validasi & Prediksi** untuk membaca bukti historis, bukan untuk menganggap return masa depan pasti.
+        5. Pakai **Data & Metodologi** saat perlu audit sumber, freshness, threshold, bobot, dan formula.
 
-        **Menu utama**
-        - **Ringkasan**: snapshot eksekutif berisi kondisi universe, sumber data, distribusi rekomendasi, top kandidat, dan matriks faktor.
-        - **Rekomendasi**: ranking saham berdasarkan score multi-factor, filter sidebar, label rekomendasi, dan sort aktif.
-        - **Portofolio**: skenario alokasi saham pilihan, konsentrasi sektor, campuran risiko, final action mix, dan estimasi lot berbasis harga yang tersedia.
-        - **Harga & Teknikal**: grafik return dari yfinance online, mode Excel Metrik sebagai pembanding/cadangan, ringkasan teknikal top kandidat, candlestick/line, MA20/50/200, RSI, MACD, ATR, Fibonacci, Astro-Fibo timing, technical score, entry action, dan position action dari OHLCV yfinance/cache.
-        - **Validasi & Prediksi**: backtest event historis dan probabilitas setup teknikal yang mirip dengan kondisi saat ini.
-        - **Explorer & Sektor**: scatter, histogram, outlier, dan ringkasan score/turnover per sektor atau industri.
-        - **Data & Metodologi**: audit sumber, freshness, cache, update data, bobot aktif, threshold NonBank/Banking, rumus scoring, penalti, dan distribusi faktor.
-
-        **Istilah penting**
-        - **PER**: Price to Earnings Ratio. Lebih rendah umumnya lebih murah, selama laba positif.
-        - **PBV**: Price to Book Value. Lebih rendah berarti harga lebih dekat ke nilai buku.
-        - **ROE / ROA**: kemampuan menghasilkan laba dari ekuitas/aset. Lebih tinggi lebih baik.
-        - **DER**: Debt to Equity Ratio. Dipakai untuk non-bank; untuk bank tidak menjadi filter utama karena struktur bisnis bank memang leverage tinggi.
-        - **NPM**: Net Profit Margin. Margin laba bersih terhadap pendapatan.
-        - **NIM, CAR, LDR, NPL, BOPO**: metrik khusus bank. CAR tinggi, NPL rendah, BOPO rendah, dan LDR sehat lebih baik.
-        - **CIR / LAR**: metrik efisiensi dan risiko aset bank bila tersedia pada sheet Banking.
-        - **Volume**: jumlah saham yang diperdagangkan.
-        - **Turnover**: estimasi nilai transaksi dari harga penutupan dikali volume.
-        - **Momentum**: sinyal tren dari `%Change`, return 4W, 13W, 26W, 52W, dan YTD bila tersedia.
-        - **Index Count / Kekuatan indeks**: jumlah kemunculan saham pada indeks/sumber data. Jika tersedia, dashboard memakai nilai kolom Sigma i >= 7 dari Excel sebagai coverage indeks utama; ini sinyal visibilitas, bukan jaminan kualitas.
-        - **Threshold**: persentase rasio yang lolos batas dari sheet `NonBank` atau `Banking`.
-        - **Threshold Mode**: sumber batas rasio yang dipakai, yaitu `NonBank` atau `Banking`.
-        - **Threshold Pass Count / Applicable**: jumlah rasio yang lolos dibanding jumlah rasio yang bisa dinilai.
-        - **Score**: nilai akhir 0-100 dari bobot faktor dikurangi penalti. Semakin tinggi semakin menarik sebagai kandidat screening.
-        - **Recommendation**: label dari score akhir: Strong Buy, Buy, Watchlist, Speculative, atau Avoid.
-        - **Technical Score / Signal**: konfirmasi timing berbasis MA, RSI, MACD, volume, ATR, dan tren harga. Ini tidak mengubah Score fundamental.
-        - **Entry Action**: arahan untuk calon pembelian. Fundamental menjadi gerbang awal, teknikal menentukan timing entry/tunggu/hindari.
-        - **Position Action**: arahan umum untuk saham yang sudah dimiliki tanpa memakai harga beli pribadi, misalnya Hold, Take Profit, Reduce, atau Exit / Sell.
-        - **Exit Risk**: risiko keluar/pengetatan posisi berdasarkan kombinasi fundamental dan teknikal, bukan perhitungan profit pribadi.
-        - **Sector Relative Score**: perbandingan valuasi dan kualitas terhadap saham lain dalam sektor yang sama.
-        - **Decision Summary / Top Strengths / Top Risks**: ringkasan alasan kuantitatif agar ranking mudah diaudit.
-        - **Final Action / Aksi Akhir**: playbook keputusan yang menggabungkan fundamental, relatif sektor, risiko, kualitas data, dan market regime.
-        - **ATR Stop 2x**: zona risiko teknikal berbasis volatilitas ATR, bukan instruksi order otomatis.
-        - **Position sizing**: estimasi lot berdasarkan modal, risiko per transaksi, batas posisi maksimum, harga terakhir, dan stop plan.
-        - **Fibonacci Confluence**: support/resistance dari swing high-low, nearest level, jarak harga, dan confluence score.
-        - **Astro-Fibo Timing**: layer terinspirasi Astronacci yang menggabungkan jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari JPL DE421 via Skyfield, Fibonacci price zone, dan konfirmasi teknikal. Jika ephemeris asli tidak tersedia, komponen planet ditandai unavailable dan tidak ikut skor. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
-        - **Backtest Event**: hari pertama ketika sinyal historis muncul. Return 5D/20D/60D dihitung dari harga setelah event.
-        - **Walk-forward**: validasi event berurutan yang membandingkan performa train dan out-of-sample agar sinyal tidak hanya bagus secara agregat.
-        - **Prediction Bias**: bias probabilistik dari setup historis yang mirip, bukan ramalan harga pasti.
-        - **Clean_Data**: penanda bahwa data dan rasio utama lolos filter kebersihan minimum.
-        - **Safety_Recommendation**: ringkasan kelayakan data seperti `Bersih - Strong`; di kartu utama ditampilkan sebagai `Data`, bukan jaminan aman investasi.
-        - **Safety_Notes**: alasan saham perlu direview, misalnya volume rendah, rasio kosong, threshold rendah, atau risiko tinggi.
-        - **Risk Level**: estimasi risiko relatif berdasarkan rasio, volatilitas, penalti, dan likuiditas, bukan jaminan keamanan.
-        - **KODE.JK**: format ticker saham Indonesia di Yahoo Finance/yfinance, misalnya `BBCA.JK`.
-        - **All / top N**: grafik histori untuk saham teratas dari hasil filter/ranking saat ini.
+        **Definisi inti**
+        - `Score`: ranking multi-factor 0-100 dari valuasi, kualitas, risiko, likuiditas, momentum, indeks, dan penalti.
+        - `Final_Action`: playbook akhir dari Score, data, risiko, sektor, threshold, momentum, dan market regime.
+        - `Technical_Score`: timing dari MA, RSI, MACD, volume, dan ATR; tidak mengganti Score fundamental.
+        - `Astro-Fibo`: konteks timing dari Fibonacci time window, Moon/Sun cycle, dan aspek planet JPL DE421 via Skyfield. Ini heuristic transparan, bukan formula proprietary dan bukan ramalan.
+        - `Clean_Data`: data lolos pemeriksaan minimum; ini bukan jaminan aman investasi.
 
         **Rumus ringkas**
-        - `Score = weighted average(Valuation, Quality, Risk, Liquidity, Momentum, Index) - Penalty`, lalu dibatasi 0-100.
-        - `Final_Action`: ringkasan playbook dari Score, Recommendation, Clean_Data, Risk_Level, Sector_Relative_Score, Threshold, Momentum, dan Market_Regime.
+        - `Score = weighted average(faktor) - penalty`, dibatasi 0-100.
         - `Technical_Score = Trend 30% + RSI 20% + MACD 20% + Volume 15% + Volatilitas 15%`.
-        - `Sector_Relative_Score = Valuasi relatif sektor 45% + Kualitas relatif sektor 40% + Likuiditas 15%`.
-        - `Entry_Action`: fundamental memilih saham layak, teknikal menentukan timing untuk calon pembelian.
-        - `Position_Action`: teknikal dan fundamental memberi arahan hold/reduce/take profit/exit untuk saham yang sudah dimiliki.
         - `ATR_Stop_2x = Close - 2 x ATR14`.
-        - `Lot estimasi = min(risk budget / risk per share, max position value / close) / 100`, lalu dibulatkan ke bawah.
-        - `Fibo retracement = Swing High - (Swing High - Swing Low) x rasio Fibonacci`.
-        - `Fibo Confluence Score`: kedekatan harga ke level Fibo + zona golden ratio + konfirmasi trend/RSI.
-        - `Astro_Fibo_Timing_Score = Time window 37% + Fibo score 22% + Technical score 18% + moon/sun/planet/trend bonus`, dibatasi 0-100.
+        - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable x 100`.
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
-        - `Walk-forward Decay = Avg Return out-of-sample - Avg Return train`.
-        - `Probability_Up_nD = jumlah setup historis mirip yang return nD positif / total setup valid`.
-        - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable * 100`.
-        - `Turnover = Penutupan * Volume`.
-        - `Return Total = Harga Akhir / Harga Awal - 1`.
-        - Jika `Wajib lolos valuasi & profit inti` aktif: `PER <= 15`, `PBV <= 3`, `ROE >= 12%`, dan `NPM >= 7%`.
 
-        **Profil scoring vs preset filter**
-        - **Profil scoring** mengubah bobot Score, misalnya lebih condong ke valuasi, kualitas, risiko, likuiditas, atau momentum.
-        - **Preset filter** mengubah batas minimum/maksimum yang dipakai untuk menyaring hasil. Preset `Konservatif Aman` tidak mengubah bobot Score.
-        - Kombinasi yang rapi: pilih profil `Defensive` bila ingin bobot lebih hati-hati, lalu pilih preset filter `Konservatif Aman` bila ingin hasil yang lolos data dan rasio lebih ketat.
-
-        **Memilih periode data**
-        - **1-2 minggu**: monitoring cepat dan validasi harga terbaru; terlalu pendek untuk prediksi statistik yang stabil.
-        - **1-6 bulan**: membaca swing/momentum menengah; cocok untuk observasi, tetapi sample backtest/prediksi masih terbatas.
-        - **1-2 tahun**: pilihan seimbang untuk MA200, 52W, ATR, Fibonacci, dan prediksi berbasis setup mirip.
-        - **5-10 tahun / All**: sample historis lebih banyak untuk backtest/prediksi, tetapi bisa mencampur rezim pasar lama dan proses lebih lambat.
-        - Prediksi memakai opsi periode yang sama dengan Histori agar sumber OHLCV konsisten. Bila hasil prediksi kosong, pilih periode lebih panjang atau kurangi jumlah kode.
-
-        Gunakan hasil ini sebagai screener awal. Keputusan investasi tetap perlu cek berita, laporan keuangan, aksi korporasi, dan diversifikasi portofolio.
-
-        **Prioritas sumber data**
-        1. BEI/IDX resmi untuk universe kode saham dan metadata listing.
-        2. Snapshot repo `data_cache/market_snapshot_1y.csv` untuk harga/volume/return startup agar dashboard tidak lag saat jam bursa.
-        3. Snapshot fundamental `data_cache/fundamental_snapshot.csv` untuk rasio massal agar startup tidak selalu menunggu request online.
-        4. Sumber online pelengkap: yfinance untuk refresh harga/histori dan TradingView scanner untuk fundamental massal.
-        5. Excel dipakai terakhir sebagai fallback, audit pembanding, dan acuan ide algoritme sampai seluruh kolom penting punya sumber online yang stabil.
-
-        **Mekanisme realtime praktis**
-        - Saat bursa berjalan, jalankan update histori/harga secara terkontrol untuk saham prioritas, lalu bangun snapshot pasar dari cache.
-        - Saat jeda, akhir pekan, atau pasca-penutupan, utamakan cache/snapshot agar dashboard tetap cepat dan sumber data tidak dipanggil berlebihan.
-        - `yfinance` dan TradingView dapat delayed; dashboard menampilkan freshness, lag tanggal online, dan sumber data agar status terbaru tidak disamarkan.
-
-        **Makna warna**
-        - Hijau: kondisi lebih kuat atau risiko rendah.
-        - Kuning/oranye: area watchlist, medium, atau perlu dicermati.
-        - Merah: avoid, risiko tinggi, atau kondisi paling lemah.
-        - Biru/ungu: sumber data, seri saham, likuiditas, momentum, atau dimensi netral/non-keputusan.
-        - Grafik jumlah/coverage memakai skala netral; grafik score memakai skala 0-100 agar tidak tercampur dengan warna kategori.
+        **Sumber data**
+        BEI/IDX diprioritaskan untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan Excel hanya fallback/audit. Semua fallback dan data unavailable ditampilkan agar tidak disamarkan.
         """
     )
 
@@ -4722,31 +4644,17 @@ with tab_summary:
                 "Recommendation",
                 "Risk_Level",
                 "Clean_Data",
-                "Decision_Blockers",
-                "Next_Step",
                 "Decision_Summary",
-                "Top_Strengths",
-                "Top_Risks",
                 "Score",
                 "Sector_Relative_Score",
-                "Sector_Relative_Label",
                 "Threshold_Pass_Ratio",
                 "Penutupan",
                 "PER",
                 "PBV",
                 "ROE",
-                "NPM",
                 "Return_52W",
-                "Volume",
-                "Market_Cap",
-                "Revenue",
-                "Sales_Multiple",
-                "Index_Count",
-                "Subsektor",
-                "Subindustri",
                 "Price_Source",
-                "Fundamental_Source",
-                "Universe_Diff_Status",
+                "Next_Step",
             ]
             top_summary = summary_chart_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
             show_table(
@@ -4982,12 +4890,7 @@ with tab_reco:
             "Recommendation",
             "Risk_Level",
             "Clean_Data",
-            "Decision_Blockers",
-            "Next_Step",
             "Decision_Summary",
-            "Top_Strengths",
-            "Top_Risks",
-            "Market_Regime",
             "Score",
             "Sector_Relative_Score",
             "Threshold_Pass_Ratio",
@@ -4995,22 +4898,78 @@ with tab_reco:
             "PER",
             "PBV",
             "ROE",
-            "DER",
             "Return_52W",
-            "Volume",
             "Price_Source",
-            "Fundamental_Source",
-            "Safety_Notes",
+            "Next_Step",
             "Sektor",
         ]
-        selected_table_columns = st.multiselect(
-            "Kolom tabel",
-            display_columns,
-            default=default_table_columns,
-            help=HELP_TEXT["table_columns"],
+        analysis_table_columns = [
+            "Kode",
+            "Nama Perusahaan",
+            "Final_Action",
+            "Recommendation",
+            "Score",
+            "Valuation_Score",
+            "Quality_Score",
+            "Risk_Score",
+            "Liquidity_Score",
+            "Momentum_Score",
+            "Sector_Relative_Score",
+            "Threshold_Pass_Ratio",
+            "PER",
+            "PBV",
+            "ROE",
+            "ROA",
+            "DER",
+            "NPM",
+            "Return_4W",
+            "Return_13W",
+            "Return_52W",
+            "Volume",
+            "Market_Cap",
+            "Sektor",
+        ]
+        audit_table_columns = [
+            "Kode",
+            "Nama Perusahaan",
+            "Clean_Data",
+            "Safety_Recommendation",
+            "Safety_Notes",
+            "Decision_Blockers",
+            "Next_Step",
+            "Price_Source",
+            "Volume_Source",
+            "Fundamental_Source",
+            "Data_Source",
+            "Universe_Source",
+            "Universe_Diff_Status",
+            "Online_Last_Date",
+            "Online_Fundamental_Field_Count",
+            "Excel_Fundamental_Field_Count",
+            "ListingBoard",
+            "ListingDate",
+        ]
+        table_view = st.segmented_control(
+            "Tampilan tabel",
+            ["Ringkas", "Analisis", "Audit"],
+            default="Ringkas",
+            help="Ringkas untuk keputusan harian, Analisis untuk rasio/faktor, Audit untuk sumber dan kualitas data.",
         )
-        if not selected_table_columns:
-            selected_table_columns = default_table_columns
+        table_presets = {
+            "Ringkas": default_table_columns,
+            "Analisis": analysis_table_columns,
+            "Audit": audit_table_columns,
+        }
+        selected_table_columns = table_presets.get(table_view, default_table_columns)
+        with st.expander("Sesuaikan kolom lanjutan", expanded=False):
+            selected_table_columns = st.multiselect(
+                "Kolom tabel",
+                display_columns,
+                default=[column for column in selected_table_columns if column in display_columns],
+                help=HELP_TEXT["table_columns"],
+            )
+            if not selected_table_columns:
+                selected_table_columns = table_presets.get(table_view, default_table_columns)
         table = reco_view[selected_table_columns].copy()
         show_table(
             table,
@@ -6077,33 +6036,14 @@ with tab_history:
                             "Technical_Signal",
                             "RSI14",
                             "Fibo_Zone",
-                            "Nearest_Fibo_Level",
-                            "Distance_To_Fibo_%",
-                            "Fibo_Confluence_Score",
                             "Astro_Fibo_Timing_Score",
                             "Astro_Fibo_Bias",
-                            "Time_Window",
-                            "Nearest_Fibo_Time_Day",
-                            "Moon_Phase",
-                            "Sun_Sign",
-                            "Sun_Window",
                             "Planetary_Cycle_Score",
                             "Planetary_Window",
                             "Ephemeris_Source",
-                            "Mercury_Window",
-                            "Venus_Window",
-                            "Mars_Window",
-                            "Jupiter_Window",
-                            "Jupiter_Sign",
-                            "Jupiter_Retrograde",
-                            "Saturn_Window",
-                            "Saturn_Sign",
-                            "Saturn_Retrograde",
                             "ATR_Stop_2x",
                             "ATR_Stop_Distance_%",
-                            "Position_Risk_Bucket",
                             "Timing_Reason",
-                            "Astro_Fibo_Reason",
                             "Position_Reason",
                         ]
                         show_table(
@@ -6173,8 +6113,12 @@ with tab_history:
                     "Nama Perusahaan",
                     "Score",
                     "Recommendation",
+                    "Entry_Action",
+                    "Position_Action",
+                    "Exit_Risk",
                     "Technical_Score",
                     "Technical_Signal",
+                    "RSI14",
                     "Fibo_Zone",
                     "Nearest_Fibo_Level",
                     "Distance_To_Fibo_%",
@@ -6182,30 +6126,12 @@ with tab_history:
                     "Astro_Fibo_Timing_Score",
                     "Astro_Fibo_Bias",
                     "Time_Window",
-                    "Nearest_Fibo_Time_Day",
-                    "Moon_Phase",
-                    "Sun_Sign",
-                    "Sun_Window",
                     "Planetary_Cycle_Score",
                     "Planetary_Window",
                     "Ephemeris_Source",
-                    "Mercury_Window",
-                    "Venus_Window",
-                    "Mars_Window",
-                    "Jupiter_Window",
-                    "Jupiter_Sign",
-                    "Jupiter_Retrograde",
-                    "Saturn_Window",
-                    "Saturn_Sign",
-                    "Saturn_Retrograde",
-                    "Entry_Action",
-                    "Position_Action",
-                    "Exit_Risk",
                     "ATR_Stop_2x",
                     "ATR_Stop_Distance_%",
-                    "Position_Risk_Bucket",
                     "Timing_Reason",
-                    "Astro_Fibo_Reason",
                     "Position_Reason",
                 ]
                 st.markdown("**Ringkasan keputusan teknikal**")
@@ -6496,41 +6422,20 @@ with tab_history:
                                     "Entry_Action",
                                     "Position_Action",
                                     "Exit_Risk",
-                                    "Combined_View",
                                     "Technical_Score",
                                     "Technical_Signal",
+                                    "RSI14",
                                     "Fibo_Zone",
-                                    "Nearest_Fibo_Level",
                                     "Distance_To_Fibo_%",
-                                    "Fibo_Confluence_Score",
                                     "Astro_Fibo_Timing_Score",
                                     "Astro_Fibo_Bias",
-                                    "Time_Window",
-                                    "Nearest_Fibo_Time_Day",
-                                    "Moon_Phase",
-                                    "Sun_Sign",
-                                    "Sun_Window",
                                     "Planetary_Cycle_Score",
                                     "Planetary_Window",
                                     "Ephemeris_Source",
-                                    "Mercury_Window",
-                                    "Venus_Window",
-                                    "Mars_Window",
-                                    "Jupiter_Window",
-                                    "Jupiter_Sign",
-                                    "Jupiter_Retrograde",
-                                    "Saturn_Window",
-                                    "Saturn_Sign",
-                                    "Saturn_Retrograde",
-                                    "RSI14",
-                                    "Volume_Ratio",
                                     "ATR_%",
                                     "ATR_Stop_2x",
                                     "ATR_Stop_Distance_%",
-                                    "Position_Risk_Bucket",
-                                    "Distance_52W_High_%",
                                     "Timing_Reason",
-                                    "Astro_Fibo_Reason",
                                     "Position_Reason",
                                 ]
                             ].head(50),
