@@ -9,6 +9,7 @@ import re
 import json
 from pathlib import Path
 from io import StringIO
+from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 from datetime import timezone, timedelta
 
@@ -2086,6 +2087,102 @@ def fetch_yahoo_history(codes, period="max"):
     history = trim_history_to_period(history, period)
     write_history_cache(history, period)
     return history, None, "yfinance"
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_yahoo_news(code, limit=6):
+    clean_code = clean_stock_code(code)
+    if not clean_code:
+        return pd.DataFrame(), "Pilih kode saham untuk mengambil berita.", "empty"
+
+    try:
+        import yfinance as yf
+        YFINANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        if hasattr(yf, "set_tz_cache_location"):
+            yf.set_tz_cache_location(str(YFINANCE_CACHE_DIR))
+    except Exception as exc:
+        return pd.DataFrame(), f"Library yfinance belum tersedia: {exc}", "empty"
+
+    removed_proxy = remove_blocking_proxy_env()
+    try:
+        raw_news = yf.Ticker(f"{clean_code}.JK").news or []
+    except Exception as exc:
+        return pd.DataFrame(), f"Berita yfinance/Yahoo Finance gagal diambil: {exc}", "empty"
+    finally:
+        restore_proxy_env(removed_proxy)
+
+    rows = []
+    for item in raw_news[: max(limit, 1)]:
+        content = item.get("content", {}) if isinstance(item, dict) else {}
+        title = clean_text(content.get("title") or item.get("title"), "")
+        provider = content.get("provider") or item.get("publisher") or {}
+        provider_name = clean_text(provider.get("displayName") if isinstance(provider, dict) else provider, "-")
+        link = ""
+        canonical = content.get("canonicalUrl") or item.get("link")
+        if isinstance(canonical, dict):
+            link = clean_text(canonical.get("url"), "")
+        else:
+            link = clean_text(canonical, "")
+        published_raw = content.get("pubDate") or item.get("providerPublishTime") or item.get("pubDate")
+        published = pd.NaT
+        if isinstance(published_raw, (int, float)):
+            published = pd.to_datetime(published_raw, unit="s", errors="coerce")
+        elif published_raw:
+            published = pd.to_datetime(published_raw, errors="coerce")
+        summary = clean_text(content.get("summary") or item.get("summary"), "-")
+        if title:
+            rows.append(
+                {
+                    "Tanggal": published,
+                    "Judul": title,
+                    "Sumber": provider_name,
+                    "Ringkasan": summary,
+                    "Link": link,
+                }
+            )
+
+    news = pd.DataFrame(rows)
+    if news.empty:
+        return fetch_google_news_rss(clean_code, limit=limit, prior_error="Yahoo Finance tidak menyediakan berita untuk kode ini.")
+    return news, None, "Yahoo Finance via yfinance"
+
+
+def fetch_google_news_rss(code, limit=6, prior_error=None):
+    clean_code = clean_stock_code(code)
+    query = quote_plus(f"{clean_code} saham OR {clean_code}.JK")
+    url = f"https://news.google.com/rss/search?q={query}&hl=id&gl=ID&ceid=ID:id"
+    try:
+        import xml.etree.ElementTree as ET
+
+        xml_text = read_url_text(url)
+        root = ET.fromstring(xml_text)
+    except Exception as exc:
+        detail = f"{prior_error} " if prior_error else ""
+        return pd.DataFrame(), f"{detail}Google News RSS gagal diambil: {exc}", "empty"
+
+    rows = []
+    for item in root.findall(".//item")[: max(limit, 1)]:
+        title = clean_text(item.findtext("title"), "")
+        link = clean_text(item.findtext("link"), "")
+        published = pd.to_datetime(item.findtext("pubDate"), errors="coerce")
+        source_node = item.find("source")
+        source = clean_text(source_node.text if source_node is not None else "Google News", "Google News")
+        if title:
+            rows.append(
+                {
+                    "Tanggal": published,
+                    "Judul": title,
+                    "Sumber": source,
+                    "Ringkasan": "Buka link untuk membaca konteks lengkap dari sumber berita.",
+                    "Link": link,
+                }
+            )
+
+    news = pd.DataFrame(rows)
+    if news.empty:
+        detail = f"{prior_error} " if prior_error else ""
+        return news, f"{detail}Google News RSS tidak menemukan berita terbaru untuk kode ini.", "empty"
+    return news, None, "Google News RSS"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -4503,13 +4600,15 @@ if market_context.get("Market_Error"):
 if market_context.get("Breadth_Error"):
     st.caption(f"Market breadth terbatas: {market_context.get('Breadth_Error')}")
 
-tab_summary, tab_reco, tab_portfolio, tab_history, tab_validate, tab_explore_sector, tab_data_method = st.tabs(
-    ["Ringkasan", "Rekomendasi", "Portofolio", "Harga & Teknikal", "Validasi & Prediksi", "Explorer & Sektor", "Data & Metodologi"]
+tab_summary, tab_reco, tab_history, tab_validate, tab_data_method = st.tabs(
+    ["Dashboard", "Screener", "Saham Pilihan", "Validasi & Portofolio", "Data & Audit"]
 )
+tab_portfolio = tab_validate
 tab_backtest = tab_validate
 tab_predict = tab_validate
-tab_explore = tab_explore_sector
-tab_sector = tab_explore_sector
+tab_explore_sector = tab_data_method
+tab_explore = tab_data_method
+tab_sector = tab_data_method
 tab_quality = tab_data_method
 tab_method = tab_data_method
 
@@ -4569,69 +4668,71 @@ with tab_summary:
             regime_cols[4].metric("Freshness", clean_text(data_freshness.get("Freshness_Label")), f"Online harga {format_percent(data_freshness.get('Online_Price_Coverage_%'), 0)}")
             st.caption(clean_text(market_context.get("Regime_Reason"), "Konteks market belum tersedia."))
 
-        chart_cols = st.columns([1, 1])
-        with chart_cols[0]:
-            reco_counts = summary_chart_data["Recommendation"].value_counts().reindex(["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"]).dropna().reset_index()
-            reco_counts.columns = ["Recommendation", "Jumlah"]
-            fig = px.bar(
-                reco_counts,
-                x="Recommendation",
-                y="Jumlah",
-                color="Recommendation",
-                title="Distribusi rekomendasi",
-                color_discrete_map=RECOMMENDATION_COLORS,
-            )
-            fig.update_layout(height=330, showlegend=False, margin=dict(l=20, r=20, t=60, b=40))
-            show_chart(fig)
-        with chart_cols[1]:
-            final_counts = summary_chart_data["Final_Action"].value_counts().reindex(
-                ["Accumulate Candidate", "Wait Market Confirmation", "Watchlist", "Speculative Monitor", "Avoid / Review"]
-            ).dropna().reset_index()
-            final_counts.columns = ["Final_Action", "Jumlah"]
-            fig = px.bar(
-                final_counts,
-                x="Jumlah",
-                y="Final_Action",
-                color="Final_Action",
-                orientation="h",
-                title="Distribusi final action",
-                color_discrete_map=FINAL_ACTION_COLORS,
-            )
-            fig.update_layout(height=330, showlegend=False, xaxis_title="Jumlah", yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
-            show_chart(fig)
-
-        chart_cols = st.columns([1, 1])
-        with chart_cols[0]:
-            risk_counts = summary_chart_data["Risk_Level"].value_counts().reindex(["Low", "Medium", "High"]).dropna().reset_index()
-            risk_counts.columns = ["Risk_Level", "Jumlah"]
-            fig = px.pie(
-                risk_counts,
-                names="Risk_Level",
-                values="Jumlah",
-                hole=0.45,
-                title="Komposisi risiko",
-                color="Risk_Level",
-                color_discrete_map=RISK_COLORS,
-            )
-            fig.update_layout(height=330, margin=dict(l=20, r=20, t=60, b=40))
-            show_chart(fig)
-        with chart_cols[1]:
-            source_mix = build_source_mix(summary_chart_data)
-            source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Universe_Diff_Status"])].copy()
-            if source_view.empty:
-                st.info("Ringkasan sumber data belum tersedia.")
-            else:
+        show_summary_charts = st.toggle("Tampilkan grafik distribusi dan sumber data", value=False)
+        if show_summary_charts:
+            chart_cols = st.columns([1, 1])
+            with chart_cols[0]:
+                reco_counts = summary_chart_data["Recommendation"].value_counts().reindex(["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"]).dropna().reset_index()
+                reco_counts.columns = ["Recommendation", "Jumlah"]
                 fig = px.bar(
-                    source_view,
-                    x="Jumlah",
-                    y="Nilai",
-                    color="Area",
-                    orientation="h",
-                    title="Sumber harga & status kode",
-                    color_discrete_map=SOURCE_COLORS,
+                    reco_counts,
+                    x="Recommendation",
+                    y="Jumlah",
+                    color="Recommendation",
+                    title="Distribusi rekomendasi",
+                    color_discrete_map=RECOMMENDATION_COLORS,
                 )
-                fig.update_layout(height=330, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                fig.update_layout(height=330, showlegend=False, margin=dict(l=20, r=20, t=60, b=40))
                 show_chart(fig)
+            with chart_cols[1]:
+                final_counts = summary_chart_data["Final_Action"].value_counts().reindex(
+                    ["Accumulate Candidate", "Wait Market Confirmation", "Watchlist", "Speculative Monitor", "Avoid / Review"]
+                ).dropna().reset_index()
+                final_counts.columns = ["Final_Action", "Jumlah"]
+                fig = px.bar(
+                    final_counts,
+                    x="Jumlah",
+                    y="Final_Action",
+                    color="Final_Action",
+                    orientation="h",
+                    title="Distribusi final action",
+                    color_discrete_map=FINAL_ACTION_COLORS,
+                )
+                fig.update_layout(height=330, showlegend=False, xaxis_title="Jumlah", yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                show_chart(fig)
+
+            chart_cols = st.columns([1, 1])
+            with chart_cols[0]:
+                risk_counts = summary_chart_data["Risk_Level"].value_counts().reindex(["Low", "Medium", "High"]).dropna().reset_index()
+                risk_counts.columns = ["Risk_Level", "Jumlah"]
+                fig = px.pie(
+                    risk_counts,
+                    names="Risk_Level",
+                    values="Jumlah",
+                    hole=0.45,
+                    title="Komposisi risiko",
+                    color="Risk_Level",
+                    color_discrete_map=RISK_COLORS,
+                )
+                fig.update_layout(height=330, margin=dict(l=20, r=20, t=60, b=40))
+                show_chart(fig)
+            with chart_cols[1]:
+                source_mix = build_source_mix(summary_chart_data)
+                source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Universe_Diff_Status"])].copy()
+                if source_view.empty:
+                    st.info("Ringkasan sumber data belum tersedia.")
+                else:
+                    fig = px.bar(
+                        source_view,
+                        x="Jumlah",
+                        y="Nilai",
+                        color="Area",
+                        orientation="h",
+                        title="Sumber harga & status kode",
+                        color_discrete_map=SOURCE_COLORS,
+                    )
+                    fig.update_layout(height=330, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                    show_chart(fig)
 
         overview_cols = st.columns([1.2, 1])
         with overview_cols[0]:
@@ -5774,8 +5875,53 @@ with tab_explore:
             show_chart(fig)
 
 with tab_history:
-    st.subheader("Histori harga")
+    st.subheader("Saham pilihan")
     history_source = filtered if not filtered.empty else scored_df
+    focus_codes = history_source["Kode"].dropna().astype(str).str.upper().unique().tolist()
+    focus_code = None
+    if focus_codes:
+        focus_code = st.selectbox("Saham fokus", focus_codes, index=0, help="Pilih saham utama untuk ringkasan, berita, histori, dan teknikal.")
+        focus_stock = scored_df[scored_df["Kode"].astype(str).str.upper().eq(focus_code)].head(1)
+        if not focus_stock.empty:
+            focus_row = focus_stock.iloc[0]
+            focus_cols = st.columns(6)
+            focus_cols[0].metric("Final Action", clean_text(focus_row.get("Final_Action")), clean_text(focus_row.get("Decision_Confidence")))
+            focus_cols[1].metric("Score", format_number(focus_row.get("Score")), clean_text(focus_row.get("Recommendation")))
+            focus_cols[2].metric("Risiko", clean_text(focus_row.get("Risk_Level")), "Clean" if bool(focus_row.get("Clean_Data")) else "Review data")
+            focus_cols[3].metric("Harga", format_rupiah(focus_row.get("Penutupan")), clean_text(focus_row.get("Price_Source")))
+            focus_cols[4].metric("52W", format_percent(focus_row.get("Return_52W")), f"YTD {format_percent(focus_row.get('Return_YTD'))}")
+            focus_cols[5].metric("Threshold", format_percent(focus_row.get("Threshold_Pass_Ratio"), 0), clean_text(focus_row.get("Threshold_Mode")))
+            st.caption(clean_text(focus_row.get("Decision_Summary"), "Ringkasan keputusan belum tersedia."))
+
+            focus_info_cols = st.columns([1, 1])
+            with focus_info_cols[0]:
+                st.markdown("**Prospek berbasis data dashboard**")
+                st.write(f"Faktor kuat: {clean_text(focus_row.get('Top_Strengths'), '-')}")
+                st.write(f"Faktor risiko: {clean_text(focus_row.get('Top_Risks'), '-')}")
+                st.write(f"Langkah berikutnya: {clean_text(focus_row.get('Next_Step'), '-')}")
+            with focus_info_cols[1]:
+                st.markdown("**Berita & issue terbaru**")
+                news_df, news_error, news_source = fetch_yahoo_news(focus_code, limit=5)
+                if news_error:
+                    st.info(news_error)
+                else:
+                    st.caption(f"Sumber: {news_source}. Berita ditampilkan apa adanya dari provider.")
+                    show_table(
+                        news_df,
+                        hide_index=True,
+                        column_config={
+                            "Tanggal": st.column_config.DatetimeColumn("Tanggal", format="YYYY-MM-DD HH:mm"),
+                            "Judul": st.column_config.TextColumn("Judul"),
+                            "Sumber": st.column_config.TextColumn("Sumber"),
+                            "Ringkasan": st.column_config.TextColumn("Ringkasan"),
+                            "Link": st.column_config.LinkColumn("Link"),
+                        },
+                    )
+    else:
+        st.warning("Tidak ada kode saham pada filter saat ini.")
+
+    st.divider()
+    st.subheader("Histori harga")
     history_mode = st.radio(
         "Sumber grafik histori",
         ["Online yfinance KODE.JK", "Excel Metrik 4W-52W"],
@@ -5805,7 +5951,7 @@ with tab_history:
         selected_codes = history_source.head(top_n_history)["Kode"].tolist()
         st.caption(f"Mode all memakai top {len(selected_codes)} saham dari hasil filter/ranking saat ini.")
     else:
-        default_codes = history_source.head(5)["Kode"].tolist()
+        default_codes = [focus_code] if focus_code else history_source.head(5)["Kode"].tolist()
         selected_codes = st.multiselect(
             "Pilih saham untuk grafik histori",
             options=scored_df["Kode"].tolist(),
@@ -5986,7 +6132,8 @@ with tab_history:
     else:
         tech_controls = st.columns([1, 1, 1])
         with tech_controls[0]:
-            technical_code = st.selectbox("Kode saham", technical_codes, index=0, help=HELP_TEXT["technical_code"])
+            technical_index = technical_codes.index(focus_code) if focus_code in technical_codes else 0
+            technical_code = st.selectbox("Kode saham", technical_codes, index=technical_index, help=HELP_TEXT["technical_code"])
         with tech_controls[1]:
             technical_period = st.selectbox(
                 "Periode teknikal",
