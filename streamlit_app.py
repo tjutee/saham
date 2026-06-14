@@ -4184,6 +4184,14 @@ def build_excel_fallback_summary():
 
 def merge_universe_with_excel_fallback(universe, excel_summary):
     if excel_summary.empty or "Kode" not in excel_summary.columns:
+        if not universe.empty:
+            universe = universe.copy()
+            universe["In_IDX_Official"] = universe["Universe_Source"].eq("BEI/IDX official")
+            universe["Universe_Diff_Status"] = np.where(
+                universe["In_IDX_Official"],
+                "Match BEI/IDX official",
+                "Match non-IDX online fallback",
+            )
         return universe
 
     fallback_columns = [column for column in ["Kode", "Nama Perusahaan", "Sektor", "Industry"] if column in excel_summary.columns]
@@ -4201,21 +4209,25 @@ def merge_universe_with_excel_fallback(universe, excel_summary):
     if universe.empty:
         return excel_universe.drop_duplicates("Kode")
 
-    online_lookup = universe.drop_duplicates("Kode").set_index("Kode")
-    output = excel_universe.drop_duplicates("Kode").copy()
-    online_codes = output["Kode"].isin(online_lookup.index)
-    output.loc[online_codes, "Universe_Source"] = output.loc[online_codes, "Kode"].map(online_lookup["Universe_Source"])
-    output["In_IDX_Official"] = online_codes & output["Universe_Source"].eq("BEI/IDX official")
+    output = universe.drop_duplicates("Kode").copy()
+    output["In_IDX_Official"] = output["Universe_Source"].eq("BEI/IDX official")
     output["Universe_Diff_Status"] = np.where(
         output["In_IDX_Official"],
         "Match BEI/IDX official",
-        np.where(online_codes, "Match non-IDX online fallback", "Excel fallback only"),
+        "Match non-IDX online fallback",
     )
 
+    excel_lookup = excel_universe.drop_duplicates("Kode").set_index("Kode")
     for column in ["Nama Perusahaan", "Sektor", "Industry", "ListingDate", "Shares", "ListingBoard"]:
-        online_values = output["Kode"].map(online_lookup[column]) if column in online_lookup.columns else pd.Series(np.nan, index=output.index)
+        excel_values = output["Kode"].map(excel_lookup[column]) if column in excel_lookup.columns else pd.Series(np.nan, index=output.index)
+        if column not in output.columns:
+            output[column] = np.nan
         missing = output[column].isna() | output[column].astype(str).str.strip().isin(["", "-", "No Sector", "No Industry", "nan", "NaT"])
-        output.loc[missing & online_values.notna(), column] = online_values[missing & online_values.notna()]
+        output.loc[missing & excel_values.notna(), column] = excel_values[missing & excel_values.notna()]
+
+    excel_only = excel_universe[~excel_universe["Kode"].isin(output["Kode"])].copy()
+    if not excel_only.empty:
+        output = pd.concat([output, excel_only], ignore_index=True)
 
     return output.reset_index(drop=True)
 
