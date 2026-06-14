@@ -1145,8 +1145,12 @@ BANK_METRICS_SNAPSHOT_COLUMNS = [
     "BOPO",
     "CIR",
     "LAR",
+    "Period",
     "Bank_Metric_Source",
+    "Bank_Metric_Source_URL",
     "Bank_Metric_Last_Update",
+    "Bank_Metric_Confidence",
+    "Bank_Metric_Notes",
 ]
 
 
@@ -1176,6 +1180,9 @@ def read_bank_metrics_snapshot():
         snapshot["Bank_Metric_Source"] = "bank metrics snapshot"
     if "Bank_Metric_Last_Update" not in snapshot.columns:
         snapshot["Bank_Metric_Last_Update"] = pd.NaT
+    for column in ["Period", "Bank_Metric_Source_URL", "Bank_Metric_Confidence", "Bank_Metric_Notes"]:
+        if column not in snapshot.columns:
+            snapshot[column] = ""
     snapshot["Bank_Metric_Field_Count"] = snapshot[[column for column in BANK_THRESHOLD_METRICS if column in snapshot.columns]].notna().sum(axis=1)
     snapshot.attrs["bank_metrics_source"] = "bank metrics snapshot"
     snapshot.attrs["bank_metrics_error"] = None
@@ -4666,13 +4673,25 @@ def load_data(data_signature=None):
     if not bank_metrics_snapshot.empty:
         snapshot_columns = [
             column
-            for column in ["Kode"] + BANK_THRESHOLD_METRICS + ["Bank_Metric_Source", "Bank_Metric_Last_Update", "Bank_Metric_Field_Count"]
+            for column in [
+                "Kode",
+                *BANK_THRESHOLD_METRICS,
+                "Period",
+                "Bank_Metric_Source",
+                "Bank_Metric_Source_URL",
+                "Bank_Metric_Last_Update",
+                "Bank_Metric_Confidence",
+                "Bank_Metric_Notes",
+                "Bank_Metric_Field_Count",
+            ]
             if column in bank_metrics_snapshot.columns
         ]
         df = df.merge(bank_metrics_snapshot[snapshot_columns], on="Kode", how="left", suffixes=("", "_BankSnapshot"))
     else:
         df["Bank_Metric_Source"] = np.nan
         df["Bank_Metric_Last_Update"] = np.nan
+        df["Bank_Metric_Confidence"] = np.nan
+        df["Bank_Metric_Notes"] = np.nan
         df["Bank_Metric_Field_Count"] = 0
 
     text_online_columns = {
@@ -4940,10 +4959,17 @@ def load_data(data_signature=None):
     df["Bank_Metric_Field_Count"] = snapshot_bank_count + excel_bank_metric_fill_count
     if "Bank_Metric_Source" not in df.columns:
         df["Bank_Metric_Source"] = np.nan
+    for column in ["Period", "Bank_Metric_Source_URL", "Bank_Metric_Last_Update", "Bank_Metric_Confidence", "Bank_Metric_Notes"]:
+        if column not in df.columns:
+            df[column] = np.nan
     excel_bank_source_mask = excel_bank_metric_fill_count.gt(0) & (
         df["Bank_Metric_Source"].isna() | df["Bank_Metric_Source"].astype(str).str.strip().isin(["", "nan"])
     )
     df.loc[excel_bank_source_mask, "Bank_Metric_Source"] = "Excel Banking/NonBank fallback"
+    df.loc[excel_bank_source_mask, "Bank_Metric_Source_URL"] = DATA_FILE.name
+    df.loc[excel_bank_source_mask, "Period"] = df.loc[excel_bank_source_mask, "Period"].fillna("Latest workbook snapshot")
+    df.loc[excel_bank_source_mask, "Bank_Metric_Confidence"] = "Fallback"
+    df.loc[excel_bank_source_mask, "Bank_Metric_Notes"] = "Excel fallback; replace with OJK/IDX snapshot when available."
     df["Bank_Metric_Source"] = df["Bank_Metric_Source"].fillna("missing")
     df = apply_threshold_profile(df)
     raw.attrs["data_source"] = f"{summarize_universe_source(universe)}; Market {market_source}; Fundamental {fundamental_source}"
@@ -5878,9 +5904,15 @@ with tab_reco:
             "Index_Count_Metrik",
             "Online_Fundamental_Field_Count",
             "Excel_Fundamental_Field_Count",
+            "Bank_Metric_Field_Count",
+            "Excel_Bank_Metric_Field_Count",
             "Price_Source",
             "Volume_Source",
             "Fundamental_Source",
+            "Bank_Metric_Source",
+            "Bank_Metric_Last_Update",
+            "Bank_Metric_Confidence",
+            "Bank_Metric_Notes",
             "Data_Source",
             "Universe_Source",
             "Universe_Diff_Status",
@@ -6020,8 +6052,14 @@ with tab_reco:
                 "Index_Count_Metrik": st.column_config.NumberColumn("Index Count Metrik", format="%.0f", help="Jumlah indeks dari daftar gabungan pada sheet Metrik."),
                 "Online_Fundamental_Field_Count": st.column_config.NumberColumn("Field Online", format="%.0f", help="Jumlah rasio fundamental utama yang tersedia dari TradingView scanner online."),
                 "Excel_Fundamental_Field_Count": st.column_config.NumberColumn("Field Excel", format="%.0f", help="Jumlah rasio fundamental yang masih diisi dari Excel fallback karena sumber online kosong."),
+                "Bank_Metric_Field_Count": st.column_config.NumberColumn("Field Bank", format="%.0f", help="Jumlah metrik bank khusus yang tersedia untuk baris ini."),
+                "Excel_Bank_Metric_Field_Count": st.column_config.NumberColumn("Field Bank Excel", format="%.0f", help="Jumlah metrik bank yang masih diisi dari Excel fallback."),
                 "Price_Source": st.column_config.TextColumn("Sumber Harga", help="Menunjukkan apakah harga berasal dari yfinance/cache atau Excel fallback."),
                 "Fundamental_Source": st.column_config.TextColumn("Sumber Fundamental", help=HELP_TEXT["fundamental_source"]),
+                "Bank_Metric_Source": st.column_config.TextColumn("Sumber Metrik Bank", help="Sumber NIM/CAR/LDR/NPL/BOPO/CIR/LAR."),
+                "Bank_Metric_Last_Update": st.column_config.TextColumn("Update Metrik Bank", help="Timestamp snapshot metrik bank."),
+                "Bank_Metric_Confidence": st.column_config.TextColumn("Confidence Bank", help="Tingkat keyakinan sumber metrik bank: regulatory, online, atau fallback."),
+                "Bank_Metric_Notes": st.column_config.TextColumn("Catatan Metrik Bank", help="Catatan validasi dan fallback untuk metrik bank."),
                 "Volume_Original": st.column_config.NumberColumn("Volume Excel", format="%.0f", help="Volume dari Excel fallback bila tersedia."),
                 "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari yfinance/cache."),
                 "Volume_Source": st.column_config.TextColumn("Sumber Volume", help="Menunjukkan apakah volume berasal dari yfinance/cache atau Excel fallback."),
