@@ -29,6 +29,18 @@ TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/indonesia/scan"
 STOCKANALYSIS_IDX_URL = "https://stockanalysis.com/list/indonesia-stock-exchange/"
 ONLINE_LOAD_PERIOD = "1y"
 ONLINE_REFRESH_TTL = 6 * 60 * 60
+AUTO_REFRESH_CHECK_INTERVAL_SECONDS = 60
+AUTO_REFRESH_INTERVAL_OPTIONS = {
+    "5 menit": 5 * 60,
+    "10 menit": 10 * 60,
+    "15 menit": 15 * 60,
+    "30 menit": 30 * 60,
+}
+AUTO_REFRESH_SCOPE_OPTIONS = {
+    "Top 10": 10,
+    "Top 25": 25,
+    "Top 50": 50,
+}
 JAKARTA_TZ = timezone(timedelta(hours=7), name="WIB")
 REGULAR_TRADING_SESSIONS = {
     "weekday": [("09:00", "11:30"), ("13:30", "15:50")],
@@ -1358,7 +1370,7 @@ def build_ui_heuristic_audit():
             "Fokus": "Filter dan update data",
             "Aspek Terpenuhi": "Mode Cepat/Lengkap, helper threshold, dan update cache-first.",
             "Potensi Redundancy": "Bobot/rasio disembunyikan di Mode Cepat agar tidak dobel dengan preset.",
-            "Tindak Lanjut": "Pertahankan refresh live manual; jangan auto-refresh massal saat load.",
+            "Tindak Lanjut": "Auto update hanya untuk kode prioritas; hindari refresh massal saat load.",
         },
         {
             "Status": "OK",
@@ -1773,23 +1785,23 @@ def build_refresh_plan(freshness, session_status):
     session_label = clean_text(session_status.get("Status"))
 
     if pd.isna(lag_days):
-        price_action = "Refresh histori top saham, lalu bangun snapshot pasar."
+        price_action = "Auto update histori top saham, lalu perbarui snapshot pasar."
         price_priority = "High"
     elif lag_days > 7 or price_coverage < 40:
-        price_action = "Refresh histori top saham prioritas, lanjut bangun snapshot pasar dari cache."
+        price_action = "Auto update histori saham prioritas, lanjut perbarui snapshot pasar dari cache."
         price_priority = "High"
     elif lag_days > 3 or stale_rows > 0:
-        price_action = "Bangun snapshot pasar dari cache; refresh histori hanya untuk kode prioritas."
+        price_action = "Perbarui snapshot pasar dari cache; ambil histori baru hanya untuk kode prioritas."
         price_priority = "Medium"
     else:
         price_action = "Tidak perlu refresh massal; gunakan snapshot/cache."
         price_priority = "Low"
 
     if fundamental_coverage < 60:
-        fundamental_action = "Refresh fundamental online saat trafik rendah, lalu simpan snapshot."
+        fundamental_action = "Update fundamental online saat trafik rendah, lalu simpan snapshot."
         fundamental_priority = "Medium"
     else:
-        fundamental_action = "Snapshot fundamental memadai; refresh manual bila ada laporan keuangan baru."
+        fundamental_action = "Snapshot fundamental memadai; update hanya bila ada laporan keuangan baru."
         fundamental_priority = "Low"
 
     return pd.DataFrame(
@@ -3577,6 +3589,29 @@ def build_online_market_frame(codes, period=ONLINE_LOAD_PERIOD):
     return output
 
 
+def update_market_snapshot_for_codes(codes, period=ONLINE_LOAD_PERIOD):
+    cleaned_codes = sorted({str(code).strip().upper() for code in codes if str(code).strip()})
+    if not cleaned_codes:
+        return pd.DataFrame(), "Tidak ada kode untuk auto update.", "empty"
+
+    fetch_yahoo_history.clear()
+    history, error, source = fetch_yahoo_history(cleaned_codes, period=period)
+    update_frame = build_market_frame_from_history(history, source=source)
+    if update_frame.empty:
+        return update_frame, error or "Auto update tidak menghasilkan data baru.", source
+
+    existing = read_market_snapshot(period=period)
+    if existing.empty:
+        merged = update_frame.copy()
+    else:
+        existing = existing[~existing["Kode"].astype(str).str.upper().isin(cleaned_codes)].copy()
+        merged = pd.concat([existing, update_frame], ignore_index=True)
+    write_market_snapshot(merged, period=period)
+    merged.attrs["market_source"] = source
+    merged.attrs["market_error"] = error
+    return merged, error, source
+
+
 def score_percentile(series, higher_is_better=True, valid_mask=None):
     values = pd.to_numeric(series, errors="coerce")
     if valid_mask is None:
@@ -4797,7 +4832,7 @@ with st.sidebar:
         require_core_thresholds = st.checkbox("Wajib lolos valuasi & profit inti", value=require_core_thresholds, help=HELP_TEXT["core_thresholds"])
 
     st.divider()
-    with st.expander("Update data live/cache", expanded=False):
+    with st.expander("Auto update pasar", expanded=False):
         file_status = data_file_status
         st.caption(f"Sumber aktif: {data_update_label}")
         st.caption(f"Jam bursa: {market_session_status['Status']} | {market_session_status['Now']}")
@@ -4809,7 +4844,24 @@ with st.sidebar:
         cache_status_sidebar = get_history_cache_status()
         st.caption(f"Cache histori: {len(cache_status_sidebar):,} file di `{HISTORY_CACHE_DIR}`")
         st.info(
-            "Strategi ringan: dashboard membaca snapshot/cache lebih dulu. Refresh online dipakai manual untuk kode prioritas, lalu snapshot dibangun ulang dari cache agar sesi berikutnya cepat."
+            "Auto update memakai kode prioritas dan interval terkontrol saat bursa berjalan. Snapshot/cache tetap dipakai agar dashboard tidak berat."
+        )
+        auto_update_enabled = st.toggle(
+            "Auto update saat bursa",
+            value=True,
+            help="Saat aktif, dashboard memperbarui harga/histori kode prioritas otomatis selama jam bursa. Di luar jam bursa, update otomatis berhenti.",
+        )
+        auto_refresh_interval_label = st.selectbox(
+            "Interval auto update",
+            list(AUTO_REFRESH_INTERVAL_OPTIONS),
+            index=1,
+            help="Interval lebih pendek membuat data lebih segar tetapi bisa lebih berat untuk provider data dan Streamlit Cloud.",
+        )
+        auto_refresh_scope_label = st.selectbox(
+            "Cakupan auto update",
+            list(AUTO_REFRESH_SCOPE_OPTIONS),
+            index=0,
+            help="Batasi cakupan agar update otomatis tetap cepat dan stabil.",
         )
         refresh_period = st.selectbox(
             "Periode histori",
@@ -4818,48 +4870,65 @@ with st.sidebar:
             format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
             help=HELP_TEXT["refresh_period"],
         )
-        refresh_top_n = st.slider("Jumlah top saham untuk refresh", 5, 50, 10, step=5, help=HELP_TEXT["refresh_top_n"])
-        update_actions = st.multiselect(
-            "Aksi update",
-            [
-                "Refresh histori top saham",
-                "Bangun snapshot pasar dari cache",
-                "Refresh fundamental online",
-                "Clear cache aplikasi",
-            ],
-            default=["Bangun snapshot pasar dari cache"],
-            help="Default ringan: bangun snapshot dari cache. Pilih refresh histori/fundamental hanya saat perlu mengambil data online terbaru.",
-        )
-        run_update = st.button("Jalankan update terpilih", type="primary", disabled=not update_actions)
-        if run_update:
-            if "Refresh histori top saham" in update_actions:
-                with st.spinner("Mengambil data histori online..."):
-                    fetch_yahoo_history.clear()
-                    top_codes_for_refresh = df.sort_values("Index_Count", ascending=False)["Kode"].head(refresh_top_n).tolist()
-                    refreshed_history, refresh_error, refresh_source = fetch_yahoo_history(top_codes_for_refresh, period=refresh_period)
-                if refresh_error and refreshed_history.empty:
-                    st.error(refresh_error)
-                else:
-                    st.success(f"Cache histori diperbarui dari {refresh_source}: {len(refreshed_history):,} baris.")
-            if "Bangun snapshot pasar dari cache" in update_actions:
-                snapshot_frame = build_market_snapshot_from_history_cache(period=ONLINE_LOAD_PERIOD)
-                if snapshot_frame.empty:
-                    st.error(snapshot_frame.attrs.get("market_error", "Snapshot pasar gagal dibuat."))
-                else:
-                    snapshot_file = write_market_snapshot(snapshot_frame, period=ONLINE_LOAD_PERIOD)
-                    st.success(f"Snapshot pasar disimpan: {snapshot_file} ({len(snapshot_frame):,} kode). Commit/push file ini agar tersedia di Streamlit Cloud.")
-            if "Refresh fundamental online" in update_actions:
-                with st.spinner("Mengambil fundamental massal dari TradingView..."):
-                    fundamental_frame = fetch_online_fundamentals()
-                if fundamental_frame.empty:
-                    st.error(fundamental_frame.attrs.get("fundamental_error", "Snapshot fundamental gagal dibuat."))
-                else:
-                    snapshot_file = write_fundamental_snapshot(fundamental_frame)
-                    st.success(f"Snapshot fundamental disimpan: {snapshot_file} ({len(fundamental_frame):,} kode). Commit/push file ini agar tersedia di Streamlit Cloud.")
-            if "Clear cache aplikasi" in update_actions:
+
+        @st.fragment(run_every=f"{AUTO_REFRESH_CHECK_INTERVAL_SECONDS}s")
+        def render_auto_market_update(enabled, interval_label, scope_label, period):
+            now = pd.Timestamp.now(tz=JAKARTA_TZ)
+            session_status = get_market_session_status(now)
+            interval_seconds = AUTO_REFRESH_INTERVAL_OPTIONS[interval_label]
+            scope_limit = AUTO_REFRESH_SCOPE_OPTIONS[scope_label]
+            last_refresh_raw = st.session_state.get("auto_market_refresh_at")
+            last_refresh = pd.Timestamp(last_refresh_raw) if last_refresh_raw else None
+            elapsed = (now - last_refresh).total_seconds() if last_refresh is not None else np.inf
+            due = bool(enabled and session_status["Is_Open"] and elapsed >= interval_seconds)
+
+            status_cols = st.columns(2)
+            status_cols[0].metric("Auto update", "Aktif" if enabled else "Nonaktif", session_status["Status"])
+            status_cols[1].metric(
+                "Terakhir",
+                last_refresh.strftime("%H:%M:%S WIB") if last_refresh is not None else "-",
+                f"{scope_label} / {interval_label}",
+            )
+            if not enabled:
+                st.caption("Auto update dinonaktifkan. Dashboard tetap memakai snapshot/cache terakhir.")
+                return
+            if not session_status["Is_Open"]:
+                st.caption("Auto update berhenti di luar jam bursa. Data terakhir tetap ditampilkan dari snapshot/cache.")
+                return
+            if not due:
+                next_seconds = max(0, int(interval_seconds - elapsed))
+                st.caption(f"Auto update berikutnya sekitar {next_seconds // 60} menit {next_seconds % 60} detik lagi.")
+                return
+
+            top_codes_for_refresh = (
+                df.sort_values(["Index_Count", "Volume"], ascending=False)["Kode"]
+                .dropna()
+                .astype(str)
+                .head(scope_limit)
+                .tolist()
+            )
+            with st.spinner("Auto update data pasar..."):
+                updated_market, refresh_error, refresh_source = update_market_snapshot_for_codes(
+                    top_codes_for_refresh,
+                    period=period,
+                )
+            st.session_state["auto_market_refresh_at"] = now.isoformat()
+            st.session_state["auto_market_refresh_source"] = refresh_source
+            st.session_state["auto_market_refresh_rows"] = int(len(updated_market))
+            st.session_state["auto_market_refresh_error"] = refresh_error
+            if refresh_error and updated_market.empty:
+                st.warning(refresh_error)
+            else:
+                st.success(f"Auto update selesai dari {refresh_source}: {len(updated_market):,} kode di snapshot.")
                 st.cache_data.clear()
-                st.success("Cache aplikasi dibersihkan. Dashboard akan dimuat ulang.")
                 st.rerun()
+
+        render_auto_market_update(
+            auto_update_enabled,
+            auto_refresh_interval_label,
+            auto_refresh_scope_label,
+            refresh_period,
+        )
 
 active_filter_criteria = make_filter_criteria(
     name="Filter aktif",
@@ -7802,7 +7871,7 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
         2. Gabungkan harga, volume, fundamental, histori, threshold, dan metadata sumber.
         3. Hitung Score fundamental, Clean Data, risk label, explainability, dan Final Action.
         4. Hitung teknikal hanya saat histori OHLCV tersedia untuk kode/periode yang dipilih.
-        5. Jalankan backtest/prediksi hanya lewat tombol manual agar tidak berat saat dashboard dibuka.
+        5. Jalankan backtest/prediksi hanya saat diminta agar tidak berat saat dashboard dibuka.
 
         Score akhir memakai normalisasi percentile yang dipotong di persentil 3 dan 97 agar outlier ekstrem tidak mendominasi.
         Faktor bernilai lebih baik diberi percentile lebih tinggi; faktor valuasi/risiko yang lebih rendah diberi percentile terbalik.
