@@ -435,6 +435,10 @@ COUNT_SCALE = "Blues"
 CHART_AXIS_COLOR = "#64748b"
 
 
+def file_display_name(path_like):
+    return Path(path_like).name if path_like is not None else "-"
+
+
 st.set_page_config(
     page_title="Ringkasan Saham IDX",
     page_icon=":chart_with_upwards_trend:",
@@ -4987,7 +4991,7 @@ def load_data(data_signature=None):
         df["Bank_Metric_Source"].isna() | df["Bank_Metric_Source"].astype(str).str.strip().isin(["", "nan"])
     )
     df.loc[excel_bank_source_mask, "Bank_Metric_Source"] = "Excel Banking/NonBank fallback"
-    df.loc[excel_bank_source_mask, "Bank_Metric_Source_URL"] = DATA_FILE.name
+    df.loc[excel_bank_source_mask, "Bank_Metric_Source_URL"] = file_display_name(DATA_FILE)
     df.loc[excel_bank_source_mask, "Period"] = df.loc[excel_bank_source_mask, "Period"].fillna("Latest workbook snapshot")
     df.loc[excel_bank_source_mask, "Bank_Metric_Confidence"] = "Fallback"
     df.loc[excel_bank_source_mask, "Bank_Metric_Notes"] = "Excel fallback; replace with OJK/IDX snapshot when available."
