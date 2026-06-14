@@ -5706,12 +5706,12 @@ with tab_summary:
                     "Market_Cap": st.column_config.NumberColumn("Market Cap", format="Rp %.0f", help="Kapitalisasi pasar dari sheet Metrik bila tersedia."),
                     "Revenue": st.column_config.NumberColumn("Revenue", format="Rp %.0f", help="Total revenue dari sheet Metrik bila tersedia."),
                     "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f", help="Market cap dibagi total revenue. Dipakai sebagai konteks tambahan, bukan rumus utama score."),
-                    "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
+                    "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help="Return satu tahun terakhir untuk membandingkan saham fokus dengan shortlist."),
                     "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
-                    "Final_Action": st.column_config.TextColumn("Aksi Akhir", help=HELP_TEXT["final_action"]),
-                    "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help=HELP_TEXT["final_action"]),
-                    "Decision_Blockers": st.column_config.TextColumn("Penghambat", help=HELP_TEXT["final_action"]),
-                    "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help=HELP_TEXT["final_action"]),
+                    "Final_Action": st.column_config.TextColumn("Aksi Akhir", help="Aksi ringkas untuk daftar top kandidat di Beranda; cek Detail Saham untuk timing entry."),
+                    "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help="Level keyakinan keputusan; turun jika ada blocker seperti risk high, threshold rendah, atau market risk-off."),
+                    "Decision_Blockers": st.column_config.TextColumn("Penghambat", help="Alasan utama saham belum layak naik kelas, misalnya data belum bersih, risiko tinggi, atau relatif sektor lemah."),
+                    "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help="Tindakan praktis berikutnya untuk user: cek entry, tunggu konfirmasi, review data, atau hindari."),
                 },
             )
         with overview_cols[1]:
@@ -6026,13 +6026,13 @@ with tab_reco:
                 "Sector_Valuation_Score": st.column_config.NumberColumn("Valuasi Sektor", format="%.1f", help=HELP_TEXT["sector_relative"]),
                 "Sector_Quality_Score": st.column_config.NumberColumn("Kualitas Sektor", format="%.1f", help=HELP_TEXT["sector_relative"]),
                 "Decision_Summary": st.column_config.TextColumn("Ringkasan Keputusan", help=HELP_TEXT["explainability"]),
-                "Top_Strengths": st.column_config.TextColumn("Faktor Kuat", help=HELP_TEXT["explainability"]),
-                "Top_Risks": st.column_config.TextColumn("Faktor Lemah", help=HELP_TEXT["explainability"]),
-                "Action_Checklist": st.column_config.TextColumn("Checklist", help=HELP_TEXT["explainability"]),
-                "Final_Action": st.column_config.TextColumn("Aksi Akhir", help=HELP_TEXT["final_action"]),
-                "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help=HELP_TEXT["final_action"]),
-                "Decision_Blockers": st.column_config.TextColumn("Penghambat", help=HELP_TEXT["final_action"]),
-                "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help=HELP_TEXT["final_action"]),
+                "Top_Strengths": st.column_config.TextColumn("Faktor Kuat", help="Faktor model yang paling mendukung saham ini, misalnya valuasi, kualitas, likuiditas, momentum, atau indeks."),
+                "Top_Risks": st.column_config.TextColumn("Faktor Lemah", help="Faktor yang paling menahan ranking saham ini dan perlu dicek sebelum mengambil keputusan."),
+                "Action_Checklist": st.column_config.TextColumn("Checklist", help="Checklist tindakan ringkas yang disusun dari score, risiko, data, threshold, dan konteks market."),
+                "Final_Action": st.column_config.TextColumn("Aksi Akhir", help="Keputusan ringkas dari Score, Clean_Data, risiko, threshold, sektor, momentum, dan market regime."),
+                "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help="Level keyakinan keputusan; turun bila saham punya blocker penting atau data belum cukup bersih."),
+                "Decision_Blockers": st.column_config.TextColumn("Penghambat", help="Daftar penghambat utama seperti data tidak bersih, risk high, threshold rendah, atau market risk-off."),
+                "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help="Instruksi tindak lanjut paling relevan: cek detail, tunggu konfirmasi, review risiko, atau hindari."),
                 "Market_Regime": st.column_config.TextColumn("Market Regime", help="Konteks IHSG saat ini. Tidak mengubah Score, tetapi menambah checklist risiko."),
                 "Market_Breadth": st.column_config.TextColumn("Market Breadth", help="Kesehatan pasar dari persentase saham di atas MA50/MA200 pada sample breadth."),
                 "Valuation_Score": st.column_config.NumberColumn("Valuasi", format="%.1f", help=HELP_TEXT["valuation"]),
@@ -6040,12 +6040,12 @@ with tab_reco:
                 "Risk_Score": st.column_config.NumberColumn("Risiko", format="%.1f", help=HELP_TEXT["risk"]),
                 "Liquidity_Score": st.column_config.NumberColumn("Likuiditas", format="%.1f", help=HELP_TEXT["liquidity"]),
                 "Momentum_Score": st.column_config.NumberColumn("Momentum", format="%.1f", help=HELP_TEXT["momentum"]),
-                "History_Momentum_Score": st.column_config.NumberColumn("Histori", format="%.1f", help=HELP_TEXT["momentum"]),
+                "History_Momentum_Score": st.column_config.NumberColumn("Histori", format="%.1f", help="Komponen momentum berbasis return 4W, 13W, 26W, 52W, dan YTD jika tersedia."),
                 "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
                 "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
                 "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
-                "Market_Cap": st.column_config.NumberColumn("Market Cap", format="Rp %.0f", help="Kapitalisasi pasar dari sheet Metrik bila tersedia."),
-                "Revenue": st.column_config.NumberColumn("Revenue", format="Rp %.0f", help="Total revenue dari sheet Metrik bila tersedia."),
+                "Market_Cap": st.column_config.NumberColumn("Market Cap", format="Rp %.0f", help="Kapitalisasi pasar; prioritas dari fundamental online/snapshot, lalu Excel Metrik bila online kosong."),
+                "Revenue": st.column_config.NumberColumn("Revenue", format="Rp %.0f", help="Pendapatan terakhir yang tersedia; prioritas dari fundamental online/snapshot, lalu Excel Metrik bila kosong."),
                 "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f", help="Market cap dibagi revenue. Konteks tambahan, bukan rumus utama score."),
                 "Index_Count": st.column_config.NumberColumn("Index Count", format="%.0f", help=HELP_TEXT["index_strength"]),
                 "Index_Count_Sigma": st.column_config.NumberColumn("Sigma i", format="%.0f", help="Nilai coverage indeks dari kolom Sigma i >= 7 di Excel fallback bila tersedia."),
@@ -6069,11 +6069,11 @@ with tab_reco:
                 "ListingBoard": st.column_config.TextColumn("Papan", help="Papan pencatatan dari daftar resmi BEI/IDX bila tersedia."),
                 "ListingDate": st.column_config.DateColumn("Listing", help="Tanggal pencatatan dari daftar resmi BEI/IDX bila tersedia."),
                 "Online_Last_Date": st.column_config.DateColumn("Tanggal Online", help="Tanggal data online terakhir dari yfinance/cache."),
-                "Return_4W": st.column_config.NumberColumn("4W", format="%.1f%%", help=HELP_TEXT["return"]),
-                "Return_13W": st.column_config.NumberColumn("13W", format="%.1f%%", help=HELP_TEXT["return"]),
-                "Return_26W": st.column_config.NumberColumn("26W", format="%.1f%%", help=HELP_TEXT["return"]),
-                "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
-                "Return_YTD": st.column_config.NumberColumn("YTD", format="%.1f%%", help=HELP_TEXT["return"]),
+                "Return_4W": st.column_config.NumberColumn("4W", format="%.1f%%", help="Return sekitar 4 minggu/20 hari bursa dari histori online atau Excel Metrik fallback."),
+                "Return_13W": st.column_config.NumberColumn("13W", format="%.1f%%", help="Return sekitar 13 minggu/65 hari bursa untuk membaca tren kuartalan."),
+                "Return_26W": st.column_config.NumberColumn("26W", format="%.1f%%", help="Return sekitar 26 minggu/130 hari bursa untuk konteks semester."),
+                "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help="Return sekitar 52 minggu/260 hari bursa untuk konteks satu tahun."),
+                "Return_YTD": st.column_config.NumberColumn("YTD", format="%.1f%%", help="Return sejak awal tahun berjalan bila histori tersedia."),
                 "Recommendation": st.column_config.TextColumn("Rekomendasi", help=HELP_TEXT["recommendation"]),
                 "Safety_Recommendation": st.column_config.TextColumn("Data Check", help="Ringkasan Clean_Data dan Score. Label Bersih berarti lolos filter data minimum, bukan jaminan aman investasi."),
                 "Risk_Level": st.column_config.TextColumn("Level Risiko", help=HELP_TEXT["risk_level"]),
@@ -6287,20 +6287,20 @@ with tab_portfolio.expander("Skenario alokasi portofolio", expanded=False):
                 portfolio_view[[column for column in portfolio_columns if column in portfolio_view.columns]].sort_values("Actual_Value", ascending=False),
                 hide_index=True,
                 column_config={
-                    "Final_Action": st.column_config.TextColumn("Aksi Akhir", help=HELP_TEXT["final_action"]),
-                    "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help=HELP_TEXT["final_action"]),
+                    "Final_Action": st.column_config.TextColumn("Aksi Akhir", help="Keputusan ringkas per saham sebelum masuk alokasi portofolio."),
+                    "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help="Keyakinan keputusan untuk saham ini setelah mempertimbangkan blocker dan kualitas data."),
                     "Recommendation": st.column_config.TextColumn("Rekomendasi", help=HELP_TEXT["recommendation"]),
                     "Risk_Level": st.column_config.TextColumn("Level Risiko", help=HELP_TEXT["risk_level"]),
                     "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
                     "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
                     "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
-                    "Target_Weight_%": st.column_config.NumberColumn("Target", format="%.1f%%", help=HELP_TEXT["portfolio"]),
-                    "Target_Value": st.column_config.NumberColumn("Target Nilai", format="Rp %.0f", help=HELP_TEXT["portfolio"]),
-                    "Lot_Est": st.column_config.NumberColumn("Lot Est.", format="%.0f", help=HELP_TEXT["portfolio"]),
-                    "Actual_Value": st.column_config.NumberColumn("Nilai Aktual", format="Rp %.0f", help=HELP_TEXT["portfolio"]),
-                    "Actual_Weight_%": st.column_config.NumberColumn("Bobot Aktual", format="%.1f%%", help=HELP_TEXT["portfolio"]),
-                    "Decision_Blockers": st.column_config.TextColumn("Penghambat", help=HELP_TEXT["final_action"]),
-                    "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help=HELP_TEXT["final_action"]),
+                    "Target_Weight_%": st.column_config.NumberColumn("Target", format="%.1f%%", help="Bobot target hasil estimasi alokasi berdasarkan score, risiko, dan batas konsentrasi."),
+                    "Target_Value": st.column_config.NumberColumn("Target Nilai", format="Rp %.0f", help="Nilai rupiah target sesuai modal simulasi dan bobot target."),
+                    "Lot_Est": st.column_config.NumberColumn("Lot Est.", format="%.0f", help="Estimasi jumlah lot berdasarkan harga terakhir dan nilai target."),
+                    "Actual_Value": st.column_config.NumberColumn("Nilai Aktual", format="Rp %.0f", help="Nilai aktual posisi jika jumlah lot aktual diisi."),
+                    "Actual_Weight_%": st.column_config.NumberColumn("Bobot Aktual", format="%.1f%%", help="Bobot aktual posisi terhadap total nilai portofolio yang dihitung."),
+                    "Decision_Blockers": st.column_config.TextColumn("Penghambat", help="Hal yang menghambat saham masuk atau naik porsi dalam portofolio."),
+                    "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help="Aksi berikutnya untuk posisi ini: tambah, tahan, tunggu, kurangi, atau review."),
                 },
             )
 
@@ -7141,11 +7141,11 @@ with tab_history:
                         column_config={
                             "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
                             "Threshold_Pass_Ratio": st.column_config.NumberColumn("Threshold", format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
-                            "Return_4W": st.column_config.NumberColumn("4W", format="%.1f%%", help=HELP_TEXT["return"]),
-                            "Return_13W": st.column_config.NumberColumn("13W", format="%.1f%%", help=HELP_TEXT["return"]),
-                            "Return_26W": st.column_config.NumberColumn("26W", format="%.1f%%", help=HELP_TEXT["return"]),
-                            "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
-                            "Return_YTD": st.column_config.NumberColumn("YTD", format="%.1f%%", help=HELP_TEXT["return"]),
+                            "Return_4W": st.column_config.NumberColumn("4W", format="%.1f%%", help="Return sekitar 4 minggu untuk momentum jangka pendek."),
+                            "Return_13W": st.column_config.NumberColumn("13W", format="%.1f%%", help="Return sekitar 13 minggu untuk tren kuartalan."),
+                            "Return_26W": st.column_config.NumberColumn("26W", format="%.1f%%", help="Return sekitar 26 minggu untuk tren semester."),
+                            "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help="Return sekitar 52 minggu untuk tren tahunan."),
+                            "Return_YTD": st.column_config.NumberColumn("YTD", format="%.1f%%", help="Return sejak awal tahun berjalan."),
                         },
                     )
 
@@ -7247,15 +7247,15 @@ with tab_history:
                             column_config={
                                 "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                                 "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
-                                "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help=HELP_TEXT["donchian_ribbon"]),
+                                "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help="Skor ringkas kekuatan trend dari posisi harga terhadap beberapa kanal Donchian."),
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
-                                "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
-                                "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
-                                "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
-                                "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
-                                "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help=HELP_TEXT["astro_fibo"]),
-                                "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
-                                "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
+                                "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help="Jarak harga terakhir ke level Fibonacci terdekat; makin kecil berarti harga dekat area reaksi teknikal."),
+                                "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help="Skor kedekatan harga dengan level Fibonacci utama dan konfluensi teknikal."),
+                                "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help="Skor timing tambahan dari jendela Fibonacci time dan siklus planet; bukan sinyal beli mandiri."),
+                                "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help="Jarak hari ke jendela waktu Fibonacci terdekat dari swing teknikal."),
+                                "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help="Skor siklus planet sinusoidal berdasarkan ephemeris JPL/Skyfield untuk konteks timing tambahan."),
+                                "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help="Estimasi stop berbasis Close - 2 x ATR14 untuk mengukur ruang risiko teknikal."),
+                                "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help="Persentase jarak harga terakhir ke ATR Stop 2x; membantu sizing risiko."),
                             },
                         )
 
@@ -7287,27 +7287,27 @@ with tab_history:
 
                 with st.expander("Detail sinyal lanjutan", expanded=False):
                     fib_cols = st.columns(4)
-                    fib_cols[0].metric("Fibo Zone", clean_text(latest_tech.get("Fibo_Zone")), help=HELP_TEXT["fibonacci"])
-                    fib_cols[1].metric("Nearest Fibo", clean_text(latest_tech.get("Nearest_Fibo_Level")), format_percent(latest_tech.get("Distance_To_Fibo_%")), help=HELP_TEXT["fibonacci"])
-                    fib_cols[2].metric("Fibo Score", format_number(latest_tech.get("Fibo_Confluence_Score")), help=HELP_TEXT["fibonacci"])
-                    fib_cols[3].metric("Fibo Price", format_rupiah(latest_tech.get("Nearest_Fibo_Price")), help=HELP_TEXT["fibonacci"])
+                    fib_cols[0].metric("Fibo Zone", clean_text(latest_tech.get("Fibo_Zone")), help="Zona harga terhadap level Fibonacci terdekat: support, resistance, atau netral.")
+                    fib_cols[1].metric("Nearest Fibo", clean_text(latest_tech.get("Nearest_Fibo_Level")), format_percent(latest_tech.get("Distance_To_Fibo_%")), help="Level Fibonacci terdekat dan jaraknya dari harga terakhir.")
+                    fib_cols[2].metric("Fibo Score", format_number(latest_tech.get("Fibo_Confluence_Score")), help="Skor konfluensi Fibonacci; lebih tinggi berarti harga makin dekat area reaksi teknikal.")
+                    fib_cols[3].metric("Fibo Price", format_rupiah(latest_tech.get("Nearest_Fibo_Price")), help="Harga level Fibonacci terdekat yang dipakai sebagai referensi support/resistance.")
                     filter_cols = st.columns(4)
-                    filter_cols[0].metric("Ehlers Filter", clean_text(latest_tech.get("Ehlers_Filter_Signal")), f"Cycle {format_number(latest_tech.get('Ehlers_Dominant_Cycle'), 1)}", help=HELP_TEXT["ehlers_filter"])
-                    filter_cols[1].metric("Ehlers Level", format_rupiah(latest_tech.get("Ehlers_Filter")), help=HELP_TEXT["ehlers_filter"])
-                    filter_cols[2].metric("Donchian Ribbon", clean_text(latest_tech.get("Donchian_Ribbon_Trend")), format_number(latest_tech.get("Donchian_Ribbon_Score")), help=HELP_TEXT["donchian_ribbon"])
-                    filter_cols[3].metric("Donchian Mid 20", format_rupiah(latest_tech.get("Donchian_Mid_20")), help=HELP_TEXT["donchian_ribbon"])
+                    filter_cols[0].metric("Ehlers Filter", clean_text(latest_tech.get("Ehlers_Filter_Signal")), f"Cycle {format_number(latest_tech.get('Ehlers_Dominant_Cycle'), 1)}", help="Status filter Ehlers Auto Tune berdasarkan dominant cycle dan slope filter.")
+                    filter_cols[1].metric("Ehlers Level", format_rupiah(latest_tech.get("Ehlers_Filter")), help="Nilai garis Ehlers Auto Tune Filter yang dibandingkan dengan harga penutupan.")
+                    filter_cols[2].metric("Donchian Ribbon", clean_text(latest_tech.get("Donchian_Ribbon_Trend")), format_number(latest_tech.get("Donchian_Ribbon_Score")), help="Trend ribbon Donchian; membaca apakah harga bertahan di atas/bawah kanal beberapa periode.")
+                    filter_cols[3].metric("Donchian Mid 20", format_rupiah(latest_tech.get("Donchian_Mid_20")), help="Garis tengah kanal Donchian 20 hari sebagai referensi trend pendek.")
                     astro_cols = st.columns(4)
-                    astro_cols[0].metric("Astro-Fibo", clean_text(latest_tech.get("Astro_Fibo_Bias")), format_number(latest_tech.get("Astro_Fibo_Timing_Score")), help=HELP_TEXT["astro_fibo"])
-                    astro_cols[1].metric("Time Window", clean_text(latest_tech.get("Time_Window")), help=HELP_TEXT["astro_fibo"])
-                    astro_cols[2].metric("Fibo Time", f"{format_number(latest_tech.get('Nearest_Fibo_Time_Day'), 0)}D", help=HELP_TEXT["astro_fibo"])
-                    astro_cols[3].metric("Moon Phase", clean_text(latest_tech.get("Moon_Phase")), help=HELP_TEXT["astro_fibo"])
+                    astro_cols[0].metric("Astro-Fibo", clean_text(latest_tech.get("Astro_Fibo_Bias")), format_number(latest_tech.get("Astro_Fibo_Timing_Score")), help="Bias timing tambahan dari gabungan Fibo time window dan siklus planet.")
+                    astro_cols[1].metric("Time Window", clean_text(latest_tech.get("Time_Window")), help="Klasifikasi apakah tanggal sekarang dekat jendela Fibonacci time.")
+                    astro_cols[2].metric("Fibo Time", f"{format_number(latest_tech.get('Nearest_Fibo_Time_Day'), 0)}D", help="Jumlah hari menuju/menjauhi jendela Fibonacci time terdekat.")
+                    astro_cols[3].metric("Moon Phase", clean_text(latest_tech.get("Moon_Phase")), help="Fase bulan dari ephemeris sebagai salah satu komponen timing tambahan.")
                     sun_cols = st.columns(2)
-                    sun_cols[0].metric("Sun Sign", clean_text(latest_tech.get("Sun_Sign")), clean_text(latest_tech.get("Sun_Element")), help=HELP_TEXT["astro_fibo"])
-                    sun_cols[1].metric("Sun Window", clean_text(latest_tech.get("Sun_Window")), help=HELP_TEXT["astro_fibo"])
+                    sun_cols[0].metric("Sun Sign", clean_text(latest_tech.get("Sun_Sign")), clean_text(latest_tech.get("Sun_Element")), help="Posisi Sun sign dan elemen untuk konteks siklus tahunan.")
+                    sun_cols[1].metric("Sun Window", clean_text(latest_tech.get("Sun_Window")), help="Status jendela Sun cycle yang dipakai dalam skor planet.")
                     planet_cols = st.columns(3)
-                    planet_cols[0].metric("Planet Score", format_number(latest_tech.get("Planetary_Cycle_Score")), help=HELP_TEXT["astro_fibo"])
-                    planet_cols[1].metric("Jupiter", clean_text(latest_tech.get("Jupiter_Window")), clean_text(latest_tech.get("Jupiter_Sign")), help=HELP_TEXT["astro_fibo"])
-                    planet_cols[2].metric("Saturn", clean_text(latest_tech.get("Saturn_Window")), clean_text(latest_tech.get("Saturn_Sign")), help=HELP_TEXT["astro_fibo"])
+                    planet_cols[0].metric("Planet Score", format_number(latest_tech.get("Planetary_Cycle_Score")), help="Skor gabungan planet sinusoidal; dipakai sebagai konteks timing tambahan, bukan fundamental.")
+                    planet_cols[1].metric("Jupiter", clean_text(latest_tech.get("Jupiter_Window")), clean_text(latest_tech.get("Jupiter_Sign")), help="Window dan sign Jupiter dari ephemeris untuk komponen siklus panjang.")
+                    planet_cols[2].metric("Saturn", clean_text(latest_tech.get("Saturn_Window")), clean_text(latest_tech.get("Saturn_Sign")), help="Window dan sign Saturn dari ephemeris untuk komponen siklus panjang.")
                     st.caption(f"Ephemeris: {clean_text(latest_tech.get('Ephemeris_Source'))}. {clean_text(latest_tech.get('Planetary_Detail'))}")
 
                     decision_columns = [
@@ -7879,24 +7879,24 @@ with tab_history:
                             "MA20": st.column_config.NumberColumn("MA20", format="%.0f"),
                             "MA50": st.column_config.NumberColumn("MA50", format="%.0f"),
                             "MA200": st.column_config.NumberColumn("MA200", format="%.0f"),
-                            "Ehlers_Dominant_Cycle": st.column_config.NumberColumn("Ehlers Cycle", format="%.1f", help=HELP_TEXT["ehlers_filter"]),
-                            "Ehlers_Filter": st.column_config.NumberColumn("Ehlers Filter", format="%.0f", help=HELP_TEXT["ehlers_filter"]),
-                            "Ehlers_Filter_Slope": st.column_config.NumberColumn("Ehlers Slope", format="%.2f", help=HELP_TEXT["ehlers_filter"]),
-                            "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help=HELP_TEXT["donchian_ribbon"]),
-                            "Donchian_Mid_20": st.column_config.NumberColumn("Donchian Mid 20", format="%.0f", help=HELP_TEXT["donchian_ribbon"]),
-                            "Donchian_Upper_20": st.column_config.NumberColumn("Donchian Upper 20", format="%.0f", help=HELP_TEXT["donchian_ribbon"]),
-                            "Donchian_Lower_20": st.column_config.NumberColumn("Donchian Lower 20", format="%.0f", help=HELP_TEXT["donchian_ribbon"]),
+                            "Ehlers_Dominant_Cycle": st.column_config.NumberColumn("Ehlers Cycle", format="%.1f", help="Estimasi dominant cycle Ehlers yang menentukan panjang filter adaptif."),
+                            "Ehlers_Filter": st.column_config.NumberColumn("Ehlers Filter", format="%.0f", help="Nilai garis filter adaptif Ehlers pada tanggal tersebut."),
+                            "Ehlers_Filter_Slope": st.column_config.NumberColumn("Ehlers Slope", format="%.2f", help="Kemiringan Ehlers Filter; positif mendukung trend naik, negatif melemah."),
+                            "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help="Skor posisi harga terhadap ribbon Donchian multi-periode."),
+                            "Donchian_Mid_20": st.column_config.NumberColumn("Donchian Mid 20", format="%.0f", help="Titik tengah kanal Donchian 20 hari."),
+                            "Donchian_Upper_20": st.column_config.NumberColumn("Donchian Upper 20", format="%.0f", help="Batas atas kanal Donchian 20 hari atau area breakout pendek."),
+                            "Donchian_Lower_20": st.column_config.NumberColumn("Donchian Lower 20", format="%.0f", help="Batas bawah kanal Donchian 20 hari atau area breakdown pendek."),
                             "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                             "MACD": st.column_config.NumberColumn("MACD", format="%.2f"),
                             "MACD_Signal": st.column_config.NumberColumn("Signal", format="%.2f"),
                             "Volume_Ratio": st.column_config.NumberColumn("Volume Ratio", format="%.2f"),
                             "ATR_%": st.column_config.NumberColumn("ATR", format="%.1f%%"),
-                            "Nearest_Fibo_Price": st.column_config.NumberColumn("Harga Fibo", format="%.0f", help=HELP_TEXT["fibonacci"]),
-                            "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
-                            "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
-                            "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
-                            "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
-                            "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help=HELP_TEXT["astro_fibo"]),
+                            "Nearest_Fibo_Price": st.column_config.NumberColumn("Harga Fibo", format="%.0f", help="Harga level Fibonacci terdekat pada baris tanggal tersebut."),
+                            "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help="Jarak persen dari harga penutupan ke harga Fibonacci terdekat."),
+                            "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help="Skor kedekatan dan konfluensi level Fibonacci pada tanggal tersebut."),
+                            "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help="Skor timing Astro-Fibo historis untuk baris tanggal tersebut."),
+                            "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help="Jarak hari ke jendela Fibonacci time terdekat."),
+                            "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help="Skor siklus planet historis pada tanggal tersebut."),
                             "Distance_52W_High_%": st.column_config.NumberColumn("Jarak 52W High", format="%.1f%%"),
                             "Distance_52W_Low_%": st.column_config.NumberColumn("Jarak 52W Low", format="%.1f%%"),
                         },
