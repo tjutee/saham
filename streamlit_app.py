@@ -5611,7 +5611,7 @@ with tab_portfolio.expander("Skenario alokasi portofolio", expanded=True):
                 },
             )
 
-with tab_backtest.expander("Backtest sinyal historis", expanded=False):
+with tab_backtest.expander("Backtest sinyal historis", expanded=True):
     st.subheader("Backtest sinyal")
     st.caption(
         "Backtest ini event-based: menghitung forward return setelah sinyal teknikal muncul. "
@@ -5834,7 +5834,7 @@ with tab_backtest.expander("Backtest sinyal historis", expanded=False):
                     "Tahap ini baru event backtest historis, bukan prediksi masa depan."
                 )
 
-with tab_predict.expander("Prediksi probabilistik", expanded=False):
+with tab_predict.expander("Prediksi probabilistik", expanded=True):
     st.subheader("Prediksi probabilistik")
     st.caption(
         "Layer ini mencari setup historis yang mirip dengan kondisi teknikal saat ini, lalu menghitung probabilitas naik dan risiko downside. "
@@ -6056,7 +6056,7 @@ with tab_predict.expander("Prediksi probabilistik", expanded=False):
                     "Tetap validasi dengan fundamental, market regime, backtest, dan trade plan."
                 )
 
-with tab_explore.expander("Explorer saham", expanded=False):
+with tab_explore.expander("Explorer saham", expanded=True):
     explorer_data = filtered if not filtered.empty else scored_df
     explorer_chart_data = chart_market_frame(explorer_data, "Explorer")
     explore_controls = st.columns([1, 1, 1, 1])
@@ -7201,7 +7201,7 @@ with tab_history:
                             },
                         )
 
-with tab_sector.expander("Analisis sektor", expanded=False):
+with tab_sector.expander("Analisis sektor", expanded=True):
     sector_chart_base = chart_market_frame(scored_df, "Grafik sektor")
     sector_controls = st.columns([1, 1, 1, 1])
     with sector_controls[0]:
@@ -7630,7 +7630,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
             """
         )
 
-with tab_method.expander("Metodologi dan formula", expanded=False):
+with tab_method.expander("Metodologi dan formula", expanded=True):
     st.subheader("Formula scoring multi-factor")
     st.markdown(
         """
