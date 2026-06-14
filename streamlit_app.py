@@ -445,7 +445,12 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 1.25rem; }
+    .block-container {
+        padding-top: 1.25rem;
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+        max-width: 100% !important;
+    }
     div[data-testid="stMetric"] {
         background: #ffffff;
         border: 1px solid #e5e7eb;
@@ -466,9 +471,17 @@ st.markdown(
     }
     div[data-testid="stDataFrame"],
     div[data-testid="stDataFrame"] > div,
+    div[data-testid="stDataFrame"] iframe,
+    div[data-testid="stDataFrame"] [data-testid="stDataFrameResizable"],
+    div[data-testid="stDataEditor"],
+    div[data-testid="stDataEditor"] > div,
     div[data-testid="stPlotlyChart"],
-    div[data-testid="stPlotlyChart"] > div {
+    div[data-testid="stPlotlyChart"] > div,
+    div[data-testid="stPlotlyChart"] .js-plotly-plot,
+    div[data-testid="stPlotlyChart"] .plot-container,
+    div[data-testid="stPlotlyChart"] .user-select-none {
         width: 100% !important;
+        max-width: 100% !important;
     }
     </style>
     """,
@@ -583,12 +596,14 @@ def show_table(data=None, *args, **kwargs):
 def show_chart(fig, *args, **kwargs):
     kwargs.pop("width", None)
     kwargs.pop("use_container_width", None)
+    config = kwargs.pop("config", {})
+    config = {"responsive": True, "displayModeBar": True, **config}
     fig.update_layout(
         font=dict(color="#0f172a"),
         hoverlabel=dict(bgcolor="#ffffff", font_size=12),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    return st.plotly_chart(fig, *args, **PLOTLY_STRETCH, **kwargs)
+    return st.plotly_chart(fig, *args, **PLOTLY_STRETCH, config=config, **kwargs)
 
 
 def chart_color_kwargs(color_field):
@@ -6915,21 +6930,25 @@ with tab_history:
                 st.info(news_error)
             else:
                 st.caption(f"Fokus: {focus_code} - {clean_text(focus_row.get('Nama Perusahaan'))}. Sumber: {news_source}. Berita ditampilkan apa adanya dari provider.")
-                for _, news_row in news_df.head(news_limit).iterrows():
-                    news_title = clean_text(news_row.get("Judul"), "Tanpa judul")
-                    news_link = clean_text(news_row.get("Link"), "")
-                    news_source_label = clean_text(news_row.get("Sumber"), "-")
-                    news_date = pd.to_datetime(news_row.get("Tanggal"), errors="coerce")
-                    news_date_label = news_date.strftime("%Y-%m-%d %H:%M") if pd.notna(news_date) else "-"
-                    news_summary = clean_text(news_row.get("Ringkasan"), "")
-                    with st.container(border=True):
-                        if news_link:
-                            st.markdown(f"**[{news_title}]({news_link})**")
-                        else:
-                            st.markdown(f"**{news_title}**")
-                        st.caption(f"{news_date_label} | {news_source_label}")
-                        if news_summary and news_summary != "-":
-                            st.write(news_summary)
+                news_view = news_df.head(news_limit).copy()
+                if "Tanggal" in news_view.columns:
+                    news_view["Tanggal"] = pd.to_datetime(news_view["Tanggal"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M")
+                for column in ["Judul", "Sumber", "Ringkasan", "Link"]:
+                    if column in news_view.columns:
+                        news_view[column] = news_view[column].map(clean_text)
+                news_columns = [column for column in ["Tanggal", "Sumber", "Judul", "Ringkasan", "Link"] if column in news_view.columns]
+                show_table(
+                    news_view[news_columns],
+                    hide_index=True,
+                    column_config={
+                        "Tanggal": st.column_config.TextColumn("Tanggal", width="small"),
+                        "Sumber": st.column_config.TextColumn("Sumber", width="small"),
+                        "Judul": st.column_config.TextColumn("Judul berita", width="large"),
+                        "Ringkasan": st.column_config.TextColumn("Ringkasan / issue", width="large"),
+                        "Link": st.column_config.LinkColumn("Link", width="medium", help="Buka berita asli dari provider."),
+                    },
+                    height=min(520, 120 + 56 * max(1, len(news_view))),
+                )
     else:
         st.warning("Tidak ada kode saham pada filter saat ini.")
         selected_focus_codes = []
