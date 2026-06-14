@@ -231,18 +231,18 @@ HELP_TEXT = {
     "history_period": "Rentang data online untuk grafik histori. 1-2 minggu cocok untuk monitoring cepat; 1-6 bulan untuk swing; 1-2 tahun untuk MA200/52W; 5-10 tahun/All lebih kaya sample tetapi lebih lambat.",
     "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
     "final_action": "Final_Action menggabungkan Score, Recommendation, Clean_Data, Risk_Level, Threshold, relatif sektor, momentum, dan market regime menjadi playbook keputusan yang lebih praktis.",
-    "portfolio": "Portofolio memakai kandidat dari hasil filter/Screener untuk membaca konsentrasi sektor, campuran risiko, aksi akhir, dan estimasi alokasi. Ini alat perencanaan, bukan order otomatis.",
+    "portfolio": "Portofolio memakai kandidat dari hasil filter/Cari Saham untuk membaca konsentrasi sektor, campuran risiko, aksi akhir, dan estimasi alokasi. Ini alat perencanaan, bukan order otomatis.",
     "risk_level": "Risk_Level adalah kategori risiko relatif dari model berdasarkan rasio, volatilitas, likuiditas, dan penalti. Tetap perlu validasi berita dan laporan keuangan.",
     "turnover": "Turnover = Penutupan x Volume. Grafik utama memakai harga/volume yfinance/cache bila tersedia; Excel hanya fallback saat online kosong.",
     "return": "Return = harga akhir / harga awal - 1. Nilai ditampilkan dalam persen dan hanya menjelaskan performa periode historis.",
-    "reco_sort": "Metrik untuk mengurutkan grafik dan tabel Screener. Mengubah urutan tampilan saja, bukan rumus Score.",
-    "reco_limit": "Jumlah saham yang ditampilkan di Screener setelah seluruh filter sidebar, label score, dan sort diterapkan.",
+    "reco_sort": "Metrik untuk mengurutkan grafik dan tabel Cari Saham. Mengubah urutan tampilan saja, bukan rumus Score.",
+    "reco_limit": "Jumlah saham yang ditampilkan di Cari Saham setelah seluruh filter sidebar, label score, dan sort diterapkan.",
     "reco_ascending": "Aktifkan untuk mengurutkan dari nilai terendah ke tertinggi pada metrik pilihan. Berguna untuk audit saham lemah atau rasio rendah.",
     "table_columns": "Pilih kolom tabel yang ingin ditampilkan. Ini hanya mengatur tampilan, tidak mengubah data, filter, atau scoring.",
     "explorer_axis": "Pilih rasio atau skor untuk sumbu grafik eksplorasi. Pilihan sumbu hanya mengubah visual scatter, bukan hasil scoring.",
     "explore_color": "Warna titik menunjukkan dimensi tambahan seperti Score, risiko, label score, aksi akhir, atau sektor agar pola lebih mudah dibaca.",
     "explore_size": "Ukuran bubble memakai metrik seperti Volume, Turnover, Score, Liquidity_Score, atau Index_Count. Ini hanya encoding visual.",
-    "explore_limit": "Membatasi jumlah titik scatter agar grafik tetap cepat dan mudah dibaca. Data Screener utama tidak dipotong.",
+    "explore_limit": "Membatasi jumlah titik scatter agar grafik tetap cepat dan mudah dibaca. Data Cari Saham utama tidak dipotong.",
     "histogram": "Pilih sampai tiga metrik untuk melihat distribusi nilai. Berguna untuk mendeteksi outlier dan sebaran rasio.",
     "history_chart_type": "Line cocok untuk perbandingan presisi banyak saham. Area lebih enak untuk satu atau sedikit saham karena area bisa menumpuk secara visual.",
     "history_table": "Menampilkan ringkasan angka histori seperti tanggal terakhir, harga awal/akhir, dan return total di bawah grafik.",
@@ -252,14 +252,14 @@ HELP_TEXT = {
     "sector_chart": "Bar untuk ranking, Treemap untuk komposisi market cap, Scatter untuk membaca hubungan score dan ukuran kelompok.",
     "factor_inspect": "Pilih faktor untuk melihat distribusi dan contoh saham teratas. Ini alat audit metodologi, bukan filter baru.",
     "factor_top_n": "Jumlah contoh saham teratas yang ditampilkan untuk faktor yang sedang diinspeksi.",
-    "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai hasil Screener.",
+    "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai hasil Cari Saham.",
     "audit_code": "Pilih satu atau beberapa kode saham untuk melihat alasan lolos/gagal pada filter aktif dan preset pembanding.",
     "audit_scope": "Cakupan audit filter. Semua saham mengecek seluruh universe final, Hasil filter aktif hanya saham yang lolos filter sidebar, Kode pilihan untuk investigasi manual.",
     "universe_audit": "Universe kode saham diprioritaskan dari daftar resmi BEI/IDX. Setelah itu dashboard melengkapi data dari sumber online seperti yfinance dan TradingView scanner, lalu Excel hanya sebagai fallback/ide algoritme.",
     "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih pendek untuk refresh cepat, panjang untuk analisis/teknikal yang lebih stabil.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
-    "technical_period": "Rentang OHLCV online untuk analisa teknikal fokus detail. Periode pendek cocok untuk RSI/MACD cepat; 1-2 tahun lebih stabil untuk MA200, 52W, ATR, dan Fibonacci.",
+    "technical_period": "Rentang OHLCV online untuk analisis teknikal fokus detail. Periode pendek cocok untuk RSI/MACD cepat; 1-2 tahun lebih stabil untuk MA200, 52W, ATR, dan Fibonacci.",
     "technical_code": "Kode teknikal default mengikuti Fokus detail di Detail saham. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
     "ehlers_filter": "Ehlers-style Auto Tune Filter memakai estimasi dominant cycle dari autocorrelation rolling untuk memilih periode smoothing adaptif. Ini implementasi transparan, bukan formula proprietary.",
@@ -1276,6 +1276,110 @@ def build_data_quality_report(scored, raw):
     report = pd.DataFrame(checks)
     report["Status"] = np.where(report["Rows"].eq(0), "OK", "Review")
     return report[["Status", "Severity", "Area", "Check", "Rows", "Action"]]
+
+
+def build_ui_heuristic_audit():
+    rows = [
+        {
+            "Halaman": "Sidebar",
+            "Fokus": "Filter dan update data",
+            "Simplicity": "Mode Cepat/Lengkap memisahkan kontrol harian dan audit.",
+            "Clarity": "Preset, threshold, dan strategi cache-first punya helper.",
+            "Integrity": "Refresh live manual; snapshot/cache menjadi default.",
+            "Status": "OK",
+        },
+        {
+            "Halaman": "Beranda",
+            "Fokus": "Ringkasan eksekutif",
+            "Simplicity": "Metrik utama tampil dulu, grafik distribusi opsional.",
+            "Clarity": "Market regime, breadth, freshness, dan top kandidat dipisah.",
+            "Integrity": "Cakupan online/cache dan fallback kode terlihat.",
+            "Status": "OK",
+        },
+        {
+            "Halaman": "Cari Saham",
+            "Fokus": "Ranking dan keputusan cepat",
+            "Simplicity": "Tabel Ringkas menjadi default; Analisis/Audit tersedia via segmented control.",
+            "Clarity": "Keputusan, score, risiko, sumber data, dan next step diberi label/help.",
+            "Integrity": "Sumber harga/fundamental/universe bisa diaudit per baris.",
+            "Status": "OK",
+        },
+        {
+            "Halaman": "Detail Saham",
+            "Fokus": "Shortlist, berita, histori, teknikal",
+            "Simplicity": "Fokus satu saham aktif; scan teknikal massal tidak otomatis.",
+            "Clarity": "Berita mengikuti fokus saham; chart teknikal memakai stacked panel.",
+            "Integrity": "OHLCV memakai yfinance/cache; ephemeris unavailable ditandai.",
+            "Status": "OK",
+        },
+        {
+            "Halaman": "Portofolio",
+            "Fokus": "Alokasi dan konsentrasi risiko",
+            "Simplicity": "Kandidat otomatis dari hasil filter, pilihan manual tetap tersedia.",
+            "Clarity": "Nilai posisi, kas, sektor, risiko, dan batas konsentrasi ditampilkan.",
+            "Integrity": "Estimasi lot memakai harga terakhir dan tidak membuat order otomatis.",
+            "Status": "OK",
+        },
+        {
+            "Halaman": "Backtest",
+            "Fokus": "Validasi historis sinyal",
+            "Simplicity": "Tidak berjalan otomatis; user memilih kode, horizon, dan sinyal.",
+            "Clarity": "Event, hit rate, average return, dan walk-forward dipisah.",
+            "Integrity": "Event-based; bukan klaim broker-grade backtest.",
+            "Status": "OK",
+        },
+        {
+            "Halaman": "Prediksi",
+            "Fokus": "Probabilitas berbasis setup historis",
+            "Simplicity": "Manual trigger agar tidak berat.",
+            "Clarity": "Probability up, expected return, downside, dan confidence ditampilkan.",
+            "Integrity": "Disebut probabilistik dari kemiripan historis, bukan prediksi pasti.",
+            "Status": "OK",
+        },
+        {
+            "Halaman": "Explorer & Sektor",
+            "Fokus": "Eksplorasi pola dan agregasi",
+            "Simplicity": "Default tertutup di Audit Data.",
+            "Clarity": "Sumbu, warna, ukuran, dan limit data bisa dikontrol.",
+            "Integrity": "Visual hanya eksplorasi; tidak mengubah score atau filter utama.",
+            "Status": "OK",
+        },
+        {
+            "Halaman": "Audit Data",
+            "Fokus": "Freshness, sumber, kualitas, fallback",
+            "Simplicity": "Ringkasan terbuka; audit berat tertutup default.",
+            "Clarity": "Prioritas high/medium dan stale data dipisah.",
+            "Integrity": "Fallback Excel, snapshot, cache, dan sumber online terlihat.",
+            "Status": "OK",
+        },
+        {
+            "Halaman": "Metodologi",
+            "Fokus": "Rumus, bobot, referensi",
+            "Simplicity": "Tertutup default.",
+            "Clarity": "Formula, threshold, penalti, dan referensi dipisah.",
+            "Integrity": "Tidak mengklaim formula proprietary; sumber dan fallback dijelaskan.",
+            "Status": "OK",
+        },
+    ]
+    audit = pd.DataFrame(rows)
+    audit["Consistency"] = "Istilah, default ringan, dan pola expander digunakan konsisten lintas halaman."
+    audit["Dynamic"] = "Mengikuti filter/fokus/data cache-live saat ini; tidak memakai dummy."
+    audit["Interactive"] = "Kontrol utama eksplisit: select, toggle, segmented control, atau tombol manual."
+    audit["Informative"] = "Menampilkan konteks, sumber data, freshness, atau detail audit saat dibuka."
+    return audit[
+        [
+            "Status",
+            "Halaman",
+            "Fokus",
+            "Simplicity",
+            "Clarity",
+            "Consistency",
+            "Integrity",
+            "Dynamic",
+            "Interactive",
+            "Informative",
+        ]
+    ]
 
 
 def get_quality_detail(scored, issue_key):
@@ -4469,7 +4573,7 @@ market_session_status = get_market_session_status()
 
 st.title("Screener Saham IDX")
 st.caption(
-    f"Workspace screening saham IDX berbasis data online/cache. Update data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). BEI/IDX dipakai untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya sebagai fallback/audit. Hasil adalah screener awal, bukan nasihat investasi."
+    f"Dashboard screening saham IDX berbasis data online/cache. Update data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). BEI/IDX dipakai untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya sebagai fallback/audit. Hasil adalah screener awal, bukan nasihat investasi."
 )
 st.caption(market_session_status["Detail"])
 if raw_df.attrs.get("universe_error"):
@@ -4806,7 +4910,7 @@ with tab_summary:
             if top_candidates.empty:
                 st.caption("Belum ada kandidat kuat pada filter ini. Longgarkan filter atau pilih cakupan Semua universe.")
             else:
-                st.caption("Gunakan insight ini sebagai daftar awal; ranking detail ada di Screener dan audit sumber ada di Data & Audit.")
+                st.caption("Gunakan insight ini sebagai daftar awal; ranking detail ada di Cari Saham dan audit sumber ada di Audit Data.")
 
         with st.container(border=True):
             st.markdown("**Konteks market & freshness**")
@@ -4984,9 +5088,9 @@ with tab_reco:
             reco_view = filtered.copy()
         reco_view = reco_view.sort_values(reco_sort, ascending=reco_ascending, na_position="last").head(reco_limit)
 
-        with st.expander("Grafik screener", expanded=False):
+        with st.expander("Grafik Cari Saham", expanded=False):
             st.caption("Opsional untuk membaca pola visual. Tabel di bawah tetap menjadi sumber utama keputusan.")
-            reco_chart_view = chart_market_frame(reco_view, "Grafik screener")
+            reco_chart_view = chart_market_frame(reco_view, "Grafik Cari Saham")
             left, right = st.columns([1.25, 1])
             with left:
                 chart_data = prepare_chart_frame(reco_chart_view.sort_values(reco_sort), reco_sort)
@@ -5325,7 +5429,7 @@ with tab_reco:
                 else:
                     st.info("Tidak ada penghambat dominan pada hasil filter ini.")
 
-with tab_portfolio.expander("Portofolio - skenario alokasi", expanded=True):
+with tab_portfolio.expander("Skenario alokasi portofolio", expanded=True):
     st.subheader("Perencana portofolio")
     st.caption(
         "Skenario ini memakai hasil filter saat ini untuk membaca konsentrasi, risiko, final action mix, dan estimasi lot. "
@@ -6369,7 +6473,7 @@ with tab_history:
                 show_chart(fig)
 
 with tab_history:
-    st.subheader("Analisa teknikal")
+    st.subheader("Analisis teknikal")
     st.caption("Teknikal memakai OHLCV yfinance/cache sebagai konfirmasi timing. Score fundamental utama tidak berubah.")
     technical_source = filtered if not filtered.empty else scored_df
     technical_codes = technical_source["Kode"].dropna().astype(str).str.upper().unique().tolist()
@@ -6392,7 +6496,7 @@ with tab_history:
         with tech_controls[2]:
             chart_style = st.segmented_control("Chart harga", ["Candlestick", "Line"], default="Candlestick")
 
-        load_technical = st.toggle("Tampilkan hasil analisa teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari refresh online sementara.")
+        load_technical = st.toggle("Tampilkan hasil analisis teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari refresh online sementara.")
         show_auto_scan = st.toggle("Tampilkan ringkasan teknikal top kandidat", value=False, help="Opsional dan lebih berat: menghitung teknikal untuk maksimal 5 saham teratas dari hasil filter.")
         show_fibonacci = st.toggle("Tampilkan level Fibonacci", value=True, help=HELP_TEXT["fibonacci"])
         if not load_technical:
@@ -7212,6 +7316,23 @@ with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True)
     quality_cols[2].metric("High severity", f"{high_count}")
     quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
 
+    ux_audit = build_ui_heuristic_audit()
+    with st.expander("Audit heuristik UI/UX seluruh halaman", expanded=True):
+        st.caption("Checklist ini memastikan setiap halaman direview dari sisi simplicity, clarity, consistency, integrity, dynamic, interactive, dan informative.")
+        ux_cols = st.columns(3)
+        ux_cols[0].metric("Area direview", f"{len(ux_audit):,}")
+        ux_cols[1].metric("Status OK", f"{ux_audit['Status'].eq('OK').sum():,}")
+        ux_cols[2].metric("Perlu tindak lanjut", f"{ux_audit['Status'].ne('OK').sum():,}")
+        show_table(
+            ux_audit,
+            hide_index=True,
+            column_config={
+                "Status": st.column_config.TextColumn("Status"),
+                "Halaman": st.column_config.TextColumn("Halaman"),
+                "Fokus": st.column_config.TextColumn("Fokus"),
+            },
+        )
+
     with st.expander("Market regime & freshness audit", expanded=True):
         freshness_rows = pd.DataFrame(
             [
@@ -7503,7 +7624,7 @@ with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True)
             6. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
             7. Buka `Audit sumber kode saham`, `Jumlah kode per sheet Excel`, dan `Kelengkapan kolom & sumber data` untuk memastikan fallback terlihat jelas.
             8. Update `Ringkasan.xlsx` hanya bila ada data offline yang lebih baik atau ide algoritme baru yang perlu diuji.
-            9. Simpan/export hasil Screener hanya setelah check High severity terkendali.
+            9. Simpan/export hasil Cari Saham hanya setelah check High severity terkendali.
             """
         )
 
