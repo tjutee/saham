@@ -1514,7 +1514,7 @@ def build_ui_heuristic_audit():
             "Fokus": "Alokasi dan konsentrasi risiko",
             "Aspek Terpenuhi": "Kandidat dari filter, pilihan kode, nilai posisi, kas, sektor, dan batas risiko.",
             "Potensi Redundancy": "Rekomendasi saham tidak diulang penuh; hanya dipakai sebagai input alokasi.",
-            "Tindak Lanjut": "Tetap tampilkan estimasi sebagai simulasi, bukan instruksi order.",
+            "Tindak Lanjut": "Tetap tampilkan estimasi sebagai skenario risiko, bukan instruksi order.",
         },
         {
             "Status": "OK",
@@ -4907,7 +4907,7 @@ market_session_status = get_market_session_status()
 
 st.title("Ringkasan Saham IDX")
 st.caption(
-    f"Dashboard ringkasan dan pencarian saham IDX berbasis data online/cache. Sumber universe/data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). BEI/IDX dipakai untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya sebagai fallback/audit. Hasil adalah penyaring awal, bukan nasihat investasi."
+    f"Dashboard ringkasan dan pencarian saham IDX berbasis data online/cache. Sumber universe/data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). Universe merge dibangun dari BEI/IDX, fallback online, dan Excel; yfinance/cache dipakai untuk harga/histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya fallback/audit. Hasil adalah penyaring awal, bukan nasihat investasi."
 )
 st.caption(market_session_status["Detail"])
 if raw_df.attrs.get("universe_error"):
@@ -4927,18 +4927,15 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
         **Cara pakai cepat**
         1. Buka **Beranda** untuk melihat kondisi filter, market regime, kandidat utama, dan kualitas data.
         2. Buka **Cari Saham** untuk ranking saham. Pilih tabel `Ringkas`, `Analisis`, atau `Audit` sesuai kebutuhan.
-        3. Buka **Detail Saham** untuk membuat shortlist, memilih fokus detail, membaca prospek/berita, histori, dan teknikal.
-        4. Buka **Portofolio** untuk skenario alokasi dan konsentrasi risiko.
-        5. Buka **Validasi** untuk backtest sinyal dan prediksi probabilistik.
-        6. Buka **Eksplorasi** untuk scatter, pembanding rasio, dan analisis sektor.
-        7. Buka **Audit Data** untuk kesegaran data, sumber data, fallback, dan kualitas data.
-        8. Buka **Metodologi** untuk rumus, bobot, threshold, penalti, dan referensi.
+        3. Buka **Detail Saham** untuk keputusan fokus, berita, prospek, dan chart utama.
+        4. Buka **Portofolio**, **Validasi**, **Eksplorasi**, **Audit Data**, atau **Metodologi** hanya saat perlu skenario, bukti historis, audit sumber, atau rumus.
 
         **Definisi inti**
         - `Score`: ranking multi-factor 0-100 dari valuasi, kualitas, risiko, likuiditas, momentum, indeks, dan penalti.
         - `Final_Action`: playbook akhir dari Score, data, risiko, sektor, threshold, momentum, dan market regime.
         - `Technical_Score`: timing dari MA, RSI, MACD, volume, dan ATR; tidak mengganti Score fundamental.
-        - `Detail Saham`: shortlist membandingkan beberapa saham; fokus detail mengontrol berita, prospek, histori default, dan teknikal.
+        - `Detail Saham`: workspace keputusan; detail tambahan dibuka on-demand agar layar tetap ringkas.
+        - `Universe`: semua kode hasil merge dari BEI/IDX, fallback online, dan Excel. `Universe analisis` adalah subset aktif sesuai kebijakan BEI/fallback.
         - `Astro-Fibo`: indikator timing tambahan dari Fibonacci time window, Moon/Sun cycle, dan aspek planet JPL DE421 via Skyfield.
         - `Clean_Data`: data lolos pemeriksaan minimum; ini bukan jaminan aman investasi.
 
@@ -4950,7 +4947,7 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
 
         **Sumber data**
-        BEI/IDX diprioritaskan untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan Excel hanya fallback/audit. Semua fallback dan data tidak tersedia ditampilkan di **Audit Data** agar tidak disamarkan.
+        BEI/IDX diprioritaskan sebagai sumber resmi di universe merge, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan Excel hanya fallback/audit. Semua fallback dan data tidak tersedia ditampilkan di **Audit Data** agar tidak disamarkan.
         """
     )
 
@@ -5233,6 +5230,19 @@ dashboard_state = {
     "universe_policy": universe_policy_label,
 }
 
+# Single source of truth for every tab below. If data files, snapshots, cache, or
+# filters change, these references are rebuilt together during the rerun.
+raw_df = dashboard_state["raw"]
+df = dashboard_state["base"]
+full_scored_df = dashboard_state["full_scored"]
+scored_df = dashboard_state["active_scored"]
+filtered = dashboard_state["filtered"]
+data_freshness = dashboard_state["freshness"]
+data_status = dashboard_state["status"]
+market_context = dashboard_state["market_context"]
+active_filter_criteria = dashboard_state["filter_criteria"]
+universe_policy_label = dashboard_state["universe_policy"]
+
 status_cols = st.columns(4)
 status_cols[0].metric("Universe analisis", f"{scored_df['Kode'].nunique():,}", universe_policy_label)
 status_cols[1].metric("Lolos filter", f"{len(filtered):,}")
@@ -5285,6 +5295,7 @@ with st.expander("Status data aktif", expanded=False):
         f"Versi data aktif: {dashboard_state['data_version']}. "
         f"Universe merge semua sumber: {data_status['Universe_Total_Label']} kode ({data_status['Universe_Detail']}). {data_status['Session_Detail']}"
     )
+    st.caption("Orkestrasi data: Excel, snapshot, dan history cache dipantau sebagai signature. Saat berubah, cache dibersihkan, pipeline dihitung ulang, dan semua tab membaca state baru yang sama.")
 
 (
     tab_summary,
@@ -5316,13 +5327,13 @@ with tab_summary:
     st.subheader("Beranda")
     summary_scope = st.radio(
         "Cakupan ringkasan",
-        ["Hasil filter aktif", "Semua universe"],
+        ["Hasil filter aktif", "Universe analisis"],
         horizontal=True,
-        help="Hasil filter aktif mengikuti seluruh filter sidebar. Semua universe memakai seluruh saham yang sudah di-score.",
+        help="Hasil filter aktif mengikuti seluruh filter sidebar. Universe analisis memakai seluruh saham aktif setelah kebijakan BEI/fallback diterapkan.",
     )
     summary_data = filtered.copy() if summary_scope == "Hasil filter aktif" else scored_df.copy()
     if summary_data.empty:
-        st.warning("Tidak ada data pada cakupan ini. Longgarkan filter atau pilih Semua universe.")
+        st.warning("Tidak ada data pada cakupan ini. Longgarkan filter atau pilih Universe analisis.")
     else:
         summary_chart_data = chart_market_frame(summary_data, "Ringkasan grafik utama")
         idx_match = int(summary_data.get("In_IDX_Official", pd.Series(False, index=summary_data.index)).fillna(False).sum())
@@ -5354,7 +5365,7 @@ with tab_summary:
             insight_cols[2].metric("Cakupan online", f"{source_ratio:.0f}%")
             insight_cols[3].metric("Top 3", top_codes)
             if top_candidates.empty:
-                st.caption("Belum ada kandidat kuat pada filter ini. Longgarkan filter atau pilih cakupan Semua universe.")
+                st.caption("Belum ada kandidat kuat pada filter ini. Longgarkan filter atau pilih cakupan Universe analisis.")
             else:
                 st.caption("Gunakan insight ini sebagai daftar awal; ranking detail ada di Cari Saham dan audit sumber ada di Audit Data.")
 
@@ -5875,7 +5886,7 @@ with tab_reco:
                 else:
                     st.info("Tidak ada penghambat dominan pada hasil filter ini.")
 
-with tab_portfolio.expander("Skenario alokasi portofolio", expanded=True):
+with tab_portfolio.expander("Skenario alokasi portofolio", expanded=False):
     st.subheader("Perencana portofolio")
     st.caption(
         "Skenario ini memakai hasil filter saat ini untuk membaca konsentrasi, risiko, final action mix, dan estimasi lot. "
@@ -6056,7 +6067,7 @@ with tab_portfolio.expander("Skenario alokasi portofolio", expanded=True):
                 },
             )
 
-with tab_backtest.expander("Backtest sinyal historis", expanded=True):
+with tab_backtest.expander("Backtest sinyal historis", expanded=False):
     st.subheader("Backtest sinyal")
     st.caption(
         "Backtest ini event-based: menghitung forward return setelah sinyal teknikal muncul. "
@@ -6279,7 +6290,7 @@ with tab_backtest.expander("Backtest sinyal historis", expanded=True):
                     "Tahap ini baru event backtest historis, bukan prediksi masa depan."
                 )
 
-with tab_predict.expander("Prediksi probabilistik", expanded=True):
+with tab_predict.expander("Prediksi probabilistik", expanded=False):
     st.subheader("Prediksi probabilistik")
     st.caption(
         "Layer ini mencari setup historis yang mirip dengan kondisi teknikal saat ini, lalu menghitung probabilitas naik dan risiko downside. "
@@ -6501,7 +6512,7 @@ with tab_predict.expander("Prediksi probabilistik", expanded=True):
                     "Tetap validasi dengan fundamental, market regime, backtest, dan trade plan."
                 )
 
-with tab_explore.expander("Explorer saham", expanded=True):
+with tab_explore.expander("Explorer saham", expanded=False):
     explorer_data = filtered if not filtered.empty else scored_df
     explorer_chart_data = chart_market_frame(explorer_data, "Explorer")
     explore_controls = st.columns([1, 1, 1, 1])
@@ -7781,7 +7792,7 @@ with tab_history:
                             },
                         )
 
-with tab_sector.expander("Analisis sektor", expanded=True):
+with tab_sector.expander("Analisis sektor", expanded=False):
     sector_chart_base = chart_market_frame(scored_df, "Grafik sektor")
     sector_controls = st.columns([1, 1, 1, 1])
     with sector_controls[0]:
@@ -7898,7 +7909,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
     quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
 
     refresh_plan = build_refresh_plan(data_freshness, market_session_status)
-    with st.expander("Rencana auto update data", expanded=True):
+    with st.expander("Rencana auto update data", expanded=False):
         st.caption(
             f"Status aktif: {data_status['Freshness_Label']}; latest online {data_status['Latest_Online_Label']}; "
             f"coverage harga {data_status['Online_Price_Coverage_Label']}; fundamental online {data_status['Online_Fundamental_Coverage_Label']}."
@@ -7988,7 +7999,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
     universe_cols[3].metric("Sumber aktif", f"{full_scored_df['Universe_Source'].nunique():,}")
     with st.expander("Audit sumber kode saham", expanded=False):
         st.caption(HELP_TEXT["universe_audit"])
-        with st.expander("Cara dashboard mengambil data BEI/IDX", expanded=True):
+        with st.expander("Cara dashboard mengambil data BEI/IDX", expanded=False):
             st.caption(
                 "Universe resmi diambil dari endpoint publik BEI/IDX, lalu dinormalisasi dan digabung dengan fallback hanya untuk field yang kosong atau untuk audit."
             )
@@ -8231,7 +8242,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
     with st.expander("Workflow rutin yang disarankan", expanded=False):
         st.caption(
             f"Kondisi aktif: {data_status['Freshness_Label']}, latest online {data_status['Latest_Online_Label']}, "
-            f"universe aktif {data_status['Universe_Active_Label']} dari {data_status['Universe_Total_Label']} kode."
+            f"universe analisis {data_status['Universe_Active_Label']} dari universe merge {data_status['Universe_Total_Label']} kode."
         )
         st.markdown(
             f"""
@@ -8247,7 +8258,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
             """
         )
 
-with tab_method.expander("Metodologi dan formula", expanded=True):
+with tab_method.expander("Metodologi dan formula", expanded=False):
     st.subheader("Formula scoring multi-factor")
     st.markdown(
         """
