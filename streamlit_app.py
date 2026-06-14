@@ -464,6 +464,12 @@ st.markdown(
         padding: 14px 16px;
         background: #ffffff;
     }
+    div[data-testid="stDataFrame"],
+    div[data-testid="stDataFrame"] > div,
+    div[data-testid="stPlotlyChart"],
+    div[data-testid="stPlotlyChart"] > div {
+        width: 100% !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -5665,15 +5671,11 @@ with tab_summary:
             "Kode",
             "Nama Perusahaan",
             "Final_Action",
-            "Decision_Confidence",
             "Risk_Level",
-            "Clean_Data",
             "Score",
-            "Sector_Relative_Score",
             "Threshold_Pass_Ratio",
             "Penutupan",
             "Return_52W",
-            "Price_Source",
             "Next_Step",
         ]
         top_summary = summary_chart_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
@@ -5686,12 +5688,13 @@ with tab_summary:
                 "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
                 "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
                 "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help="Return satu tahun terakhir untuk membandingkan saham fokus dengan shortlist."),
-                "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
-                "Final_Action": st.column_config.TextColumn("Aksi Akhir", help="Aksi ringkas untuk daftar top kandidat di Beranda; cek Detail Saham untuk timing entry."),
-                "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help="Level keyakinan keputusan; turun jika ada blocker seperti risk high, threshold rendah, atau market risk-off."),
-                "Decision_Blockers": st.column_config.TextColumn("Penghambat", help="Alasan utama saham belum layak naik kelas, misalnya data belum bersih, risiko tinggi, atau relatif sektor lemah."),
-                "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help="Tindakan praktis berikutnya untuk user: cek entry, tunggu konfirmasi, review data, atau hindari."),
+                "Kode": st.column_config.TextColumn("Kode", width="small"),
+                "Nama Perusahaan": st.column_config.TextColumn("Nama", width="large"),
+                "Risk_Level": st.column_config.TextColumn("Risiko", width="small", help=HELP_TEXT["risk_level"]),
+                "Final_Action": st.column_config.TextColumn("Aksi", width="medium", help="Aksi ringkas untuk daftar top kandidat di Beranda; cek Detail Saham untuk timing entry."),
+                "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", width="large", help="Tindakan praktis berikutnya untuk user: cek entry, tunggu konfirmasi, review data, atau hindari."),
             },
+            height=560,
         )
 
         with st.expander("Matriks faktor top score", expanded=False):
@@ -7749,43 +7752,44 @@ with tab_history:
                 fig.update_xaxes(title_text="Tanggal", row=1 + len(stacked_panels), col=1)
                 show_chart(fig)
 
-                with st.expander("Momentum lanjutan: RSI & MACD", expanded=False):
-                    momentum_panel = price_panel[["Date", "RSI14", "MACD", "MACD_Signal"]].copy()
-                    fig = make_subplots(
-                        rows=2,
-                        cols=1,
-                        shared_xaxes=True,
-                        vertical_spacing=0.08,
-                        subplot_titles=["RSI 14", "MACD"],
-                    )
-                    fig.add_trace(
-                        go.Scatter(x=momentum_panel["Date"], y=momentum_panel["RSI14"], mode="lines", name="RSI14", line=dict(color="#2563eb")),
-                        row=1,
-                        col=1,
-                    )
-                    fig.add_hline(y=70, line_dash="dash", line_color="#ea580c", row=1, col=1)
-                    fig.add_hline(y=30, line_dash="dash", line_color="#15803d", row=1, col=1)
-                    fig.add_trace(
-                        go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD"], mode="lines", name="MACD", line=dict(color="#7c3aed")),
-                        row=2,
-                        col=1,
-                    )
-                    fig.add_trace(
-                        go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD_Signal"], mode="lines", name="Signal", line=dict(color="#ca8a04")),
-                        row=2,
-                        col=1,
-                    )
-                    fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR, row=2, col=1)
-                    fig.update_yaxes(title_text="RSI", range=[0, 100], row=1, col=1)
-                    fig.update_yaxes(title_text="MACD", row=2, col=1)
-                    fig.update_layout(
-                        title="Momentum lanjutan: RSI dan MACD",
-                        height=560,
-                        hovermode="x unified",
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-                        margin=dict(l=40, r=20, t=80, b=40),
-                    )
-                    show_chart(fig)
+                st.markdown("**Momentum lanjutan: RSI dan MACD**")
+                momentum_panel = price_panel[["Date", "RSI14", "MACD", "MACD_Signal"]].copy()
+                fig = make_subplots(
+                    rows=2,
+                    cols=1,
+                    shared_xaxes=True,
+                    vertical_spacing=0.08,
+                    subplot_titles=["RSI 14", "MACD"],
+                )
+                fig.add_trace(
+                    go.Scatter(x=momentum_panel["Date"], y=momentum_panel["RSI14"], mode="lines", name="RSI14", line=dict(color="#2563eb")),
+                    row=1,
+                    col=1,
+                )
+                fig.add_hline(y=70, line_dash="dash", line_color="#ea580c", row=1, col=1)
+                fig.add_hline(y=30, line_dash="dash", line_color="#15803d", row=1, col=1)
+                fig.add_trace(
+                    go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD"], mode="lines", name="MACD", line=dict(color="#7c3aed")),
+                    row=2,
+                    col=1,
+                )
+                fig.add_trace(
+                    go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD_Signal"], mode="lines", name="Signal", line=dict(color="#ca8a04")),
+                    row=2,
+                    col=1,
+                )
+                fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR, row=2, col=1)
+                fig.update_yaxes(title_text="RSI", range=[0, 100], row=1, col=1)
+                fig.update_yaxes(title_text="MACD", row=2, col=1)
+                fig.update_layout(
+                    title="RSI dan MACD",
+                    height=620,
+                    autosize=True,
+                    hovermode="x unified",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    margin=dict(l=40, r=20, t=80, b=40),
+                )
+                show_chart(fig)
 
                 detail_columns = [
                     "Date",
