@@ -1184,6 +1184,37 @@ def load_official_idx_universe():
     return universe
 
 
+def build_idx_source_method_rows():
+    return pd.DataFrame(
+        [
+            {
+                "Langkah": "1. Request endpoint BEI/IDX",
+                "Detail": IDX_STOCK_LIST_URL,
+            },
+            {
+                "Langkah": "2. Header request",
+                "Detail": "User-Agent browser dan Accept JSON/text melalui helper read_url_text(). Proxy lokal pemblokir 127.0.0.1:9 dibersihkan sementara.",
+            },
+            {
+                "Langkah": "3. Parse response",
+                "Detail": "Response JSON dibaca dari field data; recordsTotal disimpan sebagai metadata bila tersedia.",
+            },
+            {
+                "Langkah": "4. Normalisasi kolom",
+                "Detail": "normalize_universe_frame() membersihkan Kode, Nama Perusahaan, Sektor, Industry, ListingDate, Shares, ListingBoard, dan Universe_Source.",
+            },
+            {
+                "Langkah": "5. Penandaan resmi",
+                "Detail": "Kode dari endpoint ini diberi Universe_Source = BEI/IDX official dan In_IDX_Official = True.",
+            },
+            {
+                "Langkah": "6. Fallback transparan",
+                "Detail": "Jika BEI/IDX gagal/kosong, dashboard mencoba TradingView, endpoint IDX alternatif, StockAnalysis, lalu Excel fallback; status fallback tetap ditampilkan.",
+            },
+        ]
+    )
+
+
 @st.cache_data(ttl=ONLINE_REFRESH_TTL, show_spinner=False)
 def load_idx_universe_online():
     errors = []
@@ -7805,6 +7836,18 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
     universe_cols[3].metric("Sumber aktif", f"{full_scored_df['Universe_Source'].nunique():,}")
     with st.expander("Audit sumber kode saham", expanded=False):
         st.caption(HELP_TEXT["universe_audit"])
+        with st.expander("Cara dashboard mengambil data BEI/IDX", expanded=True):
+            st.caption(
+                "Universe resmi diambil dari endpoint publik BEI/IDX, lalu dinormalisasi dan digabung dengan fallback hanya untuk field yang kosong atau untuk audit."
+            )
+            show_table(
+                build_idx_source_method_rows(),
+                hide_index=True,
+                column_config={
+                    "Langkah": st.column_config.TextColumn("Langkah"),
+                    "Detail": st.column_config.TextColumn("Cara ambil / proses"),
+                },
+            )
         show_table(
             reconciliation,
             hide_index=True,
@@ -8114,7 +8157,7 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
 
         Referensi:
         - Data harga/histori: yfinance, pandas-datareader, cache repo, dan fallback Excel.
-        - Universe kode: BEI/IDX resmi bila tersedia; TradingView/StockAnalysis/Excel hanya fallback transparan.
+        - Universe kode: BEI/IDX resmi bila tersedia; endpoint utama `https://www.idx.id/primary/StockData/GetSecuritiesStock?start=0&length=9999&code=&sector=&board=&language=en-us`; TradingView/StockAnalysis/Excel hanya fallback transparan.
         - Fundamental online: TradingView scanner dan snapshot repo; Excel fallback bila field online kosong.
         - RSI/ATR: J. Welles Wilder Jr., New Concepts in Technical Trading Systems.
         - MACD: Gerald Appel, Moving Average Convergence/Divergence.
@@ -8126,6 +8169,19 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
     )
 
     st.info(f"Profil scoring aktif: {profile}. Preset filter aktif: {filter_preset}. Profil scoring mengubah bobot, preset filter mengubah batas penyaringan.")
+
+    with st.expander("Cara ambil universe resmi BEI/IDX", expanded=False):
+        st.caption(
+            "Bagian ini menjelaskan sumber BEI yang dipakai untuk daftar kode resmi. Data harga, histori, dan fundamental tetap memakai sumber lain karena endpoint BEI ini khusus universe/sekuritas."
+        )
+        show_table(
+            build_idx_source_method_rows(),
+            hide_index=True,
+            column_config={
+                "Langkah": st.column_config.TextColumn("Langkah"),
+                "Detail": st.column_config.TextColumn("Cara ambil / proses"),
+            },
+        )
 
     method_cols = st.columns(5)
     method_cols[0].metric("Baris sumber", f"{len(raw_df):,}")
