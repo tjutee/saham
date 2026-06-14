@@ -229,7 +229,7 @@ HELP_TEXT = {
     "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
     "history_codes": "Pilih kode IDX tanpa akhiran .JK. Default mengikuti shortlist aktif di Detail saham, lalu dashboard memanggil format online KODE.JK.",
     "history_period": "Rentang data online untuk grafik histori. 1-2 minggu cocok untuk monitoring cepat; 1-6 bulan untuk swing; 1-2 tahun untuk MA200/52W; 5-10 tahun/All lebih kaya sample tetapi lebih lambat.",
-    "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil screener, bukan instruksi beli.",
+    "recommendation": "Recommendation murni dari Score: Strong Buy >= 78, Buy >= 68, Watchlist >= 55, Speculative >= 42, selain itu Avoid. Ini hasil penyaring awal, bukan instruksi beli.",
     "final_action": "Final_Action menggabungkan Score, Recommendation, Clean_Data, Risk_Level, Threshold, relatif sektor, momentum, dan market regime menjadi playbook keputusan yang lebih praktis.",
     "portfolio": "Portofolio memakai kandidat dari hasil filter/Cari Saham untuk membaca konsentrasi sektor, campuran risiko, aksi akhir, dan estimasi alokasi. Ini alat perencanaan, bukan order otomatis.",
     "risk_level": "Risk_Level adalah kategori risiko relatif dari model berdasarkan rasio, volatilitas, likuiditas, dan penalti. Tetap perlu validasi berita dan laporan keuangan.",
@@ -409,7 +409,7 @@ CHART_AXIS_COLOR = "#64748b"
 
 
 st.set_page_config(
-    page_title="Screener Saham IDX",
+    page_title="Ringkasan Saham IDX",
     page_icon=":chart_with_upwards_trend:",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1322,26 +1322,18 @@ def build_ui_heuristic_audit():
         },
         {
             "Status": "OK",
-            "Halaman": "Backtest",
-            "Fokus": "Validasi historis sinyal",
-            "Aspek Terpenuhi": "Manual trigger, pilihan kode/horizon/sinyal, event, hit rate, dan walk-forward.",
-            "Potensi Redundancy": "Tidak dijalankan otomatis di Beranda/Cari Saham.",
-            "Tindak Lanjut": "Gunakan sebagai validasi setup, bukan klaim performa pasti.",
+            "Halaman": "Validasi",
+            "Fokus": "Backtest sinyal dan prediksi probabilistik",
+            "Aspek Terpenuhi": "Backtest dan prediksi manual trigger; event, hit rate, walk-forward, probability up, dan confidence dipisah.",
+            "Potensi Redundancy": "Sinyal teknikal tidak diulang sebagai chart; diringkas menjadi bukti historis dan probabilitas.",
+            "Tindak Lanjut": "Gunakan sebagai validasi setup, bukan klaim performa pasti atau prediksi harga.",
         },
         {
             "Status": "OK",
-            "Halaman": "Prediksi",
-            "Fokus": "Probabilitas berbasis setup historis",
-            "Aspek Terpenuhi": "Manual trigger, probability up, expected return, downside, dan confidence.",
-            "Potensi Redundancy": "Sinyal teknikal tidak diulang sebagai chart; diringkas menjadi probabilitas.",
-            "Tindak Lanjut": "Jaga wording sebagai probabilistik dari histori, bukan kepastian harga.",
-        },
-        {
-            "Status": "OK",
-            "Halaman": "Explorer & Sektor",
+            "Halaman": "Eksplorasi",
             "Fokus": "Eksplorasi pola dan agregasi",
             "Aspek Terpenuhi": "Kontrol sumbu, warna, ukuran, limit data, dan agregasi sektor.",
-            "Potensi Redundancy": "Default tertutup agar tidak menyaingi ringkasan utama.",
+            "Potensi Redundancy": "Explorer dan sektor dipisah dari Audit Data agar tidak menyaingi ringkasan utama.",
             "Tindak Lanjut": "Gunakan sebagai eksplorasi, tidak mengubah scoring/filter utama.",
         },
         {
@@ -4562,9 +4554,9 @@ data_file_status = get_file_status(DATA_FILE)
 data_update_label = get_data_update_label(raw_df, data_file_status)
 market_session_status = get_market_session_status()
 
-st.title("Screener Saham IDX")
+st.title("Ringkasan Saham IDX")
 st.caption(
-    f"Dashboard screening saham IDX berbasis data online/cache. Update data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). BEI/IDX dipakai untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya sebagai fallback/audit. Hasil adalah screener awal, bukan nasihat investasi."
+    f"Dashboard ringkasan dan pencarian saham IDX berbasis data online/cache. Update data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). BEI/IDX dipakai untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya sebagai fallback/audit. Hasil adalah penyaring awal, bukan nasihat investasi."
 )
 st.caption(market_session_status["Detail"])
 if raw_df.attrs.get("universe_error"):
@@ -4582,7 +4574,10 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
         2. Buka **Cari Saham** untuk ranking saham. Pilih tabel `Ringkas`, `Analisis`, atau `Audit` sesuai kebutuhan.
         3. Buka **Detail Saham** untuk membuat shortlist, memilih fokus detail, membaca prospek/berita, histori, dan teknikal.
         4. Buka **Portofolio** untuk skenario alokasi dan konsentrasi risiko.
-        5. Buka **Audit Data** untuk freshness, sumber data, backtest, prediksi probabilistik, explorer, sektor, dan metodologi.
+        5. Buka **Validasi** untuk backtest sinyal dan prediksi probabilistik.
+        6. Buka **Eksplorasi** untuk scatter, pembanding rasio, dan analisis sektor.
+        7. Buka **Audit Data** untuk freshness, sumber data, fallback, dan kualitas data.
+        8. Buka **Metodologi** untuk rumus, bobot, threshold, penalti, dan referensi.
 
         **Definisi inti**
         - `Score`: ranking multi-factor 0-100 dari valuasi, kualitas, risiko, likuiditas, momentum, indeks, dan penalti.
@@ -4605,7 +4600,7 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
     )
 
 with st.sidebar:
-    st.header("Filter screener")
+    st.header("Filter saham")
     ui_mode = st.radio(
         "Mode filter",
         ["Cepat", "Lengkap"],
@@ -4846,16 +4841,31 @@ if market_context.get("Market_Error"):
 if market_context.get("Breadth_Error"):
     st.caption(f"Market breadth terbatas: {market_context.get('Breadth_Error')}")
 
-tab_summary, tab_reco, tab_history, tab_portfolio, tab_data_method = st.tabs(
-    ["Beranda", "Cari Saham", "Detail Saham", "Portofolio", "Audit Data"]
+(
+    tab_summary,
+    tab_reco,
+    tab_history,
+    tab_portfolio,
+    tab_validation,
+    tab_explore_area,
+    tab_quality,
+    tab_method,
+) = st.tabs(
+    [
+        "Beranda",
+        "Cari Saham",
+        "Detail Saham",
+        "Portofolio",
+        "Validasi",
+        "Eksplorasi",
+        "Audit Data",
+        "Metodologi",
+    ]
 )
-tab_backtest = tab_data_method
-tab_predict = tab_data_method
-tab_explore_sector = tab_data_method
-tab_explore = tab_data_method
-tab_sector = tab_data_method
-tab_quality = tab_data_method
-tab_method = tab_data_method
+tab_backtest = tab_validation
+tab_predict = tab_validation
+tab_explore = tab_explore_area
+tab_sector = tab_explore_area
 
 with tab_summary:
     st.subheader("Beranda")
@@ -5108,7 +5118,7 @@ with tab_reco:
                             "Return_52W": ":.1f",
                             "Volume": ":,.0f",
                         },
-                        title=f"Top screener berdasarkan {reco_sort}",
+                        title=f"Top kandidat berdasarkan {reco_sort}",
                         color_discrete_map=RECOMMENDATION_COLORS,
                     )
                     fig.update_traces(textposition="outside", cliponaxis=False)
@@ -5381,7 +5391,7 @@ with tab_reco:
 
         csv = reco_view[display_columns].to_csv(index=False).encode("utf-8")
         st.download_button(
-            "Download hasil screener CSV",
+            "Download hasil pencarian CSV",
             data=csv,
             file_name="screener_saham_idx.csv",
             mime="text/csv",
@@ -7296,8 +7306,8 @@ with tab_sector.expander("Analisis sektor", expanded=False):
         },
     )
 
-with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True):
-    st.subheader("Kualitas data, freshness, dan update")
+with tab_quality.expander("Ringkasan kualitas data", expanded=True):
+    st.subheader("Ringkasan kualitas data")
     quality_report = build_data_quality_report(scored_df, raw_df)
     review_count = int((quality_report["Rows"].gt(0) & ~quality_report["Severity"].eq("Info")).sum())
     high_count = int(((quality_report["Rows"] > 0) & quality_report["Severity"].eq("High")).sum())
@@ -7308,7 +7318,7 @@ with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True)
     quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
 
     ux_audit = build_ui_heuristic_audit()
-    with st.expander("Audit heuristik UI/UX seluruh halaman", expanded=True):
+    with st.expander("Audit heuristik UI/UX seluruh halaman", expanded=False):
         st.caption("Checklist ini memastikan setiap halaman direview dari sisi simplicity, clarity, consistency, integrity, dynamic, interactive, dan informative.")
         ux_cols = st.columns(3)
         ux_cols[0].metric("Area direview", f"{len(ux_audit):,}")
@@ -7324,7 +7334,7 @@ with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True)
             },
         )
 
-    with st.expander("Market regime & freshness audit", expanded=True):
+    with st.expander("Detail market regime & freshness", expanded=False):
         freshness_rows = pd.DataFrame(
             [
                 {"Area": "Market Regime", "Metric": "Regime", "Value": clean_text(market_context.get("Market_Regime")), "Detail": clean_text(market_context.get("Regime_Reason"))},
@@ -7624,7 +7634,7 @@ with tab_method.expander("Metodologi dan formula", expanded=False):
     st.subheader("Formula scoring multi-factor")
     st.markdown(
         """
-        Dashboard ini adalah screener kuantitatif awal. Data yang dipakai berasal dari sumber online, snapshot/cache repo,
+        Dashboard ini adalah penyaring kuantitatif awal. Data yang dipakai berasal dari sumber online, snapshot/cache repo,
         cache histori, atau fallback Excel yang ditandai sumbernya; tidak ada data dummy/acak yang dibuat untuk menggantikan
         data asli. Jika data asli tidak tersedia, status fallback/unavailable tetap ditampilkan agar keputusan bisa diaudit.
 
@@ -7762,4 +7772,4 @@ with tab_method.expander("Metodologi dan formula", expanded=False):
             """
         )
 
-st.caption("Built with Streamlit + Plotly. Gunakan sebagai screener, bukan pengganti keputusan investasi.")
+st.caption("Built with Streamlit + Plotly. Gunakan sebagai ringkasan awal, bukan pengganti keputusan investasi.")
