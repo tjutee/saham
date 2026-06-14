@@ -4008,7 +4008,6 @@ def build_backtest_events(history, signal_name, horizons=(5, 20, 60)):
         close = pd.to_numeric(test["Close"], errors="coerce")
         previous_close = close.shift(1)
         previous_ma50 = pd.to_numeric(test["MA50"], errors="coerce").shift(1)
-        previous_signal = test["Technical_Signal"].shift(1)
 
         if signal_name == "Bullish":
             condition = test["Technical_Signal"].eq("Bullish")
