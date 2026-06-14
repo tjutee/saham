@@ -40,6 +40,7 @@ AUTO_REFRESH_SCOPE_OPTIONS = {
     "Top 10": 10,
     "Top 25": 25,
     "Top 50": 50,
+    "Top 100": 100,
 }
 JAKARTA_TZ = timezone(timedelta(hours=7), name="WIB")
 REGULAR_TRADING_SESSIONS = {
@@ -1760,6 +1761,8 @@ def build_data_freshness(scored):
         label = "Unknown"
     elif lag_days <= 3 and online_price_coverage >= 70:
         label = "Fresh"
+    elif lag_days <= 3:
+        label = "Partial Coverage"
     elif lag_days <= 7 and online_price_coverage >= 40:
         label = "Stale"
     else:
@@ -1850,8 +1853,10 @@ def build_data_status_summary(freshness, session_status, source_label, full_univ
 
     if freshness_label == "Fresh":
         market_action = "Pantau otomatis; tidak perlu refresh massal."
+    elif freshness_label == "Partial Coverage":
+        market_action = "Data terbaru tersedia, tetapi coverage harga online/cache belum penuh. Auto update aktif akan menambah kode prioritas secara bertahap saat jam bursa."
     elif session_open:
-        market_action = "Auto update akan memprioritaskan saham utama saat interval jatuh tempo."
+        market_action = "Auto update aktif memprioritaskan saham utama saat interval jatuh tempo."
     else:
         market_action = "Di luar jam bursa, tampilkan snapshot/cache terakhir dan update lagi saat sesi buka."
 
@@ -4786,7 +4791,7 @@ market_session_status = get_market_session_status()
 
 st.title("Ringkasan Saham IDX")
 st.caption(
-    f"Dashboard ringkasan dan pencarian saham IDX berbasis data online/cache. Update data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). BEI/IDX dipakai untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya sebagai fallback/audit. Hasil adalah penyaring awal, bukan nasihat investasi."
+    f"Dashboard ringkasan dan pencarian saham IDX berbasis data online/cache. Sumber universe/data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). BEI/IDX dipakai untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya sebagai fallback/audit. Hasil adalah penyaring awal, bukan nasihat investasi."
 )
 st.caption(market_session_status["Detail"])
 if raw_df.attrs.get("universe_error"):
@@ -4798,7 +4803,7 @@ if raw_df.attrs.get("fundamental_error"):
 
 with st.expander("Panduan singkat penggunaan", expanded=False):
     st.info(
-        f"Kondisi saat ini: sumber aktif {data_update_label}; status bursa {market_session_status['Status']} ({market_session_status['Now']}). "
+        f"Kondisi saat ini: sumber universe/data {data_update_label}; status bursa {market_session_status['Status']} ({market_session_status['Now']}). "
         "Auto update berjalan terkontrol saat bursa buka, lalu dashboard membaca snapshot/cache terbaru agar tetap ringan."
     )
     st.markdown(
@@ -4909,7 +4914,7 @@ with st.sidebar:
     st.divider()
     with st.expander("Auto update pasar", expanded=False):
         file_status = data_file_status
-        st.caption(f"Sumber aktif: {data_update_label}")
+        st.caption(f"Sumber universe/data: {data_update_label}")
         st.caption(f"Jam bursa: {market_session_status['Status']} | {market_session_status['Now']}")
         st.caption(f"Excel fallback: {file_status['Status']} | Modified: {file_status['Last Modified']} | Size: {file_status['Ukuran']}")
         snapshot_status = get_file_status(MARKET_SNAPSHOT_FILE)
@@ -4919,7 +4924,7 @@ with st.sidebar:
         cache_status_sidebar = get_history_cache_status()
         st.caption(f"Cache histori: {len(cache_status_sidebar):,} file di `{HISTORY_CACHE_DIR}`")
         st.info(
-            "Auto update memakai kode prioritas dan interval terkontrol saat bursa berjalan. Snapshot/cache tetap dipakai agar dashboard tidak berat."
+            "Auto update bersifat aktif bertahap: kode prioritas diperbarui otomatis saat bursa buka, lalu seluruh dashboard membaca snapshot/cache terbaru. Refresh massal semua kode tidak dijalankan tiap interval agar app tetap stabil dan tidak membebani provider."
         )
         auto_update_enabled = st.toggle(
             "Auto update saat bursa",
@@ -4936,7 +4941,7 @@ with st.sidebar:
             "Cakupan auto update",
             list(AUTO_REFRESH_SCOPE_OPTIONS),
             index=0,
-            help="Batasi cakupan agar update otomatis tetap cepat dan stabil.",
+            help="Cakupan kode prioritas per siklus auto update. Top 100 lebih luas tetapi lebih berat; seluruh universe tetap ikut membaca snapshot/cache terbaru setelah data tersedia.",
         )
         refresh_period = st.selectbox(
             "Periode histori",
@@ -5226,7 +5231,7 @@ with tab_summary:
             regime_cols[1].metric("IHSG", format_number(market_context.get("IHSG_Close")), f"MA200 {format_number(market_context.get('IHSG_MA200'))}")
             regime_cols[2].metric("Return IHSG 20D", format_percent(market_context.get("IHSG_Return_20D_%")), f"60D {format_percent(market_context.get('IHSG_Return_60D_%'))}")
             regime_cols[3].metric("Breadth MA50", format_percent(market_context.get("Above_MA50_%")), f"MA200 {format_percent(market_context.get('Above_MA200_%'))}")
-            regime_cols[4].metric("Kesegaran data", clean_text(data_freshness.get("Freshness_Label")), f"Online harga {format_percent(data_freshness.get('Online_Price_Coverage_%'), 0)}")
+            regime_cols[4].metric("Kesegaran data", data_status["Freshness_Label"], f"Online harga {data_status['Online_Price_Coverage_Label']}")
             st.caption(clean_text(market_context.get("Regime_Reason"), "Konteks market belum tersedia."))
 
         show_summary_charts = st.toggle("Tampilkan grafik distribusi dan sumber data", value=False)
@@ -8041,7 +8046,7 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
     method_cols[1].metric("Saham unik setelah deduplikasi", f"{len(df):,}")
     method_cols[2].metric("Duplikasi indeks dibersihkan", f"{len(raw_df) - len(df):,}")
     method_cols[3].metric("Histori 52W tersedia", f"{df['Return_52W'].notna().sum():,}")
-    method_cols[4].metric("Update data", data_update_label)
+    method_cols[4].metric("Sumber data", data_update_label)
     st.caption(
         f"Status data metodologi mengikuti sesi aktif: {data_status['Freshness_Label']}, "
         f"coverage harga {data_status['Online_Price_Coverage_Label']}, coverage fundamental online {data_status['Online_Fundamental_Coverage_Label']}, "
