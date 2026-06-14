@@ -50,6 +50,7 @@ REGULAR_TRADING_SESSIONS = {
 }
 EPHEMERIS_FILE = "de421.bsp"
 EPHEMERIS_PLANETS = ["Mercury", "Venus", "Mars", "Jupiter", "Saturn"]
+ASTRO_SINE_BODIES = ["Sun"] + EPHEMERIS_PLANETS
 SKYFIELD_BODY_NAMES = {
     "Sun": "sun",
     "Mercury": "mercury",
@@ -72,6 +73,14 @@ ZODIAC_SIGNS = [
     "Aquarius",
     "Pisces",
 ]
+ASTRO_SINE_COLORS = {
+    "Sun": "#ca8a04",
+    "Mercury": "#64748b",
+    "Venus": "#db2777",
+    "Mars": "#dc2626",
+    "Jupiter": "#7c3aed",
+    "Saturn": "#0f766e",
+}
 EPHEMERIS_CONTEXT_CACHE = {}
 MARKET_SNAPSHOT_FILE = DATA_CACHE_DIR / f"market_snapshot_{ONLINE_LOAD_PERIOD}.csv"
 FUNDAMENTAL_SNAPSHOT_FILE = DATA_CACHE_DIR / "fundamental_snapshot.csv"
@@ -3101,6 +3110,7 @@ def unavailable_ephemeris_context(reason="Ephemeris tidak tersedia"):
         "Planetary_Window": "Ephemeris tidak tersedia",
         "Planetary_Detail": reason,
         "Ephemeris_Source": "Tidak tersedia",
+        "Sun_Longitude": np.nan,
     }
     for planet in EPHEMERIS_PLANETS:
         rows[f"{planet}_Longitude"] = np.nan
@@ -3150,6 +3160,7 @@ def planet_cycle_context(date_value):
             "Ephemeris_Source": f"JPL DE421 via Skyfield ({EPHEMERIS_FILE})",
             "Planetary_Window": "Neutral Planet Aspect",
             "Planetary_Detail": "Tidak ada aspek planet-ke-Sun besar yang dekat.",
+            "Sun_Longitude": round(float(positions_today["Sun"]), 2),
         }
         sun_longitude = positions_today["Sun"]
         active_windows = []
@@ -7159,12 +7170,16 @@ with tab_history:
                         show_table(plan_table, hide_index=True)
 
                 st.markdown("**Chart harga**")
-                indicator_cols = st.columns([1, 1, 2])
+                indicator_cols = st.columns([1, 1, 1, 1, 2])
                 with indicator_cols[0]:
                     show_ehlers_filter = st.toggle("Ehlers bar", value=True, help=HELP_TEXT["ehlers_filter"])
                 with indicator_cols[1]:
                     show_donchian_ribbon = st.toggle("Donchian ribbon bar", value=True, help=HELP_TEXT["donchian_ribbon"])
                 with indicator_cols[2]:
+                    show_astro_fibo_chart = st.toggle("Astro-Fibo bar", value=True, help=HELP_TEXT["astro_fibo"])
+                with indicator_cols[3]:
+                    show_planet_sine_chart = st.toggle("Planet sinusoidal", value=True, help=HELP_TEXT["astro_fibo"])
+                with indicator_cols[4]:
                     st.caption("Layout seperti TradingView: candlestick di atas, indikator ditumpuk sebagai bar/ribbon di bawah dengan tanggal yang sama.")
 
                 price_panel = tech_history.copy()
@@ -7183,8 +7198,19 @@ with tab_history:
                     stacked_panels.append("ehlers")
                 if show_donchian_ribbon and "Donchian_Ribbon_Score" in price_panel.columns:
                     stacked_panels.append("donchian")
+                if show_astro_fibo_chart and "Astro_Fibo_Timing_Score" in price_panel.columns:
+                    stacked_panels.append("astro")
+                planet_longitude_columns = [f"{body}_Longitude" for body in ASTRO_SINE_BODIES if f"{body}_Longitude" in price_panel.columns]
+                if show_planet_sine_chart and planet_longitude_columns:
+                    stacked_panels.append("planet_sine")
                 row_titles = ["Harga"] + [
-                    "Ehlers Auto Tune" if panel == "ehlers" else "Donchian Trend Ribbon"
+                    "Ehlers Auto Tune"
+                    if panel == "ehlers"
+                    else "Donchian Trend Ribbon"
+                    if panel == "donchian"
+                    else "Planet Sinusoidal"
+                    if panel == "planet_sine"
+                    else "Astro-Fibo Timing"
                     for panel in stacked_panels
                 ]
                 row_heights = [0.68] + [0.16] * len(stacked_panels)
@@ -7279,6 +7305,28 @@ with tab_history:
                                 row=1,
                                 col=1,
                             )
+                if show_astro_fibo_chart and {"Astro_Fibo_Timing_Score", "Time_Window"}.issubset(price_panel.columns):
+                    astro_marker_data = price_panel.copy()
+                    astro_marker_data["Astro_Fibo_Timing_Score"] = pd.to_numeric(
+                        astro_marker_data["Astro_Fibo_Timing_Score"], errors="coerce"
+                    ).fillna(0)
+                    active_astro_markers = astro_marker_data[
+                        astro_marker_data["Astro_Fibo_Timing_Score"].ge(55)
+                        & ~astro_marker_data["Time_Window"].astype(str).isin(["Neutral Timing", "Unavailable", "-", "nan"])
+                    ].tail(8)
+                    for _, astro_row in active_astro_markers.iterrows():
+                        marker_score = float(astro_row.get("Astro_Fibo_Timing_Score", 0))
+                        marker_color = "#15803d" if marker_score >= 75 else "#ca8a04"
+                        fig.add_vline(
+                            x=astro_row["Date"],
+                            line_dash="dot",
+                            line_color=marker_color,
+                            line_width=1,
+                            annotation_text="Astro-Fibo",
+                            annotation_position="top",
+                            row=1,
+                            col=1,
+                        )
                 for panel_index, panel_name in enumerate(stacked_panels, start=2):
                     if panel_name == "ehlers":
                         ehlers_diff = (
@@ -7365,8 +7413,100 @@ with tab_history:
                                 col=1,
                             )
                             fig.update_yaxes(title_text="Ribbon", autorange="reversed", row=panel_index, col=1)
+                    if panel_name == "astro":
+                        astro_score = pd.to_numeric(price_panel["Astro_Fibo_Timing_Score"], errors="coerce").fillna(0)
+                        astro_bias = price_panel.get("Astro_Fibo_Bias", pd.Series("Neutral", index=price_panel.index)).astype(str)
+                        astro_window = price_panel.get("Time_Window", pd.Series("-", index=price_panel.index)).astype(str)
+                        astro_colors = astro_bias.map(
+                            {
+                                "Bullish Timing": "#15803d",
+                                "Constructive Timing": "#86efac",
+                                "Neutral Timing": "#e5e7eb",
+                                "Risk Timing": "#fca5a5",
+                                "Unavailable": "#cbd5e1",
+                            }
+                        ).fillna("#cbd5e1")
+                        astro_custom = np.stack(
+                            [
+                                astro_bias.to_numpy(),
+                                astro_window.to_numpy(),
+                                price_panel.get("Moon_Phase", pd.Series("-", index=price_panel.index)).astype(str).to_numpy(),
+                                price_panel.get("Planetary_Window", pd.Series("-", index=price_panel.index)).astype(str).to_numpy(),
+                            ],
+                            axis=-1,
+                        )
+                        fig.add_trace(
+                            go.Bar(
+                                x=price_panel["Date"],
+                                y=astro_score,
+                                name="Astro-Fibo bar",
+                                marker_color=astro_colors,
+                                customdata=astro_custom,
+                                hovertemplate=(
+                                    "Tanggal=%{x|%Y-%m-%d}<br>"
+                                    "Score=%{y:.1f}<br>"
+                                    "Bias=%{customdata[0]}<br>"
+                                    "Window=%{customdata[1]}<br>"
+                                    "Moon=%{customdata[2]}<br>"
+                                    "Planet=%{customdata[3]}<extra>Astro-Fibo</extra>"
+                                ),
+                            ),
+                            row=panel_index,
+                            col=1,
+                        )
+                        fig.add_hline(y=55, line_color="#94a3b8", line_dash="dash", line_width=1, row=panel_index, col=1)
+                        fig.add_hline(y=75, line_color="#ca8a04", line_dash="dash", line_width=1, row=panel_index, col=1)
+                        fig.update_yaxes(title_text="Astro", range=[0, 100], zeroline=False, row=panel_index, col=1)
+                    if panel_name == "planet_sine":
+                        for body in ASTRO_SINE_BODIES:
+                            longitude_column = f"{body}_Longitude"
+                            if longitude_column not in price_panel.columns:
+                                continue
+                            longitude_values = pd.to_numeric(price_panel[longitude_column], errors="coerce")
+                            sine_values = np.sin(np.deg2rad(longitude_values))
+                            if pd.Series(sine_values).notna().sum() < 2:
+                                continue
+                            sign_values = (
+                                price_panel.get(f"{body}_Sign", pd.Series("-", index=price_panel.index)).astype(str)
+                                if body != "Sun"
+                                else price_panel.get("Sun_Sign", pd.Series("-", index=price_panel.index)).astype(str)
+                            )
+                            window_values = (
+                                price_panel.get(f"{body}_Window", pd.Series("Sun cycle", index=price_panel.index)).astype(str)
+                                if body != "Sun"
+                                else price_panel.get("Sun_Window", pd.Series("Sun cycle", index=price_panel.index)).astype(str)
+                            )
+                            customdata = np.stack(
+                                [
+                                    longitude_values.round(2).astype(str).to_numpy(),
+                                    sign_values.to_numpy(),
+                                    window_values.to_numpy(),
+                                ],
+                                axis=-1,
+                            )
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=price_panel["Date"],
+                                    y=sine_values,
+                                    mode="lines",
+                                    name=f"{body} sine",
+                                    line=dict(color=ASTRO_SINE_COLORS.get(body, "#64748b"), width=1.4),
+                                    customdata=customdata,
+                                    hovertemplate=(
+                                        "Tanggal=%{x|%Y-%m-%d}<br>"
+                                        f"{body} sin=%{{y:.2f}}<br>"
+                                        "Longitude=%{customdata[0]}°<br>"
+                                        "Sign=%{customdata[1]}<br>"
+                                        "Window=%{customdata[2]}<extra></extra>"
+                                    ),
+                                ),
+                                row=panel_index,
+                                col=1,
+                            )
+                        fig.add_hline(y=0, line_color="#94a3b8", line_width=1, row=panel_index, col=1)
+                        fig.update_yaxes(title_text="Sine", range=[-1.1, 1.1], zeroline=False, row=panel_index, col=1)
                 fig.update_layout(
-                    title=f"{technical_code}: candlestick + Ehlers/Donchian stacked ({technical_period})",
+                    title=f"{technical_code}: candlestick + stacked technical & Astro-Fibo cycles ({technical_period})",
                     height=560 + 120 * len(stacked_panels),
                     xaxis_rangeslider_visible=False,
                     hovermode="x unified",
@@ -7452,17 +7592,23 @@ with tab_history:
                     "Time_Window",
                     "Nearest_Fibo_Time_Day",
                     "Moon_Phase",
+                    "Sun_Longitude",
                     "Sun_Sign",
                     "Sun_Window",
                     "Planetary_Cycle_Score",
                     "Planetary_Window",
                     "Ephemeris_Source",
+                    "Mercury_Longitude",
                     "Mercury_Window",
+                    "Venus_Longitude",
                     "Venus_Window",
+                    "Mars_Longitude",
                     "Mars_Window",
+                    "Jupiter_Longitude",
                     "Jupiter_Window",
                     "Jupiter_Sign",
                     "Jupiter_Retrograde",
+                    "Saturn_Longitude",
                     "Saturn_Window",
                     "Saturn_Sign",
                     "Saturn_Retrograde",
