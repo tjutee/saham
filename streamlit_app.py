@@ -232,7 +232,7 @@ HELP_TEXT = {
     "npm": "NPM = laba bersih / pendapatan. Semakin tinggi berarti margin laba bersih lebih kuat; nilai negatif menunjukkan rugi bersih.",
     "der": "DER = total utang / ekuitas. Untuk non-bank, makin rendah umumnya lebih konservatif. Untuk bank, DER tidak otomatis buruk sehingga default tidak diterapkan ke Banking.",
     "score": "Score akhir = rata-rata tertimbang Valuasi, Kualitas, Risiko, Likuiditas, Momentum, dan Indeks, lalu dikurangi Penalty dan dibatasi 0-100.",
-    "threshold_source": "Sumber aturan threshold. Auto memakai Banking untuk saham bank dan NonBank untuk saham selain bank; pilihan manual memaksa semua saham memakai satu set aturan.",
+    "threshold_source": "Sumber aturan threshold. Auto memakai Banking untuk saham bank dan NonBank untuk saham selain bank; pilihan NonBank/Banking menerapkan satu set aturan ke semua saham.",
     "threshold_ratio": "Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable x 100. Rasio yang kolomnya ada tetapi nilainya kosong/tidak memenuhi batas dihitung tidak lolos.",
     "core_thresholds": "Jika aktif, saham wajib memenuhi inti konservatif: PER <= 15, PBV <= 3, ROE >= 12%, dan NPM >= 7%. Ini tambahan di luar slider umum.",
     "der_banking": "Jika aktif, filter DER maksimum juga diterapkan ke saham Banking. Default mati karena struktur neraca bank berbeda dari non-bank.",
@@ -267,9 +267,9 @@ HELP_TEXT = {
     "factor_top_n": "Jumlah contoh saham teratas yang ditampilkan untuk faktor yang sedang diinspeksi.",
     "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai hasil Cari Saham.",
     "audit_code": "Pilih satu atau beberapa kode saham untuk melihat alasan lolos/gagal pada filter aktif dan preset pembanding.",
-    "audit_scope": "Cakupan audit filter. Semua saham mengecek seluruh universe final, Hasil filter aktif hanya saham yang lolos filter sidebar, Kode pilihan untuk investigasi manual.",
+    "audit_scope": "Cakupan audit filter. Semua saham mengecek seluruh universe final, Hasil filter aktif hanya saham yang lolos filter sidebar, Kode pilihan untuk investigasi spesifik.",
     "universe_audit": "Universe utama memakai kode yang match BEI/IDX resmi. Kode fallback non-BEI tetap ditampilkan untuk audit, tetapi tidak otomatis masuk analisis utama bila data BEI resmi tersedia.",
-    "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih pendek untuk refresh cepat, panjang untuk analisis/teknikal yang lebih stabil.",
+    "refresh_period": "Periode histori online untuk auto update cache. Pilih pendek untuk pembaruan cepat, panjang untuk analisis/teknikal yang lebih stabil.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
     "technical_period": "Rentang OHLCV online untuk analisis teknikal fokus detail. Periode pendek cocok untuk RSI/MACD cepat; 1-2 tahun lebih stabil untuk MA200, 52W, ATR, dan Fibonacci.",
@@ -292,7 +292,7 @@ HELP_TEXT = {
     "backtest_horizon": "Horizon forward return setelah sinyal muncul. Contoh 20D berarti return 20 hari bursa setelah event.",
     "walk_forward": "Walk-forward membagi event historis secara berurutan: bagian awal sebagai in-sample dan bagian berikutnya sebagai out-of-sample. Ini membantu membaca robustness dan risiko overfitting.",
     "prediction": "Prediksi memakai OHLCV online/cache untuk mencari setup historis yang mirip. Periode pendek cepat tetapi sering kekurangan sample; default 2 tahun lebih seimbang; 5-10 tahun/All lebih kaya sample tetapi bisa mencampur rezim lama. Output adalah probabilitas historis, bukan prediksi harga pasti.",
-    "workspace_shortlist": "Top hasil filter otomatis mengikuti filter/sidebar dan ranking saat ini. Pilih manual memberi kontrol penuh untuk membandingkan beberapa saham tertentu.",
+    "workspace_shortlist": "Top hasil filter otomatis mengikuti filter/sidebar dan ranking saat ini. Pilih sendiri memberi kontrol penuh untuk membandingkan beberapa saham tertentu.",
     "workspace_focus": "Fokus detail adalah satu saham aktif dari shortlist. Berita, prospek, histori default, dan teknikal akan mengikuti kode ini.",
     "news_source": "Auto mencoba Yahoo Finance lalu Google News. Google News biasanya lebih lengkap untuk emiten IDX; Yahoo Finance kadang kosong untuk sebagian kode.",
 }
@@ -480,7 +480,7 @@ def get_market_session_status(now=None):
     if weekday >= 5:
         return {
             "Status": "Bursa tutup",
-            "Detail": "Akhir pekan. Pakai snapshot/cache; refresh live bisa tetap dicoba tetapi data biasanya tidak berubah.",
+            "Detail": "Akhir pekan. Dashboard memakai snapshot/cache terakhir; auto update pasar aktif lagi saat sesi bursa berikutnya.",
             "Now": now.strftime("%Y-%m-%d %H:%M WIB"),
             "Is_Open": False,
         }
@@ -490,16 +490,16 @@ def get_market_session_status(now=None):
     if any(start <= current_minutes <= end for start, end in session_ranges):
         return {
             "Status": "Bursa berjalan",
-            "Detail": "Refresh harga/histori terkontrol bisa mengambil data terbaru yang tersedia dari yfinance/provider cache.",
+            "Detail": "Auto update pasar mengambil harga/histori kode prioritas sesuai interval dan ketersediaan provider.",
             "Now": now.strftime("%Y-%m-%d %H:%M WIB"),
             "Is_Open": True,
         }
     if session_ranges[0][1] < current_minutes < session_ranges[1][0]:
-        detail = "Jeda sesi. Snapshot/cache menjaga dashboard tetap cepat; refresh live bisa dilakukan menjelang sesi berikutnya."
+        detail = "Jeda sesi. Snapshot/cache menjaga dashboard tetap cepat; auto update aktif lagi saat sesi berikutnya berjalan."
     elif current_minutes < session_ranges[0][0]:
         detail = "Pra-pembukaan. Cache/snapshot biasanya cukup sampai data provider mulai memperbarui harga."
     else:
-        detail = "Pasca-penutupan. Refresh live berguna untuk memperbarui cache akhir hari bila provider sudah sinkron."
+        detail = "Pasca-penutupan. Dashboard memakai snapshot/cache akhir hari; pembaruan berikutnya menunggu provider sinkron atau sesi berikutnya."
     return {
         "Status": "Di luar sesi reguler",
         "Detail": detail,
@@ -1368,10 +1368,10 @@ def build_ui_heuristic_audit():
         {
             "Status": "OK",
             "Halaman": "Sidebar",
-            "Fokus": "Filter dan update data",
-            "Aspek Terpenuhi": "Mode Cepat/Lengkap, helper threshold, dan update cache-first.",
+            "Fokus": "Filter dan auto update data",
+            "Aspek Terpenuhi": "Mode Cepat/Lengkap, helper threshold, dan auto update cache-first.",
             "Potensi Redundancy": "Bobot/rasio disembunyikan di Mode Cepat agar tidak dobel dengan preset.",
-            "Tindak Lanjut": "Auto update hanya untuk kode prioritas; hindari refresh massal saat load.",
+            "Tindak Lanjut": "Auto update hanya untuk kode prioritas; hindari pembaruan massal saat load.",
         },
         {
             "Status": "OK",
@@ -1395,13 +1395,13 @@ def build_ui_heuristic_audit():
             "Fokus": "Shortlist, berita, histori, teknikal",
             "Aspek Terpenuhi": "Fokus saham aktif, berita mengikuti kode, chart teknikal stacked seperti workflow trading.",
             "Potensi Redundancy": "Histori harga dan indikator teknikal sama-sama memakai OHLCV.",
-            "Tindak Lanjut": "Pertahankan chart fokus satu kode; scan top-N dibuka manual agar tidak berat.",
+            "Tindak Lanjut": "Pertahankan chart fokus satu kode; scan top-N tetap on-demand agar tidak berat.",
         },
         {
             "Status": "OK",
             "Halaman": "Portofolio",
             "Fokus": "Alokasi dan konsentrasi risiko",
-            "Aspek Terpenuhi": "Kandidat dari filter, pilihan manual, nilai posisi, kas, sektor, dan batas risiko.",
+            "Aspek Terpenuhi": "Kandidat dari filter, pilihan kode, nilai posisi, kas, sektor, dan batas risiko.",
             "Potensi Redundancy": "Rekomendasi saham tidak diulang penuh; hanya dipakai sebagai input alokasi.",
             "Tindak Lanjut": "Tetap tampilkan estimasi sebagai simulasi, bukan instruksi order.",
         },
@@ -1409,7 +1409,7 @@ def build_ui_heuristic_audit():
             "Status": "OK",
             "Halaman": "Validasi",
             "Fokus": "Backtest sinyal dan prediksi probabilistik",
-            "Aspek Terpenuhi": "Backtest dan prediksi manual trigger; event, hit rate, walk-forward, probability up, dan confidence dipisah.",
+            "Aspek Terpenuhi": "Backtest dan prediksi berjalan on-demand; event, hit rate, walk-forward, probability up, dan confidence dipisah.",
             "Potensi Redundancy": "Sinyal teknikal tidak diulang sebagai chart; diringkas menjadi bukti historis dan probabilitas.",
             "Tindak Lanjut": "Gunakan sebagai validasi setup, bukan klaim performa pasti atau prediksi harga.",
         },
@@ -1762,11 +1762,11 @@ def build_data_freshness(scored):
     elif lag_days <= 3 and online_price_coverage >= 70:
         label = "Fresh"
     elif lag_days <= 3:
-        label = "Partial Coverage"
+        label = "Coverage Parsial"
     elif lag_days <= 7 and online_price_coverage >= 40:
-        label = "Stale"
+        label = "Mulai Stale"
     else:
-        label = "Needs Refresh"
+        label = "Perlu Update"
 
     return {
         "Freshness_Label": label,
@@ -1788,20 +1788,20 @@ def build_refresh_plan(freshness, session_status):
     session_label = clean_text(session_status.get("Status"))
 
     if pd.isna(lag_days):
-        price_action = "Auto update histori top saham, lalu perbarui snapshot pasar."
+        price_action = "Auto update kode prioritas, lalu tulis ulang snapshot pasar saat data tersedia."
         price_priority = "High"
     elif lag_days > 7 or price_coverage < 40:
-        price_action = "Auto update histori saham prioritas, lanjut perbarui snapshot pasar dari cache."
+        price_action = "Perluas cakupan auto update kode prioritas, lalu dashboard membaca snapshot/cache terbaru."
         price_priority = "High"
     elif lag_days > 3 or stale_rows > 0:
-        price_action = "Perbarui snapshot pasar dari cache; ambil histori baru hanya untuk kode prioritas."
+        price_action = "Biarkan auto update memperbarui kode prioritas; hindari fetch massal seluruh universe."
         price_priority = "Medium"
     else:
-        price_action = "Tidak perlu refresh massal; gunakan snapshot/cache."
+        price_action = "Tidak perlu pembaruan massal; dashboard cukup membaca snapshot/cache terbaru."
         price_priority = "Low"
 
     if fundamental_coverage < 60:
-        fundamental_action = "Update fundamental online saat trafik rendah, lalu simpan snapshot."
+        fundamental_action = "Update fundamental online secara terkontrol saat trafik rendah, lalu simpan snapshot."
         fundamental_priority = "Medium"
     else:
         fundamental_action = "Snapshot fundamental memadai; update hanya bila ada laporan keuangan baru."
@@ -1852,8 +1852,8 @@ def build_data_status_summary(freshness, session_status, source_label, full_univ
     freshness_label = clean_text(freshness.get("Freshness_Label"), "Unknown")
 
     if freshness_label == "Fresh":
-        market_action = "Pantau otomatis; tidak perlu refresh massal."
-    elif freshness_label == "Partial Coverage":
+        market_action = "Pantau otomatis; tidak perlu pembaruan massal."
+    elif freshness_label == "Coverage Parsial":
         market_action = "Data terbaru tersedia, tetapi coverage harga online/cache belum penuh. Auto update aktif akan menambah kode prioritas secara bertahap saat jam bursa."
     elif session_open:
         market_action = "Auto update aktif memprioritaskan saham utama saat interval jatuh tempo."
@@ -4924,7 +4924,7 @@ with st.sidebar:
         cache_status_sidebar = get_history_cache_status()
         st.caption(f"Cache histori: {len(cache_status_sidebar):,} file di `{HISTORY_CACHE_DIR}`")
         st.info(
-            "Auto update bersifat aktif bertahap: kode prioritas diperbarui otomatis saat bursa buka, lalu seluruh dashboard membaca snapshot/cache terbaru. Refresh massal semua kode tidak dijalankan tiap interval agar app tetap stabil dan tidak membebani provider."
+            "Auto update bersifat aktif bertahap: kode prioritas diperbarui otomatis saat bursa buka, lalu seluruh dashboard membaca snapshot/cache terbaru. Pembaruan massal semua kode tidak dijalankan tiap interval agar app tetap stabil dan tidak membebani provider."
         )
         auto_update_enabled = st.toggle(
             "Auto update saat bursa",
@@ -5711,7 +5711,7 @@ with tab_reco:
         with st.expander("Kalibrasi aksi akhir", expanded=False):
             st.caption(
             "Panel ini membantu mengecek apakah Aksi Akhir terlalu ketat atau terlalu longgar dibanding label Score. "
-                "Gunakan untuk audit metodologi, bukan untuk mengubah data secara manual."
+                "Gunakan untuk audit metodologi, bukan untuk mengubah data sumber dari dashboard."
             )
             calibration_cols = st.columns([1, 1])
             with calibration_cols[0]:
@@ -6453,7 +6453,7 @@ with tab_history:
         with workspace_cols[0]:
             shortlist_mode = st.segmented_control(
                 "Mode shortlist",
-                ["Top hasil filter", "Pilih manual"],
+                ["Top hasil filter", "Pilih sendiri"],
                 default="Top hasil filter",
                 help=HELP_TEXT["workspace_shortlist"],
             )
@@ -6467,7 +6467,7 @@ with tab_history:
                 help="Jumlah saham yang dibandingkan di Detail saham.",
             )
         default_shortlist = focus_codes[:shortlist_size]
-        if shortlist_mode == "Pilih manual":
+        if shortlist_mode == "Pilih sendiri":
             selected_focus_codes = st.multiselect(
                 "Shortlist saham",
                 focus_codes,
@@ -6556,7 +6556,7 @@ with tab_history:
                 with news_controls[1]:
                     news_limit = safe_slider("Jumlah berita", 3, 10, 5, step=1, help="Jumlah headline live untuk fokus detail. Lebih banyak berita bisa membuat tabel lebih panjang.")
                 with news_controls[2]:
-                    if st.button("Refresh berita", help="Hapus cache berita dan ambil ulang dari sumber live."):
+                    if st.button("Ambil ulang berita", help="Opsional: hapus cache berita untuk kode fokus dan ambil ulang dari sumber live. Berita tetap otomatis mengikuti saham fokus."):
                         fetch_yahoo_news.clear()
                 news_df, news_error, news_source = fetch_yahoo_news(
                     focus_code,
@@ -6808,7 +6808,7 @@ with tab_history:
         with tech_controls[2]:
             chart_style = st.segmented_control("Chart harga", ["Candlestick", "Line"], default="Candlestick")
 
-        load_technical = st.toggle("Tampilkan hasil analisis teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari refresh online sementara.")
+        load_technical = st.toggle("Tampilkan hasil analisis teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari pengambilan data online sementara.")
         show_auto_scan = st.toggle("Tampilkan ringkasan teknikal top kandidat", value=False, help="Opsional dan lebih berat: menghitung teknikal untuk maksimal 5 saham teratas dari hasil filter.")
         show_fibonacci = st.toggle("Tampilkan level Fibonacci", value=True, help=HELP_TEXT["fibonacci"])
         if not load_technical:
@@ -6881,7 +6881,7 @@ with tab_history:
             if tech_error:
                 st.warning(tech_error)
             if tech_history.empty:
-                st.info("Data OHLCV online/cache belum tersedia untuk teknikal. Coba periode lain atau refresh cache histori.")
+                st.info("Data OHLCV online/cache belum tersedia untuk teknikal. Coba periode lain atau biarkan auto update cache histori berjalan saat data tersedia.")
             else:
                 tech_history = build_technical_indicators(tech_history)
                 tech_history = add_astro_fibo_timing(add_fibonacci_confluence(tech_history))
@@ -7015,7 +7015,7 @@ with tab_history:
                             value=int(atr_stop_value) if pd.notna(atr_stop_value) and atr_stop_value > 0 else 0,
                             step=1,
                             format="%d",
-                            help="Isi 0 untuk memakai ATR_Stop_2x. Isi angka lain untuk skenario stop manual.",
+                            help="Isi 0 untuk memakai ATR_Stop_2x. Isi angka lain untuk skenario stop pilihan sendiri.",
                         )
 
                     stop_for_plan = stop_override if stop_override > 0 else atr_stop_value
@@ -7388,7 +7388,7 @@ with tab_history:
         with st.expander("Scan teknikal top saham", expanded=False):
             scan_cols = st.columns([1, 1, 1])
             with scan_cols[0]:
-                scan_n = safe_slider("Jumlah scan", 5, min(30, len(technical_codes)), min(10, len(technical_codes)), step=5, help="Scan manual agar app tidak lambat saat dibuka.")
+                scan_n = safe_slider("Jumlah scan", 5, min(30, len(technical_codes)), min(10, len(technical_codes)), step=5, help="Scan on-demand agar app tidak lambat saat dibuka.")
             with scan_cols[1]:
                 signal_filter = st.multiselect(
                     "Filter sinyal",
@@ -7629,7 +7629,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
     quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
 
     refresh_plan = build_refresh_plan(data_freshness, market_session_status)
-    with st.expander("Rencana refresh data", expanded=True):
+    with st.expander("Rencana auto update data", expanded=True):
         st.caption(
             f"Status aktif: {data_status['Freshness_Label']}; latest online {data_status['Latest_Online_Label']}; "
             f"coverage harga {data_status['Online_Price_Coverage_Label']}; fundamental online {data_status['Online_Fundamental_Coverage_Label']}."
@@ -7958,7 +7958,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
             2. Pakai snapshot repo `data_cache/market_snapshot_1y.csv` untuk startup cepat; status saat ini: **{data_status['Freshness_Label']}**.
             3. Pakai snapshot fundamental `data_cache/fundamental_snapshot.csv` agar rasio massal tidak selalu fetch live.
             4. Biarkan auto update memperbarui kode prioritas saat bursa buka; cakupan tetap dibatasi agar dashboard tidak berat.
-            5. Refresh snapshot fundamental online hanya saat perlu update rasio massal.
+            5. Update snapshot fundamental online secara terkontrol hanya saat perlu memperbarui rasio massal.
             6. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
             7. Buka `Audit sumber kode saham`, `Jumlah kode per sheet Excel`, dan `Kelengkapan kolom & sumber data` untuk memastikan fallback terlihat jelas.
             8. Update `Ringkasan.xlsx` hanya bila ada data offline yang lebih lengkap atau aturan scoring yang perlu diuji.
@@ -7979,7 +7979,7 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
         2. Gabungkan harga, volume, fundamental, histori, threshold, dan metadata sumber.
         3. Hitung Score fundamental, Clean Data, risk label, explainability, dan Final Action.
         4. Hitung teknikal hanya saat histori OHLCV tersedia untuk kode/periode yang dipilih.
-        5. Jalankan backtest/prediksi hanya saat diminta agar tidak berat saat dashboard dibuka.
+        5. Jalankan backtest/prediksi on-demand agar tidak berat saat dashboard dibuka.
 
         Score akhir memakai normalisasi percentile yang dipotong di persentil 3 dan 97 agar outlier ekstrem tidak mendominasi.
         Faktor bernilai lebih baik diberi percentile lebih tinggi; faktor valuasi/risiko yang lebih rendah diberi percentile terbalik.
@@ -8074,7 +8074,7 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
         },
         {
             "Modul": "Teknikal",
-            "Ketersediaan": "Manual per kode/periode",
+            "Ketersediaan": "On-demand per kode/periode",
             "Syarat": "OHLCV tersedia untuk periode teknikal.",
             "Fallback": "Jika kosong, UI menampilkan warning dan tidak membuat sinyal palsu.",
         },
@@ -8086,7 +8086,7 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
         },
         {
             "Modul": "Backtest & prediksi",
-            "Ketersediaan": "Manual",
+            "Ketersediaan": "On-demand",
             "Syarat": "Histori OHLCV cukup panjang dan event/sample historis tersedia.",
             "Fallback": "Menampilkan Low sample/kosong; tidak membuat probabilitas pengganti.",
         },
@@ -8167,7 +8167,7 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
     with st.expander("Catatan risiko"):
         st.markdown(
             """
-            Dashboard ini adalah alat screening kuantitatif awal. Hasil terbaik tetap perlu dicek manual:
+            Dashboard ini adalah alat screening kuantitatif awal. Hasil terbaik tetap perlu konfirmasi mandiri:
             laporan keuangan terbaru, aksi korporasi, kualitas manajemen, valuasi historis, berita material,
             dan rencana alokasi portofolio. Satu hari data harga juga tidak cukup untuk menyimpulkan tren jangka panjang.
             """
