@@ -1,0 +1,67 @@
+name: Update Bank Metrics Snapshot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 23 * * 0"
+
+permissions:
+  contents: write
+
+jobs:
+  update-bank-metrics:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install snapshot dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pandas>=2.2,<3" "openpyxl>=3.1,<4"
+
+      - name: Rebuild bank metrics snapshot
+        run: python tools/update_bank_metrics_snapshot.py
+
+      - name: Validate snapshot
+        run: |
+          python - <<'PY'
+          import pandas as pd
+          path = "data_cache/bank_metrics_snapshot.csv"
+          df = pd.read_csv(path)
+          required = {
+              "Kode",
+              "NIM",
+              "CAR",
+              "LDR",
+              "NPL",
+              "BOPO",
+              "CIR",
+              "LAR",
+              "Period",
+              "Bank_Metric_Source",
+              "Bank_Metric_Source_URL",
+              "Bank_Metric_Last_Update",
+              "Bank_Metric_Confidence",
+              "Bank_Metric_Notes",
+          }
+          missing = required.difference(df.columns)
+          if missing:
+              raise SystemExit(f"Missing columns: {sorted(missing)}")
+          if df["Kode"].duplicated().any():
+              raise SystemExit("Duplicate Kode found in bank metrics snapshot")
+          print(f"Validated {len(df):,} bank metric rows")
+          PY
+
+      - name: Commit snapshot changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Update bank metrics snapshot"
+          file_pattern: data_cache/bank_metrics_snapshot.csv

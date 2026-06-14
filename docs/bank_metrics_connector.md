@@ -23,6 +23,21 @@ python tools/update_bank_metrics_snapshot.py
 
 If no official/imported file is available, the script falls back to `Ringkasan.xlsx` and labels the rows as `Fallback`.
 
+## Scheduled Update
+
+GitHub Actions workflow:
+
+`.github/workflows/update-bank-metrics.yml`
+
+Schedule:
+
+- Weekly, Sunday 23:15 UTC.
+- Manual run via `workflow_dispatch`.
+
+The workflow rebuilds `data_cache/bank_metrics_snapshot.csv`, validates the schema, and commits only the snapshot when it changes.
+
+This schedule is intentionally weekly because bank-specific ratios are reporting-period metrics. They should not be refreshed like intraday price data.
+
 ## Accepted Columns
 
 Code columns can be named:
