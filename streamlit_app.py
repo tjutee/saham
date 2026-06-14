@@ -6630,6 +6630,16 @@ with tab_history:
                     st.caption("Layout seperti TradingView: candlestick di atas, indikator ditumpuk sebagai bar/ribbon di bawah dengan tanggal yang sama.")
 
                 price_panel = tech_history.copy()
+                price_columns = [column for column in ["Open", "High", "Low", "Close", "MA20", "MA50", "MA200"] if column in price_panel.columns]
+                price_values = price_panel[price_columns].apply(pd.to_numeric, errors="coerce").to_numpy().ravel() if price_columns else np.array([])
+                price_values = price_values[np.isfinite(price_values)]
+                if len(price_values):
+                    price_low = float(np.nanmin(price_values))
+                    price_high = float(np.nanmax(price_values))
+                    price_padding = max((price_high - price_low) * 0.08, price_high * 0.01, 1)
+                    price_axis_range = [max(0, price_low - price_padding), price_high + price_padding]
+                else:
+                    price_axis_range = None
                 stacked_panels = []
                 if show_ehlers_filter and {"Close", "Ehlers_Filter"}.issubset(price_panel.columns):
                     stacked_panels.append("ehlers")
@@ -6659,20 +6669,53 @@ with tab_history:
                             name="OHLC",
                             increasing_line_color="#15803d",
                             decreasing_line_color="#dc2626",
+                            increasing_fillcolor="#16a34a",
+                            decreasing_fillcolor="#ef4444",
+                            hovertemplate=(
+                                "Tanggal=%{x|%Y-%m-%d}<br>"
+                                "Open=%{open:,.0f}<br>High=%{high:,.0f}<br>"
+                                "Low=%{low:,.0f}<br>Close=%{close:,.0f}<extra>OHLC</extra>"
+                            ),
                         ),
                         row=1,
                         col=1,
                     )
                 else:
                     fig.add_trace(
-                        go.Scatter(x=price_panel["Date"], y=price_panel["Close"], mode="lines", name="Close", line=dict(color="#2563eb")),
+                        go.Scatter(
+                            x=price_panel["Date"],
+                            y=price_panel["Close"],
+                            mode="lines",
+                            name="Close",
+                            line=dict(color="#2563eb"),
+                            hovertemplate="Tanggal=%{x|%Y-%m-%d}<br>Close=%{y:,.0f}<extra>Close</extra>",
+                        ),
+                        row=1,
+                        col=1,
+                    )
+                latest_close_value = pd.to_numeric(latest_tech.get("Close"), errors="coerce")
+                if pd.notna(latest_close_value) and latest_close_value > 0:
+                    fig.add_hline(
+                        y=latest_close_value,
+                        line_dash="dash",
+                        line_color="#334155",
+                        line_width=1,
+                        annotation_text=f"Close {latest_close_value:,.0f}",
+                        annotation_position="right",
                         row=1,
                         col=1,
                     )
                 for ma_column, color in [("MA20", "#0891b2"), ("MA50", "#7c3aed"), ("MA200", "#475569")]:
                     if ma_column in price_panel.columns:
                         fig.add_trace(
-                            go.Scatter(x=price_panel["Date"], y=price_panel[ma_column], mode="lines", name=ma_column, line=dict(color=color, width=1.6)),
+                            go.Scatter(
+                                x=price_panel["Date"],
+                                y=price_panel[ma_column],
+                                mode="lines",
+                                name=ma_column,
+                                line=dict(color=color, width=1.5),
+                                hovertemplate=f"Tanggal=%{{x|%Y-%m-%d}}<br>{ma_column}=%{{y:,.0f}}<extra>{ma_column}</extra>",
+                            ),
                             row=1,
                             col=1,
                         )
@@ -6719,18 +6762,27 @@ with tab_history:
                                 y=ehlers_diff,
                                 name="Ehlers bar",
                                 marker_color=ehlers_colors,
-                                hovertemplate="Tanggal=%{x}<br>Close vs filter=%{y:.2f}%<extra>Ehlers</extra>",
+                                hovertemplate="Tanggal=%{x|%Y-%m-%d}<br>Close vs filter=%{y:.2f}%<extra>Ehlers</extra>",
                             ),
                             row=panel_index,
                             col=1,
                         )
                         fig.add_hline(y=0, line_color="#64748b", line_width=1, row=panel_index, col=1)
-                        fig.update_yaxes(title_text="Close vs filter %", zeroline=False, row=panel_index, col=1)
+                        ehlers_abs_max = pd.to_numeric(ehlers_diff, errors="coerce").abs().replace([np.inf, -np.inf], np.nan).max()
+                        ehlers_range = [-5, 5] if pd.isna(ehlers_abs_max) else [-max(2, ehlers_abs_max * 1.15), max(2, ehlers_abs_max * 1.15)]
+                        fig.update_yaxes(title_text="Ehlers %", range=ehlers_range, zeroline=False, row=panel_index, col=1)
                     if panel_name == "donchian":
                         ribbon_periods = [10, 20, 40, 80]
                         ribbon_rows = []
                         ribbon_labels = []
                         close_values = pd.to_numeric(price_panel["Close"], errors="coerce")
+                        state_labels = {
+                            2: "Strong up",
+                            1: "Above mid",
+                            0: "Neutral",
+                            -1: "Below mid",
+                            -2: "Strong down",
+                        }
                         for period in ribbon_periods:
                             mid_column = f"Donchian_Mid_{period}"
                             if mid_column not in price_panel.columns:
@@ -6750,11 +6802,14 @@ with tab_history:
                             ribbon_rows.append(state)
                             ribbon_labels.append(f"DC {period}")
                         if ribbon_rows:
+                            ribbon_matrix = np.vstack(ribbon_rows)
+                            ribbon_text = np.vectorize(lambda value: state_labels.get(int(value), "Neutral"))(ribbon_matrix)
                             fig.add_trace(
                                 go.Heatmap(
                                     x=price_panel["Date"],
                                     y=ribbon_labels,
-                                    z=np.vstack(ribbon_rows),
+                                    z=ribbon_matrix,
+                                    customdata=ribbon_text,
                                     colorscale=[
                                         [0.00, "#b91c1c"],
                                         [0.25, "#fca5a5"],
@@ -6766,21 +6821,49 @@ with tab_history:
                                     zmax=2,
                                     showscale=False,
                                     name="Donchian ribbon",
-                                    hovertemplate="Tanggal=%{x}<br>Layer=%{y}<br>State=%{z}<extra>Donchian</extra>",
+                                    hovertemplate="Tanggal=%{x|%Y-%m-%d}<br>Layer=%{y}<br>Status=%{customdata}<extra>Donchian</extra>",
                                 ),
                                 row=panel_index,
                                 col=1,
                             )
-                            fig.update_yaxes(title_text="Ribbon", row=panel_index, col=1)
+                            fig.update_yaxes(title_text="Ribbon", autorange="reversed", row=panel_index, col=1)
                 fig.update_layout(
                     title=f"{technical_code}: candlestick + Ehlers/Donchian stacked ({technical_period})",
                     height=560 + 120 * len(stacked_panels),
                     xaxis_rangeslider_visible=False,
+                    hovermode="x unified",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                     bargap=0,
-                    margin=dict(l=20, r=20, t=90, b=40),
+                    plot_bgcolor="#ffffff",
+                    paper_bgcolor="#ffffff",
+                    margin=dict(l=72, r=28, t=90, b=48),
                 )
-                fig.update_yaxes(title_text="Harga", row=1, col=1)
+                fig.update_yaxes(
+                    title_text="Harga (Rp)",
+                    range=price_axis_range,
+                    tickformat=",.0f",
+                    separatethousands=True,
+                    side="right",
+                    showgrid=True,
+                    gridcolor="#e5e7eb",
+                    zeroline=False,
+                    fixedrange=False,
+                    row=1,
+                    col=1,
+                )
+                for row_number in range(2, 2 + len(stacked_panels)):
+                    fig.update_yaxes(showgrid=True, gridcolor="#f1f5f9", zeroline=False, row=row_number, col=1)
+                fig.update_xaxes(
+                    showgrid=True,
+                    gridcolor="#f1f5f9",
+                    tickformat="%d %b\n%Y",
+                    nticks=8,
+                    showspikes=True,
+                    spikemode="across",
+                    spikesnap="cursor",
+                    spikecolor="#64748b",
+                    spikethickness=1,
+                )
                 fig.update_xaxes(title_text="Tanggal", row=1 + len(stacked_panels), col=1)
                 show_chart(fig)
 
