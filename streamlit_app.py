@@ -184,11 +184,10 @@ BANKING_THRESHOLDS = {
     "PBV": ("<=", 3.0),
     "ROE": (">=", 12.0),
     "ROA": (">=", 1.0),
-    "DER": ("<=", 1.5),
     "NPM": (">=", 7.0),
     "NIM": (">=", 3.5),
     "CAR": (">=", 15.0),
-    "LDR": (">=", 75.0),
+    "LDR": ("between", (75.0, 100.0)),
     "NPL": ("<=", 3.5),
     "BOPO": ("<=", 80.0),
     "CIR": ("<=", 65.0),
@@ -242,9 +241,9 @@ HELP_TEXT = {
     "npm": "NPM = laba bersih / pendapatan. Semakin tinggi berarti margin laba bersih lebih kuat; nilai negatif menunjukkan rugi bersih.",
     "der": "DER = total utang / ekuitas. Untuk non-bank, makin rendah umumnya lebih konservatif. Untuk bank, DER tidak otomatis buruk sehingga default tidak diterapkan ke Banking.",
     "score": "Score akhir = rata-rata tertimbang Valuasi, Kualitas, Risiko, Likuiditas, Momentum, dan Indeks, lalu dikurangi Penalty dan dibatasi 0-100.",
-    "threshold_source": "Sumber aturan threshold. Auto memakai Banking untuk saham bank dan NonBank untuk saham selain bank; pilihan NonBank/Banking menerapkan satu set aturan ke semua saham.",
+    "threshold_source": "Sumber aturan threshold. Auto memakai Banking untuk saham bank dan NonBank untuk saham selain bank; Banking memakai rasio bank seperti CAR, NPL, BOPO, NIM, dan LDR, bukan DER default.",
     "threshold_ratio": "Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable x 100. Rasio yang kolomnya ada tetapi nilainya kosong/tidak memenuhi batas dihitung tidak lolos.",
-    "core_thresholds": "Jika aktif, saham wajib memenuhi inti konservatif: PER <= 15, PBV <= 3, ROE >= 12%, dan NPM >= 7%. Ini tambahan di luar slider umum.",
+    "core_thresholds": "Jika aktif, saham wajib memenuhi inti konservatif umum: PER <= 15, PBV <= 3, ROE >= 12%, dan NPM >= 7%. Ini filter tambahan, bukan aturan universal semua sektor.",
     "der_banking": "Jika aktif, filter DER maksimum juga diterapkan ke saham Banking. Default mati karena struktur neraca bank berbeda dari non-bank.",
     "history_source": "Online yfinance memakai ticker KODE.JK dan menjadi sumber utama grafik histori. Excel Metrik hanya mode pembanding/cadangan bila data online kosong.",
     "fundamental_source": "Fundamental diprioritaskan dari TradingView scanner bila tersedia, lalu Excel mengisi rasio/metadata yang kosong. Sumber BEI/IDX tetap utama untuk universe kode saham.",
@@ -4432,7 +4431,72 @@ def threshold_pass(value, operator, threshold):
         return value <= threshold
     if operator == ">=":
         return value >= threshold
+    if operator == "between":
+        lower, upper = threshold
+        return lower <= value <= upper
     return False
+
+
+def format_threshold_rule(operator, threshold):
+    if operator == "between":
+        lower, upper = threshold
+        return f"{lower:g} - {upper:g}"
+    return f"{operator} {threshold:g}"
+
+
+def build_threshold_review_table():
+    return pd.DataFrame(
+        [
+            {
+                "Area": "NonBank",
+                "Metric": "PER <= 15",
+                "Status": "Konservatif",
+                "Catatan": "Layak sebagai filter value awal, tetapi tetap dibandingkan dengan sektor dan pertumbuhan laba.",
+            },
+            {
+                "Area": "NonBank",
+                "Metric": "PBV <= 3",
+                "Status": "Konservatif",
+                "Catatan": "Berguna untuk aset berwujud; bisa kurang adil untuk bisnis asset-light.",
+            },
+            {
+                "Area": "NonBank",
+                "Metric": "ROE >= 12, ROA >= 7, NPM >= 7",
+                "Status": "Kualitas",
+                "Catatan": "Menjaga profitabilitas, tetapi ROE harus dibaca bersama DER agar tidak bias leverage.",
+            },
+            {
+                "Area": "NonBank",
+                "Metric": "DER <= 1.5",
+                "Status": "Risiko",
+                "Catatan": "Cocok untuk non-bank sebagai kontrol leverage; tidak dipakai default untuk bank.",
+            },
+            {
+                "Area": "Banking",
+                "Metric": "CAR >= 15",
+                "Status": "Konservatif",
+                "Catatan": "Capital buffer bank, dipakai bersama kualitas aset dan efisiensi.",
+            },
+            {
+                "Area": "Banking",
+                "Metric": "NPL <= 3.5, BOPO <= 80",
+                "Status": "Kualitas aset & efisiensi",
+                "Catatan": "Selaras dengan risk flag: risiko naik saat NPL/BOPO makin tinggi.",
+            },
+            {
+                "Area": "Banking",
+                "Metric": "LDR 75 - 100",
+                "Status": "Rentang sehat",
+                "Catatan": "LDR terlalu rendah bisa kurang produktif; terlalu tinggi menaikkan risiko likuiditas.",
+            },
+            {
+                "Area": "Banking",
+                "Metric": "NIM >= 3.5, CIR <= 65, LAR <= 11",
+                "Status": "Bank-specific",
+                "Catatan": "Dipakai hanya jika kolom tersedia agar threshold tidak memaksa data kosong.",
+            },
+        ]
+    )
 
 
 def apply_threshold_profile(df_input, forced_mode=None):
@@ -8442,19 +8506,24 @@ with tab_method.expander("Metodologi dan formula", expanded=False):
 
     threshold_info = pd.DataFrame(
         [
-            {"Mode": "NonBank", "Metric": metric, "Rule": f"{operator} {threshold:g}"}
+            {"Mode": "NonBank", "Metric": metric, "Rule": format_threshold_rule(operator, threshold)}
             for metric, (operator, threshold) in NONBANK_THRESHOLDS.items()
         ]
         + [
-            {"Mode": "Banking", "Metric": metric, "Rule": f"{operator} {threshold:g}"}
+            {"Mode": "Banking", "Metric": metric, "Rule": format_threshold_rule(operator, threshold)}
             for metric, (operator, threshold) in BANKING_THRESHOLDS.items()
         ]
     )
     threshold_mode_view = st.segmented_control("Tampilkan threshold", ["Semua", "NonBank", "Banking"], default="Semua")
     if threshold_mode_view != "Semua":
         threshold_info = threshold_info[threshold_info["Mode"] == threshold_mode_view]
-    st.write("Threshold aktif dari sheet:")
+    st.write("Threshold aktif untuk profil screening:")
     show_table(threshold_info, hide_index=True)
+    with st.expander("Audit threshold vs best practice"):
+        st.caption(
+            "Threshold dipakai sebagai filter konservatif awal. Penilaian akhir tetap memakai score tertimbang, sektor, kualitas data, risiko, dan konteks harga."
+        )
+        show_table(build_threshold_review_table(), hide_index=True)
 
     penalty_info = pd.DataFrame(
         [
