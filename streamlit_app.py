@@ -5605,69 +5605,60 @@ with tab_summary:
 
         show_summary_charts = st.toggle("Tampilkan grafik distribusi dan sumber data", value=False)
         if show_summary_charts:
-            chart_cols = st.columns([1, 1])
-            with chart_cols[0]:
-                reco_counts = summary_chart_data["Recommendation"].value_counts().reindex(["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"]).dropna().reset_index()
-                reco_counts.columns = ["Recommendation", "Jumlah"]
-                fig = px.bar(
-                    reco_counts,
-                    x="Recommendation",
-                    y="Jumlah",
-                    color="Recommendation",
-                    title="Distribusi rekomendasi",
-                    color_discrete_map=RECOMMENDATION_COLORS,
+            distribution_frames = []
+            distribution_specs = [
+                ("Recommendation", "Rekomendasi", ["Strong Buy", "Buy", "Watchlist", "Speculative", "Avoid"]),
+                (
+                    "Final_Action",
+                    "Final Action",
+                    ["Accumulate Candidate", "Wait Market Confirmation", "Watchlist", "Speculative Monitor", "Avoid / Review"],
+                ),
+                ("Risk_Level", "Risiko", ["Low", "Medium", "High"]),
+            ]
+            for column, area, order in distribution_specs:
+                counts = summary_chart_data[column].value_counts().reindex(order).dropna().reset_index()
+                counts.columns = ["Label", "Jumlah"]
+                counts["Area"] = area
+                distribution_frames.append(counts)
+            source_mix = build_source_mix(summary_chart_data)
+            source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Bank_Metric_Source", "Universe_Diff_Status"])].copy()
+            if not source_view.empty:
+                source_view = source_view.rename(columns={"Nilai": "Label"})
+                source_view["Area"] = source_view["Area"].replace(
+                    {
+                        "Price_Source": "Sumber harga",
+                        "Fundamental_Source": "Sumber fundamental",
+                        "Bank_Metric_Source": "Sumber metrik bank",
+                        "Universe_Diff_Status": "Status kode",
+                    }
                 )
-                fig.update_layout(height=330, showlegend=False, margin=dict(l=20, r=20, t=60, b=40))
-                show_chart(fig)
-            with chart_cols[1]:
-                final_counts = summary_chart_data["Final_Action"].value_counts().reindex(
-                    ["Accumulate Candidate", "Wait Market Confirmation", "Watchlist", "Speculative Monitor", "Avoid / Review"]
-                ).dropna().reset_index()
-                final_counts.columns = ["Final_Action", "Jumlah"]
+                distribution_frames.append(source_view[["Area", "Label", "Jumlah"]])
+            if distribution_frames:
+                distribution_view = pd.concat(distribution_frames, ignore_index=True)
+                distribution_view["Total"] = distribution_view.groupby("Area")["Jumlah"].transform("sum")
+                distribution_view["Persen"] = np.where(
+                    distribution_view["Total"].gt(0),
+                    distribution_view["Jumlah"] / distribution_view["Total"] * 100,
+                    0,
+                )
+                distribution_view["Item"] = distribution_view["Area"] + " | " + distribution_view["Label"].astype(str)
+                distribution_view = distribution_view.sort_values(["Area", "Persen"], ascending=[True, True])
                 fig = px.bar(
-                    final_counts,
-                    x="Jumlah",
-                    y="Final_Action",
-                    color="Final_Action",
+                    distribution_view,
+                    x="Persen",
+                    y="Item",
+                    color="Area",
                     orientation="h",
-                    title="Distribusi final action",
-                    color_discrete_map=FINAL_ACTION_COLORS,
+                    text="Jumlah",
+                    title="Distribusi ringkasan dalam skala yang sama",
+                    color_discrete_sequence=["#2563eb", "#7c3aed", "#0f766e", "#ca8a04", "#64748b", "#db2777", "#15803d"],
                 )
-                fig.update_layout(height=330, showlegend=False, xaxis_title="Jumlah", yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                fig.update_traces(texttemplate="%{text:,}", textposition="outside", cliponaxis=False)
+                fig.update_xaxes(range=[0, 100], title="Porsi dalam area (%)", ticksuffix="%")
+                fig.update_layout(height=max(420, 26 * len(distribution_view)), yaxis_title="", legend_title_text="Area", margin=dict(l=20, r=80, t=60, b=40))
                 show_chart(fig)
-
-            chart_cols = st.columns([1, 1])
-            with chart_cols[0]:
-                risk_counts = summary_chart_data["Risk_Level"].value_counts().reindex(["Low", "Medium", "High"]).dropna().reset_index()
-                risk_counts.columns = ["Risk_Level", "Jumlah"]
-                fig = px.pie(
-                    risk_counts,
-                    names="Risk_Level",
-                    values="Jumlah",
-                    hole=0.45,
-                    title="Komposisi risiko",
-                    color="Risk_Level",
-                    color_discrete_map=RISK_COLORS,
-                )
-                fig.update_layout(height=330, margin=dict(l=20, r=20, t=60, b=40))
-                show_chart(fig)
-            with chart_cols[1]:
-                source_mix = build_source_mix(summary_chart_data)
-                source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Bank_Metric_Source", "Universe_Diff_Status"])].copy()
-                if source_view.empty:
-                    st.info("Ringkasan sumber data belum tersedia.")
-                else:
-                    fig = px.bar(
-                        source_view,
-                        x="Jumlah",
-                        y="Nilai",
-                        color="Area",
-                        orientation="h",
-                        title="Sumber harga & status kode",
-                        color_discrete_map=SOURCE_COLORS,
-                    )
-                    fig.update_layout(height=330, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
-                    show_chart(fig)
+            else:
+                st.info("Ringkasan distribusi belum tersedia.")
 
         st.write("Top kandidat")
         top_summary_columns = [
@@ -7421,7 +7412,7 @@ with tab_history:
                 with indicator_cols[3]:
                     show_planet_sine_chart = st.toggle("Planet sinusoidal", value=False, help=HELP_TEXT["astro_fibo"])
                 with indicator_cols[4]:
-                    st.caption("Layout seperti TradingView: candlestick di atas, indikator ditumpuk sebagai bar/ribbon di bawah dengan tanggal yang sama.")
+                    st.caption("Candlestick di atas; panel indikator di bawah memakai skala sinyal seragam -100 sampai +100 agar mudah dibandingkan.")
 
                 price_panel = tech_history.copy()
                 price_columns = [column for column in ["Open", "High", "Low", "Close", "MA20", "MA50", "MA200"] if column in price_panel.columns]
@@ -7574,6 +7565,7 @@ with tab_history:
                             (pd.to_numeric(price_panel["Close"], errors="coerce") / pd.to_numeric(price_panel["Ehlers_Filter"], errors="coerce") - 1)
                             * 100
                         ).replace([np.inf, -np.inf], np.nan)
+                        ehlers_signal_value = (ehlers_diff / 5 * 100).clip(-100, 100)
                         ehlers_signal = price_panel.get("Ehlers_Filter_Signal", pd.Series("Neutral", index=price_panel.index)).astype(str)
                         ehlers_colors = ehlers_signal.map(
                             {
@@ -7586,76 +7578,59 @@ with tab_history:
                         fig.add_trace(
                             go.Bar(
                                 x=price_panel["Date"],
-                                y=ehlers_diff,
-                                name="Ehlers bar",
+                                y=ehlers_signal_value,
+                                name="Ehlers signal",
                                 marker_color=ehlers_colors,
-                                hovertemplate="Tanggal=%{x|%Y-%m-%d}<br>Close vs filter=%{y:.2f}%<extra>Ehlers</extra>",
+                                showlegend=False,
+                                customdata=np.stack([ehlers_diff.round(2).astype(str).to_numpy(), ehlers_signal.to_numpy()], axis=-1),
+                                hovertemplate=(
+                                    "Tanggal=%{x|%Y-%m-%d}<br>"
+                                    "Signal=%{y:.1f}<br>"
+                                    "Close vs filter=%{customdata[0]}%<br>"
+                                    "Status=%{customdata[1]}<extra>Ehlers</extra>"
+                                ),
                             ),
                             row=panel_index,
                             col=1,
                         )
                         fig.add_hline(y=0, line_color="#64748b", line_width=1, row=panel_index, col=1)
-                        ehlers_abs_max = pd.to_numeric(ehlers_diff, errors="coerce").abs().replace([np.inf, -np.inf], np.nan).max()
-                        ehlers_range = [-5, 5] if pd.isna(ehlers_abs_max) else [-max(2, ehlers_abs_max * 1.15), max(2, ehlers_abs_max * 1.15)]
-                        fig.update_yaxes(title_text="Ehlers %", range=ehlers_range, zeroline=False, row=panel_index, col=1)
+                        fig.update_yaxes(title_text="Signal", range=[-105, 105], zeroline=False, row=panel_index, col=1)
                     if panel_name == "donchian":
-                        ribbon_periods = [10, 20, 40, 80]
-                        ribbon_rows = []
-                        ribbon_labels = []
-                        close_values = pd.to_numeric(price_panel["Close"], errors="coerce")
-                        state_labels = {
-                            2: "Strong up",
-                            1: "Above mid",
-                            0: "Neutral",
-                            -1: "Below mid",
-                            -2: "Strong down",
-                        }
-                        for period in ribbon_periods:
-                            mid_column = f"Donchian_Mid_{period}"
-                            if mid_column not in price_panel.columns:
-                                continue
-                            mid_values = pd.to_numeric(price_panel[mid_column], errors="coerce")
-                            slope = mid_values.diff()
-                            state = np.select(
-                                [
-                                    close_values.gt(mid_values) & slope.ge(0),
-                                    close_values.lt(mid_values) & slope.le(0),
-                                    close_values.gt(mid_values),
-                                    close_values.lt(mid_values),
-                                ],
-                                [2, -2, 1, -1],
-                                default=0,
-                            )
-                            ribbon_rows.append(state)
-                            ribbon_labels.append(f"DC {period}")
-                        if ribbon_rows:
-                            ribbon_matrix = np.vstack(ribbon_rows)
-                            ribbon_text = np.vectorize(lambda value: state_labels.get(int(value), "Neutral"))(ribbon_matrix)
-                            fig.add_trace(
-                                go.Heatmap(
-                                    x=price_panel["Date"],
-                                    y=ribbon_labels,
-                                    z=ribbon_matrix,
-                                    customdata=ribbon_text,
-                                    colorscale=[
-                                        [0.00, "#b91c1c"],
-                                        [0.25, "#fca5a5"],
-                                        [0.50, "#e5e7eb"],
-                                        [0.75, "#86efac"],
-                                        [1.00, "#15803d"],
-                                    ],
-                                    zmin=-2,
-                                    zmax=2,
-                                    showscale=False,
-                                    name="Donchian ribbon",
-                                    hovertemplate="Tanggal=%{x|%Y-%m-%d}<br>Layer=%{y}<br>Status=%{customdata}<extra>Donchian</extra>",
+                        donchian_score = pd.to_numeric(price_panel["Donchian_Ribbon_Score"], errors="coerce").fillna(50)
+                        donchian_signal_value = ((donchian_score - 50) * 2).clip(-100, 100)
+                        donchian_trend = price_panel.get("Donchian_Ribbon_Trend", pd.Series("Neutral", index=price_panel.index)).astype(str)
+                        donchian_colors = donchian_trend.map(
+                            {
+                                "Strong Uptrend": "#15803d",
+                                "Uptrend": "#86efac",
+                                "Neutral": "#e5e7eb",
+                                "Downtrend": "#fca5a5",
+                                "Strong Downtrend": "#b91c1c",
+                            }
+                        ).fillna("#cbd5e1")
+                        fig.add_trace(
+                            go.Bar(
+                                x=price_panel["Date"],
+                                y=donchian_signal_value,
+                                name="Donchian signal",
+                                marker_color=donchian_colors,
+                                showlegend=False,
+                                customdata=np.stack([donchian_score.round(1).astype(str).to_numpy(), donchian_trend.to_numpy()], axis=-1),
+                                hovertemplate=(
+                                    "Tanggal=%{x|%Y-%m-%d}<br>"
+                                    "Signal=%{y:.1f}<br>"
+                                    "Ribbon score=%{customdata[0]}<br>"
+                                    "Trend=%{customdata[1]}<extra>Donchian</extra>"
                                 ),
-                                row=panel_index,
-                                col=1,
-                            )
-                            fig.update_yaxes(title_text="Ribbon", autorange="reversed", row=panel_index, col=1)
+                            ),
+                            row=panel_index,
+                            col=1,
+                        )
+                        fig.add_hline(y=0, line_color="#64748b", line_width=1, row=panel_index, col=1)
+                        fig.update_yaxes(title_text="Signal", range=[-105, 105], zeroline=False, row=panel_index, col=1)
                     if panel_name == "astro":
                         astro_score = pd.to_numeric(price_panel["Astro_Fibo_Timing_Score"], errors="coerce").fillna(0)
+                        astro_signal_value = ((astro_score - 50) * 2).clip(-100, 100)
                         astro_bias = price_panel.get("Astro_Fibo_Bias", pd.Series("Neutral", index=price_panel.index)).astype(str)
                         astro_window = price_panel.get("Time_Window", pd.Series("-", index=price_panel.index)).astype(str)
                         astro_colors = astro_bias.map(
@@ -7679,13 +7654,14 @@ with tab_history:
                         fig.add_trace(
                             go.Bar(
                                 x=price_panel["Date"],
-                                y=astro_score,
-                                name="Astro-Fibo bar",
+                                y=astro_signal_value,
+                                name="Astro-Fibo signal",
                                 marker_color=astro_colors,
+                                showlegend=False,
                                 customdata=astro_custom,
                                 hovertemplate=(
                                     "Tanggal=%{x|%Y-%m-%d}<br>"
-                                    "Score=%{y:.1f}<br>"
+                                    "Signal=%{y:.1f}<br>"
                                     "Bias=%{customdata[0]}<br>"
                                     "Window=%{customdata[1]}<br>"
                                     "Moon=%{customdata[2]}<br>"
@@ -7695,16 +7671,16 @@ with tab_history:
                             row=panel_index,
                             col=1,
                         )
-                        fig.add_hline(y=55, line_color="#94a3b8", line_dash="dash", line_width=1, row=panel_index, col=1)
-                        fig.add_hline(y=75, line_color="#ca8a04", line_dash="dash", line_width=1, row=panel_index, col=1)
-                        fig.update_yaxes(title_text="Astro", range=[0, 100], zeroline=False, row=panel_index, col=1)
+                        fig.add_hline(y=0, line_color="#64748b", line_width=1, row=panel_index, col=1)
+                        fig.add_hline(y=50, line_color="#ca8a04", line_dash="dash", line_width=1, row=panel_index, col=1)
+                        fig.update_yaxes(title_text="Signal", range=[-105, 105], zeroline=False, row=panel_index, col=1)
                     if panel_name == "planet_sine":
                         for body in ASTRO_SINE_BODIES:
                             longitude_column = f"{body}_Longitude"
                             if longitude_column not in price_panel.columns:
                                 continue
                             longitude_values = pd.to_numeric(price_panel[longitude_column], errors="coerce")
-                            sine_values = np.sin(np.deg2rad(longitude_values))
+                            sine_values = np.sin(np.deg2rad(longitude_values)) * 100
                             if pd.Series(sine_values).notna().sum() < 2:
                                 continue
                             sign_values = (
@@ -7735,7 +7711,7 @@ with tab_history:
                                     customdata=customdata,
                                     hovertemplate=(
                                         "Tanggal=%{x|%Y-%m-%d}<br>"
-                                        f"{body} sin=%{{y:.2f}}<br>"
+                                        f"{body} sin=%{{y:.1f}}<br>"
                                         "Longitude=%{customdata[0]} deg<br>"
                                         "Sign=%{customdata[1]}<br>"
                                         "Window=%{customdata[2]}<extra></extra>"
@@ -7745,7 +7721,7 @@ with tab_history:
                                 col=1,
                             )
                         fig.add_hline(y=0, line_color="#94a3b8", line_width=1, row=panel_index, col=1)
-                        fig.update_yaxes(title_text="Sine", range=[-1.1, 1.1], zeroline=False, row=panel_index, col=1)
+                        fig.update_yaxes(title_text="Signal", range=[-105, 105], zeroline=False, row=panel_index, col=1)
                 fig.update_layout(
                     title=f"{technical_code}: candlestick + stacked technical & Astro-Fibo cycles ({technical_period})",
                     height=560 + 120 * len(stacked_panels),
