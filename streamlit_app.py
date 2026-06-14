@@ -7638,34 +7638,51 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
         cache histori, atau fallback Excel yang ditandai sumbernya; tidak ada data dummy/acak yang dibuat untuk menggantikan
         data asli. Jika data asli tidak tersedia, status fallback/unavailable tetap ditampilkan agar keputusan bisa diaudit.
 
+        Urutan kerja dashboard:
+        1. Ambil universe kode dari BEI/IDX official bila tersedia, lalu fallback online/Excel.
+        2. Gabungkan harga, volume, fundamental, histori, threshold, dan metadata sumber.
+        3. Hitung Score fundamental, Clean Data, risk label, explainability, dan Final Action.
+        4. Hitung teknikal hanya saat histori OHLCV tersedia untuk kode/periode yang dipilih.
+        5. Jalankan backtest/prediksi hanya lewat tombol manual agar tidak berat saat dashboard dibuka.
+
         Score akhir memakai normalisasi percentile yang dipotong di persentil 3 dan 97 agar outlier ekstrem tidak mendominasi.
+        Faktor bernilai lebih baik diberi percentile lebih tinggi; faktor valuasi/risiko yang lebih rendah diberi percentile terbalik.
 
         Faktor yang dihitung:
-        - Valuasi: PER rendah dan PBV rendah, hanya untuk nilai positif yang masuk akal.
-        - Kualitas profit: ROE, ROA, dan NPM positif.
-        - Risiko: non-bank memakai DER rendah dan intraday range rendah; Banking memakai CAR, NPL, BOPO, dan LDR bila tersedia.
-        - Likuiditas: volume dan turnover harga x volume.
-        - Momentum: kombinasi histori online 4, 13, 26, 52 minggu dan perubahan harga harian yang tidak ekstrem, dengan Excel Metrik sebagai fallback.
-        - Kekuatan indeks: nilai kolom Sigma i >= 7 dari Excel bila tersedia, atau jumlah indeks/tempat kemunculan dari fallback; bila hanya universe BEI/IDX tersedia, minimal dihitung sebagai saham listed.
-        - Relatif sektor: PER/PBV dan ROE/ROA/NPM dibanding saham lain dalam sektor yang sama agar valuasi tidak dibaca terlalu absolut lintas sektor.
-        - Threshold sheet: rasio dibandingkan dengan batas dari sheet NonBank atau Banking sebagai cadangan metodologi fundamental.
+        - Valuasi = PER Score 58% + PBV Score 42%; hanya PER/PBV positif yang dinilai.
+        - Kualitas profit = ROE 45% + ROA 30% + NPM 25%; hanya nilai profit positif yang dinilai.
+        - Risiko non-bank = DER 72% + intraday range 28%; Banking memakai CAR 30% + NPL 30% + BOPO 25% + LDR 15%.
+        - Likuiditas = volume 55% + turnover 45%, dengan turnover = penutupan x volume.
+        - Momentum = histori 60% + trend harian target-range 20% + percentile perubahan harian 20%.
+        - History Momentum = Return 4W 25% + 13W 30% + 26W 25% + 52W 20%.
+        - Kekuatan indeks = percentile Index_Count bila tersedia.
+        - Score = weighted average faktor aktif sesuai profil scoring - penalty, lalu dibatasi 0 sampai 100.
+        - Relatif sektor terpisah dari Score utama: valuasi sektor 45% + kualitas sektor 40% + likuiditas 15%.
+        - Threshold sheet menjadi audit/filter fundamental; tidak mengganti Score, tetapi memengaruhi Clean Data dan Final Action.
 
         Penalti diterapkan untuk PER/PBV negatif, profitabilitas negatif, NPM negatif, volume rendah, harga nol, pergerakan harian ekstrem, dan kelulusan threshold yang terlalu rendah.
+        Clean Data mensyaratkan kode valid, harga > 0, volume >= 10 juta, PER/PBV masuk rentang wajar, ROE >= 5%, NPM >= 0, threshold >= 55%, risiko tidak High, penalti <= 10, dan metrik bank/non-bank wajib tersedia sesuai mode.
 
         Layer teknikal terpisah dari Score fundamental:
         - MA20/50/200 memakai simple moving average dari harga penutupan.
         - RSI14 memakai pendekatan 14 periode J. Welles Wilder untuk membaca momentum relatif.
         - MACD memakai selisih EMA12 dan EMA26, dengan EMA9 sebagai signal line.
         - ATR14 memakai rata-rata true range 14 periode sebagai ukuran volatilitas.
-        - Ehlers-style Auto Tune Filter memperkirakan dominant cycle dari autocorrelation rolling, lalu memakai periode tersebut untuk smoothing adaptif.
-        - Donchian Trend Ribbon memakai beberapa middle channel Donchian 10/20/40/80 untuk membaca apakah tren konsisten di banyak horizon.
-        - Technical Score memakai trend MA20/50/200, RSI, MACD, volume ratio, ATR, Ehlers Filter, dan Donchian Ribbon.
+        - Ehlers-style Auto Tune Filter memperkirakan dominant cycle 10-48 hari dari autocorrelation rolling, lalu memakai periode tersebut untuk smoothing adaptif.
+        - Donchian Trend Ribbon memakai middle channel Donchian 10/20/40/80; score 0-100 berasal dari jumlah layer bullish minus bearish.
+        - Technical Score = Trend 25% + RSI 15% + MACD 15% + Volume 10% + Volatility 10% + Ehlers 10% + Donchian 15%.
         - Entry Action dipakai untuk calon pembelian: fundamental menjadi gerbang awal, teknikal menentukan timing.
         - Position Action dipakai untuk saham yang sudah dimiliki: Hold, Add on Pullback, Review Position, Tight Stop, Take Profit, Reduce, atau Exit / Sell.
         - Tidak ada harga beli pribadi yang dipakai; sinyal posisi adalah arahan umum berbasis data pasar terbaru.
         - ATR Stop 2x adalah zona risiko teknikal berbasis volatilitas, bukan instruksi order otomatis.
-        - Fibonacci Confluence membaca area support/resistance dari swing high-low periode teknikal. Ini bukan prediksi pasti dan harus dibaca bersama trend, RSI/MACD, volume, serta backtest.
-        - Astro-Fibo Timing memakai jendela waktu Fibonacci, fase Bulan, Sun cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn dari JPL DE421 via Skyfield, Fibo score, dan technical score. Ini bukan formula proprietary Astronacci dan bukan ramalan pasti.
+        - Fibonacci Confluence membaca swing high-low periode teknikal, retracement, extension, jarak harga ke level terdekat, zona, trend, dan RSI.
+        - Astro-Fibo Timing memakai jendela waktu Fibonacci 5/8/13/21/34/55/89/144 hari dari swing terakhir, fase Bulan sederhana, Sun ingress/zodiac cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn terhadap Sun dari JPL DE421 via Skyfield, Fibo score, technical score, dan trend.
+        - Astro-Fibo adalah heuristik transparan yang terinspirasi pendekatan astro-cycle/Fibonacci, bukan formula proprietary Astronacci dan bukan ramalan pasti. Jika `de421.bsp` atau Skyfield tidak tersedia, komponen planet diberi status unavailable dan tidak disamarkan.
+
+        Validasi:
+        - Backtest event-based mengambil hari pertama sinyal muncul, lalu menghitung Return nD = Close(t+n) / Close(t) - 1, ditampilkan dalam persen.
+        - Walk-forward memakai urutan waktu event, bukan random split.
+        - Prediksi probabilistik mencari setup historis yang mirip berdasarkan Technical Signal, Fibo Zone, Technical Score, RSI, jarak Fibo, dan Astro-Fibo bila sampel cukup.
 
         Explainability:
         - Decision Summary merangkum rekomendasi, posisi relatif sektor, dan risiko.
@@ -7675,6 +7692,8 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
 
         Referensi:
         - Data harga/histori: yfinance, pandas-datareader, cache repo, dan fallback Excel.
+        - Universe kode: BEI/IDX official bila tersedia; TradingView/StockAnalysis/Excel hanya fallback transparan.
+        - Fundamental online: TradingView scanner dan snapshot repo; Excel fallback bila field online kosong.
         - RSI/ATR: J. Welles Wilder Jr., New Concepts in Technical Trading Systems.
         - MACD: Gerald Appel, Moving Average Convergence/Divergence.
         - Ehlers adaptive filter: John F. Ehlers, cycle/dominant-cycle based digital signal processing concepts; implementasi dashboard memakai autocorrelation rolling yang transparan, bukan formula proprietary.
@@ -7692,6 +7711,47 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
     method_cols[2].metric("Duplikasi indeks dibersihkan", f"{len(raw_df) - len(df):,}")
     method_cols[3].metric("Histori 52W tersedia", f"{df['Return_52W'].notna().sum():,}")
     method_cols[4].metric("Update data", data_update_label)
+
+    availability_rows = [
+        {
+            "Modul": "Universe kode",
+            "Availability": data_freshness.get("Universe_Label", "Aktif") if isinstance(data_freshness, dict) else "Aktif",
+            "Syarat": "BEI/IDX official atau fallback online/Excel tersedia.",
+            "Fallback": clean_text(raw_df.attrs.get("universe_error"), "Fallback hanya muncul bila sumber utama gagal."),
+        },
+        {
+            "Modul": "Harga & histori",
+            "Availability": clean_text(data_freshness.get("Freshness_Label")),
+            "Syarat": "Snapshot/cache/yfinance/pandas-datareader punya OHLCV.",
+            "Fallback": "Excel Metrik dipakai untuk ringkasan return saat OHLCV online/cache kosong.",
+        },
+        {
+            "Modul": "Fundamental",
+            "Availability": f"Online {format_percent(data_freshness.get('Online_Fundamental_Coverage_%'), 0)}",
+            "Syarat": "TradingView scanner/snapshot repo berisi rasio fundamental.",
+            "Fallback": "Excel fallback mengisi field yang kosong dan tetap diberi label sumber.",
+        },
+        {
+            "Modul": "Teknikal",
+            "Availability": "Manual per kode/periode",
+            "Syarat": "OHLCV tersedia untuk periode teknikal.",
+            "Fallback": "Jika kosong, UI menampilkan warning dan tidak membuat sinyal palsu.",
+        },
+        {
+            "Modul": "Ephemeris planet",
+            "Availability": "Tersedia" if Path(EPHEMERIS_FILE).exists() else "Unavailable",
+            "Syarat": "`de421.bsp` tersedia dan Skyfield bisa membaca JPL DE421.",
+            "Fallback": "Planetary score = 0 dan status `Ephemeris unavailable` bila gagal.",
+        },
+        {
+            "Modul": "Backtest & prediksi",
+            "Availability": "Manual trigger",
+            "Syarat": "Histori OHLCV cukup panjang dan event/sample historis tersedia.",
+            "Fallback": "Menampilkan Low sample/kosong; tidak membuat probabilitas dummy.",
+        },
+    ]
+    st.write("Availability modul:")
+    show_table(pd.DataFrame(availability_rows), hide_index=True)
 
     st.write("Bobot aktif:")
     weight_df = pd.DataFrame(
