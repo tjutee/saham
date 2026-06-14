@@ -455,6 +455,16 @@ st.markdown(
         padding-right: 1.5rem;
         max-width: 100% !important;
     }
+    div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+        gap: 0.25rem;
+        flex-wrap: wrap;
+    }
+    div[data-testid="stTabs"] [data-baseweb="tab"] {
+        height: 2.4rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: 8px 8px 0 0;
+        font-weight: 600;
+    }
     div[data-testid="stMetric"] {
         background: #ffffff;
         border: 1px solid #e5e7eb;
@@ -479,6 +489,7 @@ st.markdown(
     div[data-testid="stDataFrame"] [data-testid="stDataFrameResizable"],
     div[data-testid="stDataEditor"],
     div[data-testid="stDataEditor"] > div,
+    div[data-testid="stDataFrame"] div[role="grid"],
     div[data-testid="stPlotlyChart"],
     div[data-testid="stPlotlyChart"] > div,
     div[data-testid="stPlotlyChart"] .js-plotly-plot,
@@ -486,6 +497,9 @@ st.markdown(
     div[data-testid="stPlotlyChart"] .user-select-none {
         width: 100% !important;
         max-width: 100% !important;
+    }
+    div[data-testid="stDataFrame"] div[role="columnheader"] {
+        font-weight: 700;
     }
     </style>
     """,
@@ -594,6 +608,8 @@ PLOTLY_STRETCH = stretch_kwargs(st.plotly_chart)
 def show_table(data=None, *args, **kwargs):
     kwargs.pop("width", None)
     kwargs.pop("use_container_width", None)
+    if "height" not in kwargs and isinstance(data, pd.DataFrame) and len(data) >= 8:
+        kwargs["height"] = min(720, 96 + (min(len(data), 18) * 35))
     return st.dataframe(data, *args, **DATAFRAME_STRETCH, **kwargs)
 
 
@@ -628,6 +644,64 @@ def chart_color_kwargs(color_field):
     if color_field in ["Score", "Quality_Score", "Risk_Score", "Threshold_Pass_Ratio", "Valuation_Score", "Liquidity_Score", "Momentum_Score", "History_Momentum_Score"]:
         return {"color_continuous_scale": SCORE_SCALE, "range_color": [0, 100]}
     return {"color_discrete_sequence": STOCK_LINE_COLORS}
+
+
+ACTION_PRIORITY = {
+    "Accumulate Candidate": 0,
+    "Wait Market Confirmation": 1,
+    "Watchlist": 2,
+    "Speculative Monitor": 3,
+    "Avoid / Review": 4,
+}
+
+
+def build_decision_priority_frame(data, limit=12):
+    if data is None or data.empty:
+        return pd.DataFrame()
+    view = data.copy()
+    view["_Action_Rank"] = view.get("Final_Action", pd.Series("", index=view.index)).map(ACTION_PRIORITY).fillna(5)
+    view["_Confidence_Rank"] = view.get("Decision_Confidence", pd.Series("", index=view.index)).map({"High": 0, "Medium": 1, "Low": 2}).fillna(3)
+    sort_columns = [
+        "_Action_Rank",
+        "_Confidence_Rank",
+        "Score",
+        "Threshold_Pass_Ratio",
+        "Sector_Relative_Score",
+        "Liquidity_Score",
+    ]
+    sort_columns = [column for column in sort_columns if column in view.columns]
+    ascending = [True, True] + [False] * max(0, len(sort_columns) - 2)
+    view = view.sort_values(sort_columns, ascending=ascending, na_position="last").head(limit)
+    columns = [
+        "Kode",
+        "Nama Perusahaan",
+        "Final_Action",
+        "Decision_Confidence",
+        "Risk_Level",
+        "Score",
+        "Threshold_Pass_Ratio",
+        "Penutupan",
+        "Return_52W",
+        "Price_Source",
+        "Next_Step",
+    ]
+    return view[[column for column in columns if column in view.columns]].copy()
+
+
+def decision_table_config():
+    return {
+        "Kode": st.column_config.TextColumn("Kode", width="small"),
+        "Nama Perusahaan": st.column_config.TextColumn("Nama", width="large"),
+        "Final_Action": st.column_config.TextColumn("Aksi", width="medium", help="Prioritas tindakan dari score, risiko, threshold, sektor, momentum, data, dan market regime."),
+        "Decision_Confidence": st.column_config.TextColumn("Keyakinan", width="small", help="Keyakinan keputusan; turun bila ada blocker atau data kurang bersih."),
+        "Risk_Level": st.column_config.TextColumn("Risiko", width="small", help=HELP_TEXT["risk_level"]),
+        "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
+        "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
+        "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
+        "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help="Return satu tahun terakhir sebagai konteks tren."),
+        "Price_Source": st.column_config.TextColumn("Sumber", width="small", help="Sumber harga aktif: online/cache atau fallback."),
+        "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", width="large", help="Tindakan praktis berikutnya untuk user."),
+    }
 
 
 def safe_slider(label, min_value, max_value, value, *, step=None, help=None, format=None):
@@ -5154,9 +5228,19 @@ market_session_status = get_market_session_status()
 
 st.title("Ringkasan Saham IDX")
 st.caption(
-    f"Dashboard ringkasan dan pencarian saham IDX berbasis data online/cache. Sumber universe/data: {data_update_label}. Status bursa: {market_session_status['Status']} ({market_session_status['Now']}). Universe merge dibangun dari BEI/IDX, fallback online, dan Excel; yfinance/cache dipakai untuk harga/histori, TradingView scanner untuk fundamental online, dan {DATA_FILE} hanya fallback/audit. Hasil adalah penyaring awal, bukan nasihat investasi."
+    f"Screening, prioritas tindakan, berita, teknikal, portofolio, dan audit data IDX. "
+    f"Data aktif: {data_update_label}. Bursa: {market_session_status['Status']} ({market_session_status['Now']})."
 )
-st.caption(market_session_status["Detail"])
+with st.expander("Sumber data dan batasan", expanded=False):
+    st.markdown(
+        f"""
+        - Universe merge dibangun dari BEI/IDX, fallback online, dan Excel.
+        - Harga dan histori memakai yfinance/cache; fundamental online memakai TradingView scanner; metrik bank memakai snapshot bank bila tersedia.
+        - `{DATA_FILE}` dipakai sebagai fallback/audit, bukan sumber utama bila data online/snapshot tersedia.
+        - {market_session_status["Detail"]}
+        - Dashboard adalah penyaring awal dan alat audit, bukan nasihat investasi.
+        """
+    )
 if raw_df.attrs.get("universe_error"):
     st.warning(f"Daftar kode online memakai fallback. Detail: {raw_df.attrs.get('universe_error')}")
 if raw_df.attrs.get("market_error"):
@@ -5545,7 +5629,7 @@ with st.expander("Status data aktif", expanded=False):
         f"Versi data aktif: {dashboard_state['data_version']}. "
         f"Universe merge semua sumber: {data_status['Universe_Total_Label']} kode ({data_status['Universe_Detail']}). {data_status['Session_Detail']}"
     )
-    st.caption("Orkestrasi data: Excel dan snapshot utama dipantau sebagai signature stabil. Saat berubah, cache dibersihkan, pipeline dihitung ulang, dan semua tab membaca state baru yang sama. History cache dipakai per chart/teknikal tanpa memaksa reload global.")
+    st.caption("Semua tab memakai state data aktif yang sama. Perubahan Excel/snapshot memicu hitung ulang; cache histori dipakai hanya untuk chart dan teknikal agar dashboard tetap ringan.")
 
 (
     tab_summary,
@@ -5685,34 +5769,13 @@ with tab_summary:
             else:
                 st.info("Ringkasan distribusi belum tersedia.")
 
-        st.write("Top kandidat")
-        top_summary_columns = [
-            "Kode",
-            "Nama Perusahaan",
-            "Final_Action",
-            "Risk_Level",
-            "Score",
-            "Threshold_Pass_Ratio",
-            "Penutupan",
-            "Return_52W",
-            "Next_Step",
-        ]
-        top_summary = summary_chart_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
+        st.markdown("**Prioritas tindakan**")
+        st.caption("Daftar ini memprioritaskan saham yang paling siap ditindaklanjuti, bukan sekadar score tertinggi.")
+        top_summary = build_decision_priority_frame(summary_chart_data, limit=15)
         show_table(
-            top_summary[[column for column in top_summary_columns if column in top_summary.columns]],
+            top_summary,
             hide_index=True,
-            column_config={
-                "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
-                "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
-                "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
-                "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
-                "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help="Return satu tahun terakhir untuk membandingkan saham fokus dengan shortlist."),
-                "Kode": st.column_config.TextColumn("Kode", width="small"),
-                "Nama Perusahaan": st.column_config.TextColumn("Nama", width="large"),
-                "Risk_Level": st.column_config.TextColumn("Risiko", width="small", help=HELP_TEXT["risk_level"]),
-                "Final_Action": st.column_config.TextColumn("Aksi", width="medium", help="Aksi ringkas untuk daftar top kandidat di Beranda; cek Detail Saham untuk timing entry."),
-                "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", width="large", help="Tindakan praktis berikutnya untuk user: cek entry, tunggu konfirmasi, review data, atau hindari."),
-            },
+            column_config=decision_table_config(),
             height=560,
         )
 
@@ -6118,7 +6181,7 @@ with tab_reco:
             else:
                 st.info("Tidak ada penghambat dominan pada hasil filter ini.")
 
-with tab_portfolio.expander("Skenario alokasi portofolio", expanded=False):
+with tab_portfolio:
     st.subheader("Perencana portofolio")
     st.caption(
         "Skenario ini memakai hasil filter saat ini untuk membaca konsentrasi, risiko, final action mix, dan estimasi lot. "
