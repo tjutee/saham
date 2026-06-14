@@ -757,13 +757,14 @@ def folder_dependency_signature(path, pattern="*.csv"):
     }
 
 
-def build_data_dependency_signature():
+def build_data_dependency_signature(include_history_cache=False):
     signature = {
         "excel": file_dependency_signature(DATA_FILE),
         "market_snapshot": file_dependency_signature(MARKET_SNAPSHOT_FILE),
         "fundamental_snapshot": file_dependency_signature(FUNDAMENTAL_SNAPSHOT_FILE),
-        "history_cache": folder_dependency_signature(HISTORY_CACHE_DIR, "*.csv"),
     }
+    if include_history_cache:
+        signature["history_cache"] = folder_dependency_signature(HISTORY_CACHE_DIR, "*.csv")
     return json.dumps(signature, sort_keys=True)
 
 
@@ -773,7 +774,7 @@ def format_data_signature(signature):
     return hashlib.sha1(signature.encode("utf-8")).hexdigest()[:10]
 
 
-@st.fragment(run_every="60s")
+@st.fragment(run_every="300s")
 def watch_data_dependency_changes(active_signature):
     latest_signature = build_data_dependency_signature()
     if st.session_state.get("active_data_dependency_signature") is None:
@@ -5295,7 +5296,7 @@ with st.expander("Status data aktif", expanded=False):
         f"Versi data aktif: {dashboard_state['data_version']}. "
         f"Universe merge semua sumber: {data_status['Universe_Total_Label']} kode ({data_status['Universe_Detail']}). {data_status['Session_Detail']}"
     )
-    st.caption("Orkestrasi data: Excel, snapshot, dan history cache dipantau sebagai signature. Saat berubah, cache dibersihkan, pipeline dihitung ulang, dan semua tab membaca state baru yang sama.")
+    st.caption("Orkestrasi data: Excel dan snapshot utama dipantau sebagai signature stabil. Saat berubah, cache dibersihkan, pipeline dihitung ulang, dan semua tab membaca state baru yang sama. History cache dipakai per chart/teknikal tanpa memaksa reload global.")
 
 (
     tab_summary,
