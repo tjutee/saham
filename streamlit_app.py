@@ -1281,103 +1281,94 @@ def build_data_quality_report(scored, raw):
 def build_ui_heuristic_audit():
     rows = [
         {
+            "Status": "OK",
             "Halaman": "Sidebar",
             "Fokus": "Filter dan update data",
-            "Simplicity": "Mode Cepat/Lengkap memisahkan kontrol harian dan audit.",
-            "Clarity": "Preset, threshold, dan strategi cache-first punya helper.",
-            "Integrity": "Refresh live manual; snapshot/cache menjadi default.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Mode Cepat/Lengkap, helper threshold, dan update cache-first.",
+            "Potensi Redundancy": "Bobot/rasio disembunyikan di Mode Cepat agar tidak dobel dengan preset.",
+            "Tindak Lanjut": "Pertahankan refresh live manual; jangan auto-refresh massal saat load.",
         },
         {
+            "Status": "OK",
             "Halaman": "Beranda",
             "Fokus": "Ringkasan eksekutif",
-            "Simplicity": "Metrik utama tampil dulu, grafik distribusi opsional.",
-            "Clarity": "Market regime, breadth, freshness, dan top kandidat dipisah.",
-            "Integrity": "Cakupan online/cache dan fallback kode terlihat.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Market regime, breadth, freshness, coverage, dan kandidat utama tampil ringkas.",
+            "Potensi Redundancy": "Distribusi score dan top kandidat bisa mirip dengan Cari Saham; grafik tetap opsional.",
+            "Tindak Lanjut": "Gunakan Beranda untuk overview, bukan analisis per-kode.",
         },
         {
+            "Status": "OK",
             "Halaman": "Cari Saham",
             "Fokus": "Ranking dan keputusan cepat",
-            "Simplicity": "Tabel Ringkas menjadi default; Analisis/Audit tersedia via segmented control.",
-            "Clarity": "Keputusan, score, risiko, sumber data, dan next step diberi label/help.",
-            "Integrity": "Sumber harga/fundamental/universe bisa diaudit per baris.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Tabel Ringkas default; Analisis dan Audit dibuka lewat segmented control.",
+            "Potensi Redundancy": "Kolom analisis lengkap tidak ditampilkan bersamaan dengan ringkasan.",
+            "Tindak Lanjut": "Pakai tabel ringkas untuk shortlist; buka audit hanya saat verifikasi data.",
         },
         {
+            "Status": "Monitor",
             "Halaman": "Detail Saham",
             "Fokus": "Shortlist, berita, histori, teknikal",
-            "Simplicity": "Fokus satu saham aktif; scan teknikal massal tidak otomatis.",
-            "Clarity": "Berita mengikuti fokus saham; chart teknikal memakai stacked panel.",
-            "Integrity": "OHLCV memakai yfinance/cache; ephemeris unavailable ditandai.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Fokus saham aktif, berita mengikuti kode, chart teknikal stacked seperti workflow trading.",
+            "Potensi Redundancy": "Histori harga dan indikator teknikal sama-sama memakai OHLCV.",
+            "Tindak Lanjut": "Pertahankan chart fokus satu kode; scan top-N dibuka manual agar tidak berat.",
         },
         {
+            "Status": "OK",
             "Halaman": "Portofolio",
             "Fokus": "Alokasi dan konsentrasi risiko",
-            "Simplicity": "Kandidat otomatis dari hasil filter, pilihan manual tetap tersedia.",
-            "Clarity": "Nilai posisi, kas, sektor, risiko, dan batas konsentrasi ditampilkan.",
-            "Integrity": "Estimasi lot memakai harga terakhir dan tidak membuat order otomatis.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Kandidat dari filter, pilihan manual, nilai posisi, kas, sektor, dan batas risiko.",
+            "Potensi Redundancy": "Rekomendasi saham tidak diulang penuh; hanya dipakai sebagai input alokasi.",
+            "Tindak Lanjut": "Tetap tampilkan estimasi sebagai simulasi, bukan instruksi order.",
         },
         {
+            "Status": "OK",
             "Halaman": "Backtest",
             "Fokus": "Validasi historis sinyal",
-            "Simplicity": "Tidak berjalan otomatis; user memilih kode, horizon, dan sinyal.",
-            "Clarity": "Event, hit rate, average return, dan walk-forward dipisah.",
-            "Integrity": "Event-based; bukan klaim broker-grade backtest.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Manual trigger, pilihan kode/horizon/sinyal, event, hit rate, dan walk-forward.",
+            "Potensi Redundancy": "Tidak dijalankan otomatis di Beranda/Cari Saham.",
+            "Tindak Lanjut": "Gunakan sebagai validasi setup, bukan klaim performa pasti.",
         },
         {
+            "Status": "OK",
             "Halaman": "Prediksi",
             "Fokus": "Probabilitas berbasis setup historis",
-            "Simplicity": "Manual trigger agar tidak berat.",
-            "Clarity": "Probability up, expected return, downside, dan confidence ditampilkan.",
-            "Integrity": "Disebut probabilistik dari kemiripan historis, bukan prediksi pasti.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Manual trigger, probability up, expected return, downside, dan confidence.",
+            "Potensi Redundancy": "Sinyal teknikal tidak diulang sebagai chart; diringkas menjadi probabilitas.",
+            "Tindak Lanjut": "Jaga wording sebagai probabilistik dari histori, bukan kepastian harga.",
         },
         {
+            "Status": "OK",
             "Halaman": "Explorer & Sektor",
             "Fokus": "Eksplorasi pola dan agregasi",
-            "Simplicity": "Default tertutup di Audit Data.",
-            "Clarity": "Sumbu, warna, ukuran, dan limit data bisa dikontrol.",
-            "Integrity": "Visual hanya eksplorasi; tidak mengubah score atau filter utama.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Kontrol sumbu, warna, ukuran, limit data, dan agregasi sektor.",
+            "Potensi Redundancy": "Default tertutup agar tidak menyaingi ringkasan utama.",
+            "Tindak Lanjut": "Gunakan sebagai eksplorasi, tidak mengubah scoring/filter utama.",
         },
         {
+            "Status": "Monitor",
             "Halaman": "Audit Data",
             "Fokus": "Freshness, sumber, kualitas, fallback",
-            "Simplicity": "Ringkasan terbuka; audit berat tertutup default.",
-            "Clarity": "Prioritas high/medium dan stale data dipisah.",
-            "Integrity": "Fallback Excel, snapshot, cache, dan sumber online terlihat.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Freshness, source mix, priority issue, fallback, cache, dan snapshot terlihat.",
+            "Potensi Redundancy": "Quality report, priority issue, dan detail baris bisa berulang.",
+            "Tindak Lanjut": "Ringkasan tetap terbuka; detail quality report dan contoh baris ditutup default.",
         },
         {
+            "Status": "Monitor",
             "Halaman": "Metodologi",
             "Fokus": "Rumus, bobot, referensi",
-            "Simplicity": "Tertutup default.",
-            "Clarity": "Formula, threshold, penalti, dan referensi dipisah.",
-            "Integrity": "Tidak mengklaim formula proprietary; sumber dan fallback dijelaskan.",
-            "Status": "OK",
+            "Aspek Terpenuhi": "Formula, threshold, penalti, referensi, dan batasan metode dipisah.",
+            "Potensi Redundancy": "Rumus dan helper bisa panjang bila dibuka bersamaan dengan audit.",
+            "Tindak Lanjut": "Tetap tertutup default; buka saat perlu audit metodologi.",
         },
     ]
-    audit = pd.DataFrame(rows)
-    audit["Consistency"] = "Istilah, default ringan, dan pola expander digunakan konsisten lintas halaman."
-    audit["Dynamic"] = "Mengikuti filter/fokus/data cache-live saat ini; tidak memakai dummy."
-    audit["Interactive"] = "Kontrol utama eksplisit: select, toggle, segmented control, atau tombol manual."
-    audit["Informative"] = "Menampilkan konteks, sumber data, freshness, atau detail audit saat dibuka."
-    return audit[
+    return pd.DataFrame(rows)[
         [
             "Status",
             "Halaman",
             "Fokus",
-            "Simplicity",
-            "Clarity",
-            "Consistency",
-            "Integrity",
-            "Dynamic",
-            "Interactive",
-            "Informative",
+            "Aspek Terpenuhi",
+            "Potensi Redundancy",
+            "Tindak Lanjut",
         ]
     ]
 
@@ -7557,39 +7548,40 @@ with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True)
         else:
             st.info("Pilih minimal satu kode saham untuk audit.")
 
-    show_table(
-        quality_report,
-        hide_index=True,
-        column_config={
-            "Rows": st.column_config.NumberColumn("Rows", format="%d"),
-        },
-    )
-
-    issue_options = quality_report.loc[quality_report["Rows"].gt(0), "Check"].tolist()
-    if issue_options:
-        selected_issue = st.selectbox("Lihat detail masalah", issue_options, help=HELP_TEXT["quality_issue"])
-        detail = get_quality_detail(scored_df, selected_issue)
+    with st.expander("Detail quality report dan contoh baris", expanded=False):
         show_table(
-            detail.head(200),
+            quality_report,
             hide_index=True,
             column_config={
-                "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
-                "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
-                "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
-                "Market_Cap": st.column_config.NumberColumn("Market Cap", format="Rp %.0f"),
-                "Revenue": st.column_config.NumberColumn("Revenue", format="Rp %.0f"),
-                "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f"),
-                "PER": st.column_config.NumberColumn("PER", format="%.2f", help=HELP_TEXT["per"]),
-                "PBV": st.column_config.NumberColumn("PBV", format="%.2f", help=HELP_TEXT["pbv"]),
-                "ROE": st.column_config.NumberColumn("ROE", format="%.1f%%", help=HELP_TEXT["roe"]),
-                "ROA": st.column_config.NumberColumn("ROA", format="%.1f%%", help=HELP_TEXT["quality"]),
-                "NPM": st.column_config.NumberColumn("NPM", format="%.1f%%", help=HELP_TEXT["npm"]),
-                "Threshold_Pass_Ratio": st.column_config.NumberColumn("Threshold", format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
-                "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
+                "Rows": st.column_config.NumberColumn("Rows", format="%d"),
             },
         )
-    else:
-        st.success("Tidak ada issue data quality pada check utama.")
+
+        issue_options = quality_report.loc[quality_report["Rows"].gt(0), "Check"].tolist()
+        if issue_options:
+            selected_issue = st.selectbox("Lihat detail masalah", issue_options, help=HELP_TEXT["quality_issue"])
+            detail = get_quality_detail(scored_df, selected_issue)
+            show_table(
+                detail.head(200),
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.NumberColumn("Score", format="%.1f", help=HELP_TEXT["score"]),
+                    "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
+                    "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
+                    "Market_Cap": st.column_config.NumberColumn("Market Cap", format="Rp %.0f"),
+                    "Revenue": st.column_config.NumberColumn("Revenue", format="Rp %.0f"),
+                    "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f"),
+                    "PER": st.column_config.NumberColumn("PER", format="%.2f", help=HELP_TEXT["per"]),
+                    "PBV": st.column_config.NumberColumn("PBV", format="%.2f", help=HELP_TEXT["pbv"]),
+                    "ROE": st.column_config.NumberColumn("ROE", format="%.1f%%", help=HELP_TEXT["roe"]),
+                    "ROA": st.column_config.NumberColumn("ROA", format="%.1f%%", help=HELP_TEXT["quality"]),
+                    "NPM": st.column_config.NumberColumn("NPM", format="%.1f%%", help=HELP_TEXT["npm"]),
+                    "Threshold_Pass_Ratio": st.column_config.NumberColumn("Threshold", format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
+                    "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
+                },
+            )
+        else:
+            st.success("Tidak ada issue data quality pada check utama.")
 
     status_left, status_right = st.columns([1, 1])
     with status_left:
