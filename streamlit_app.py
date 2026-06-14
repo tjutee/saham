@@ -6391,11 +6391,6 @@ with tab_history:
         load_technical = st.toggle("Tampilkan hasil analisa teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari refresh online sementara.")
         show_auto_scan = st.toggle("Tampilkan ringkasan teknikal top kandidat", value=True, help="Menghitung teknikal otomatis untuk maksimal 5 saham teratas dari hasil filter agar keputusan entry/posisi langsung terlihat.")
         show_fibonacci = st.toggle("Tampilkan level Fibonacci", value=True, help=HELP_TEXT["fibonacci"])
-        indicator_cols = st.columns(2)
-        with indicator_cols[0]:
-            show_ehlers_filter = st.toggle("Tampilkan Ehlers Auto Tune Filter", value=True, help=HELP_TEXT["ehlers_filter"])
-        with indicator_cols[1]:
-            show_donchian_ribbon = st.toggle("Tampilkan Donchian Trend Ribbon", value=True, help=HELP_TEXT["donchian_ribbon"])
         if not load_technical:
             st.info("Aktifkan toggle di atas untuk menampilkan Entry Action, Position Action, candlestick, MA, RSI, MACD, ATR, dan Technical Score.")
         else:
@@ -6624,6 +6619,15 @@ with tab_history:
                         )
                         show_table(plan_table, hide_index=True)
 
+                st.markdown("**Chart harga**")
+                indicator_cols = st.columns([1, 1, 2])
+                with indicator_cols[0]:
+                    show_ehlers_filter = st.toggle("Panel bawah: Ehlers Auto Tune", value=True, help=HELP_TEXT["ehlers_filter"])
+                with indicator_cols[1]:
+                    show_donchian_ribbon = st.toggle("Panel bawah: Donchian Ribbon", value=True, help=HELP_TEXT["donchian_ribbon"])
+                with indicator_cols[2]:
+                    st.caption("Candle utama tetap fokus pada harga. Ehlers dan Donchian disajikan di bawah chart dengan tanggal yang sama.")
+
                 price_panel = tech_history.copy()
                 fig = go.Figure()
                 if chart_style == "Candlestick" and {"Open", "High", "Low", "Close"}.issubset(price_panel.columns):
@@ -6644,56 +6648,6 @@ with tab_history:
                 for ma_column, color in [("MA20", "#0891b2"), ("MA50", "#7c3aed"), ("MA200", "#475569")]:
                     if ma_column in price_panel.columns:
                         fig.add_trace(go.Scatter(x=price_panel["Date"], y=price_panel[ma_column], mode="lines", name=ma_column, line=dict(color=color, width=1.6)))
-                if show_ehlers_filter and "Ehlers_Filter" in price_panel.columns:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=price_panel["Date"],
-                            y=price_panel["Ehlers_Filter"],
-                            mode="lines",
-                            name="Ehlers Auto Tune",
-                            line=dict(color="#f97316", width=2.2),
-                        )
-                    )
-                if show_donchian_ribbon:
-                    ribbon_lines = [
-                        ("Donchian_Mid_10", "#bbf7d0", 1.0),
-                        ("Donchian_Mid_20", "#22c55e", 1.2),
-                        ("Donchian_Mid_40", "#16a34a", 1.4),
-                        ("Donchian_Mid_80", "#166534", 1.6),
-                    ]
-                    for column, color, width in ribbon_lines:
-                        if column in price_panel.columns:
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=price_panel["Date"],
-                                    y=price_panel[column],
-                                    mode="lines",
-                                    name=column.replace("_", " "),
-                                    line=dict(color=color, width=width),
-                                    opacity=0.75,
-                                )
-                            )
-                    if {"Donchian_Upper_20", "Donchian_Lower_20"}.issubset(price_panel.columns):
-                        fig.add_trace(
-                            go.Scatter(
-                                x=price_panel["Date"],
-                                y=price_panel["Donchian_Upper_20"],
-                                mode="lines",
-                                name="Donchian Upper 20",
-                                line=dict(color="#86efac", width=1, dash="dot"),
-                                opacity=0.65,
-                            )
-                        )
-                        fig.add_trace(
-                            go.Scatter(
-                                x=price_panel["Date"],
-                                y=price_panel["Donchian_Lower_20"],
-                                mode="lines",
-                                name="Donchian Lower 20",
-                                line=dict(color="#86efac", width=1, dash="dot"),
-                                opacity=0.65,
-                            )
-                        )
                 if show_fibonacci:
                     fib_line_map = [
                         ("Fibo_23_6", "23.6%", "#94a3b8"),
@@ -6715,7 +6669,7 @@ with tab_history:
                                 annotation_position="right",
                             )
                 fig.update_layout(
-                    title=f"{technical_code}: harga, MA20/50/200, Ehlers, Donchian ({technical_period})",
+                    title=f"{technical_code}: harga, MA20/50/200 ({technical_period})",
                     height=520,
                     xaxis_title="Tanggal",
                     yaxis_title="Harga",
@@ -6723,6 +6677,100 @@ with tab_history:
                     margin=dict(l=20, r=20, t=60, b=40),
                 )
                 show_chart(fig)
+
+                indicator_panels = []
+                if show_ehlers_filter and {"Close", "Ehlers_Filter"}.issubset(price_panel.columns):
+                    indicator_panels.append("ehlers")
+                if show_donchian_ribbon and "Donchian_Ribbon_Score" in price_panel.columns:
+                    indicator_panels.append("donchian")
+                if indicator_panels:
+                    st.markdown("**Panel indikator bawah**")
+                    st.caption("Panel ini memakai tanggal yang sama dengan candlestick. Warna oranye = Ehlers Auto Tune, hijau = Donchian Trend Ribbon.")
+                    for panel_name in indicator_panels:
+                        if panel_name == "ehlers":
+                            ehlers_panel = price_panel[["Date", "Close", "Ehlers_Filter", "Ehlers_Filter_Signal"]].copy()
+                            base_close = pd.to_numeric(ehlers_panel["Close"].iloc[0], errors="coerce")
+                            base_filter = pd.to_numeric(ehlers_panel["Ehlers_Filter"].dropna().iloc[0], errors="coerce") if ehlers_panel["Ehlers_Filter"].notna().any() else np.nan
+                            ehlers_panel["Close_Normalized"] = ehlers_panel["Close"] / base_close * 100 if pd.notna(base_close) and base_close else np.nan
+                            ehlers_panel["Ehlers_Normalized"] = ehlers_panel["Ehlers_Filter"] / base_filter * 100 if pd.notna(base_filter) and base_filter else np.nan
+                            fig = go.Figure()
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=ehlers_panel["Date"],
+                                    y=ehlers_panel["Close_Normalized"],
+                                    mode="lines",
+                                    name="Close indexed",
+                                    line=dict(color="#94a3b8", width=1.2),
+                                    opacity=0.75,
+                                )
+                            )
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=ehlers_panel["Date"],
+                                    y=ehlers_panel["Ehlers_Normalized"],
+                                    mode="lines",
+                                    name="Ehlers Auto Tune",
+                                    line=dict(color="#f97316", width=2.4),
+                                )
+                            )
+                            fig.update_layout(
+                                title=f"Ehlers Auto Tune Filter - {clean_text(latest_tech.get('Ehlers_Filter_Signal'))}",
+                                height=260,
+                                xaxis_title="Tanggal",
+                                yaxis_title="Index 100",
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                                margin=dict(l=20, r=20, t=70, b=35),
+                            )
+                            show_chart(fig)
+                        if panel_name == "donchian":
+                            fig = go.Figure()
+                            ribbon_colors = {
+                                "Donchian_Mid_10": "#bbf7d0",
+                                "Donchian_Mid_20": "#22c55e",
+                                "Donchian_Mid_40": "#16a34a",
+                                "Donchian_Mid_80": "#166534",
+                            }
+                            for column, color in ribbon_colors.items():
+                                if column in price_panel.columns:
+                                    fig.add_trace(
+                                        go.Scatter(
+                                            x=price_panel["Date"],
+                                            y=price_panel[column],
+                                            mode="lines",
+                                            name=column.replace("_", " "),
+                                            line=dict(color=color, width=1.6),
+                                        )
+                                    )
+                            if {"Donchian_Upper_20", "Donchian_Lower_20"}.issubset(price_panel.columns):
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=price_panel["Date"],
+                                        y=price_panel["Donchian_Upper_20"],
+                                        mode="lines",
+                                        name="Upper 20",
+                                        line=dict(color="#86efac", width=1, dash="dot"),
+                                        opacity=0.65,
+                                    )
+                                )
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=price_panel["Date"],
+                                        y=price_panel["Donchian_Lower_20"],
+                                        mode="lines",
+                                        name="Lower 20",
+                                        line=dict(color="#86efac", width=1, dash="dot"),
+                                        opacity=0.65,
+                                    )
+                                )
+                            fig.update_layout(
+                                title=f"Donchian Trend Ribbon - {clean_text(latest_tech.get('Donchian_Ribbon_Trend'))} ({format_number(latest_tech.get('Donchian_Ribbon_Score'), 1)})",
+                                height=260,
+                                xaxis_title="Tanggal",
+                                yaxis_title="Harga",
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                                margin=dict(l=20, r=20, t=70, b=35),
+                            )
+                            show_chart(fig)
 
                 lower_cols = st.columns([1, 1])
                 with lower_cols[0]:
