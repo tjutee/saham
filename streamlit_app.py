@@ -84,6 +84,7 @@ ASTRO_SINE_COLORS = {
 EPHEMERIS_CONTEXT_CACHE = {}
 MARKET_SNAPSHOT_FILE = DATA_CACHE_DIR / f"market_snapshot_{ONLINE_LOAD_PERIOD}.csv"
 FUNDAMENTAL_SNAPSHOT_FILE = DATA_CACHE_DIR / "fundamental_snapshot.csv"
+BANK_METRICS_SNAPSHOT_FILE = DATA_CACHE_DIR / "bank_metrics_snapshot.csv"
 LIVE_ON_START = os.environ.get("SAHAM_LIVE_ON_START", "0").strip().lower() in {"1", "true", "yes", "on"}
 FUNDAMENTAL_LIVE_ON_START = os.environ.get("SAHAM_FUNDAMENTAL_LIVE_ON_START", "0").strip().lower() in {"1", "true", "yes", "on"}
 ONLINE_PERIOD_OPTIONS = ["5d", "2wk", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"]
@@ -698,7 +699,19 @@ def build_completeness_report(data):
 
 
 def build_source_mix(data):
-    source_columns = [column for column in ["Price_Source", "Volume_Source", "Fundamental_Source", "Data_Source", "Universe_Source", "Universe_Diff_Status"] if column in data.columns]
+    source_columns = [
+        column
+        for column in [
+            "Price_Source",
+            "Volume_Source",
+            "Fundamental_Source",
+            "Bank_Metric_Source",
+            "Data_Source",
+            "Universe_Source",
+            "Universe_Diff_Status",
+        ]
+        if column in data.columns
+    ]
     rows = []
     for column in source_columns:
         counts = data[column].fillna("Tidak diketahui").astype(str).value_counts().reset_index()
@@ -765,6 +778,7 @@ def build_data_dependency_signature(include_history_cache=False):
         "excel": file_dependency_signature(DATA_FILE),
         "market_snapshot": file_dependency_signature(MARKET_SNAPSHOT_FILE),
         "fundamental_snapshot": file_dependency_signature(FUNDAMENTAL_SNAPSHOT_FILE),
+        "bank_metrics_snapshot": file_dependency_signature(BANK_METRICS_SNAPSHOT_FILE),
     }
     if include_history_cache:
         signature["history_cache"] = folder_dependency_signature(HISTORY_CACHE_DIR, "*.csv")
@@ -1120,6 +1134,52 @@ def write_fundamental_snapshot(fundamental_frame):
     output["Snapshot_Updated_At"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     output.to_csv(FUNDAMENTAL_SNAPSHOT_FILE, index=False)
     return FUNDAMENTAL_SNAPSHOT_FILE
+
+
+BANK_METRICS_SNAPSHOT_COLUMNS = [
+    "Kode",
+    "NIM",
+    "CAR",
+    "LDR",
+    "NPL",
+    "BOPO",
+    "CIR",
+    "LAR",
+    "Bank_Metric_Source",
+    "Bank_Metric_Last_Update",
+]
+
+
+def read_bank_metrics_snapshot():
+    if not BANK_METRICS_SNAPSHOT_FILE.exists():
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["bank_metrics_source"] = "snapshot-missing"
+        output.attrs["bank_metrics_error"] = f"Snapshot metrik bank belum ada: {BANK_METRICS_SNAPSHOT_FILE}"
+        return output
+    try:
+        snapshot = pd.read_csv(BANK_METRICS_SNAPSHOT_FILE)
+    except Exception as exc:
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["bank_metrics_source"] = "snapshot-error"
+        output.attrs["bank_metrics_error"] = f"Snapshot metrik bank tidak terbaca: {exc}"
+        return output
+    if "Kode" not in snapshot.columns:
+        output = pd.DataFrame(columns=["Kode"])
+        output.attrs["bank_metrics_source"] = "snapshot-error"
+        output.attrs["bank_metrics_error"] = "Snapshot metrik bank tidak memiliki kolom Kode."
+        return output
+    snapshot["Kode"] = snapshot["Kode"].astype(str).str.strip().str.upper()
+    for column in BANK_THRESHOLD_METRICS:
+        if column in snapshot.columns:
+            snapshot[column] = pd.to_numeric(snapshot[column], errors="coerce")
+    if "Bank_Metric_Source" not in snapshot.columns:
+        snapshot["Bank_Metric_Source"] = "bank metrics snapshot"
+    if "Bank_Metric_Last_Update" not in snapshot.columns:
+        snapshot["Bank_Metric_Last_Update"] = pd.NaT
+    snapshot["Bank_Metric_Field_Count"] = snapshot[[column for column in BANK_THRESHOLD_METRICS if column in snapshot.columns]].notna().sum(axis=1)
+    snapshot.attrs["bank_metrics_source"] = "bank metrics snapshot"
+    snapshot.attrs["bank_metrics_error"] = None
+    return snapshot.drop_duplicates("Kode")
 
 
 def fetch_online_fundamentals():
@@ -1843,6 +1903,7 @@ def build_data_freshness(scored):
             "Online_Price_Coverage_%": 0.0,
             "Online_Fundamental_Coverage_%": 0.0,
             "Excel_Fundamental_Coverage_%": 0.0,
+            "Bank_Metric_Coverage_%": 0.0,
             "Stale_Price_Rows": 0,
         }
 
@@ -1871,6 +1932,11 @@ def build_data_freshness(scored):
     excel_fundamental_coverage = (
         excel_fundamental_count.sum() / fundamental_total.sum() * 100 if fundamental_total.sum() > 0 else 0.0
     )
+    banking_rows = scored.get("Threshold_Mode", pd.Series("", index=scored.index)).eq("Banking")
+    bank_metric_count = pd.to_numeric(scored.get("Bank_Metric_Field_Count", pd.Series(0, index=scored.index)), errors="coerce").fillna(0)
+    bank_metric_coverage = (
+        bank_metric_count[banking_rows].gt(0).mean() * 100 if banking_rows.any() else 0.0
+    )
 
     if pd.isna(lag_days):
         label = "Unknown"
@@ -1890,6 +1956,7 @@ def build_data_freshness(scored):
         "Online_Price_Coverage_%": round(float(online_price_coverage), 1),
         "Online_Fundamental_Coverage_%": round(float(online_fundamental_coverage), 1),
         "Excel_Fundamental_Coverage_%": round(float(excel_fundamental_coverage), 1),
+        "Bank_Metric_Coverage_%": round(float(bank_metric_coverage), 1),
         "Stale_Price_Rows": stale_rows,
     }
 
@@ -1898,6 +1965,7 @@ def build_refresh_plan(freshness, session_status):
     lag_days = freshness.get("Online_Data_Lag_Days")
     price_coverage = freshness.get("Online_Price_Coverage_%", 0)
     fundamental_coverage = freshness.get("Online_Fundamental_Coverage_%", 0)
+    bank_metric_coverage = freshness.get("Bank_Metric_Coverage_%", 0)
     stale_rows = freshness.get("Stale_Price_Rows", 0)
     label = clean_text(freshness.get("Freshness_Label"))
     session_label = clean_text(session_status.get("Status"))
@@ -1922,6 +1990,13 @@ def build_refresh_plan(freshness, session_status):
         fundamental_action = "Snapshot fundamental memadai; update hanya bila ada laporan keuangan baru."
         fundamental_priority = "Low"
 
+    if bank_metric_coverage < 80:
+        bank_metric_action = "Lengkapi snapshot metrik bank dari OJK/IDX atau fallback Excel terbaru, lalu commit snapshot."
+        bank_metric_priority = "Medium"
+    else:
+        bank_metric_action = "Snapshot metrik bank memadai; refresh saat laporan bank/OJK terbaru tersedia."
+        bank_metric_priority = "Low"
+
     return pd.DataFrame(
         [
             {
@@ -1935,6 +2010,12 @@ def build_refresh_plan(freshness, session_status):
                 "Prioritas": fundamental_priority,
                 "Kondisi": f"Coverage online {format_percent(fundamental_coverage, 0)}",
                 "Aksi": fundamental_action,
+            },
+            {
+                "Area": "Metrik bank",
+                "Prioritas": bank_metric_priority,
+                "Kondisi": f"Coverage bank {format_percent(bank_metric_coverage, 0)}",
+                "Aksi": bank_metric_action,
             },
             {
                 "Area": "Jam bursa",
@@ -1996,6 +2077,7 @@ def build_data_status_summary(freshness, session_status, source_label, full_univ
         "Online_Lag_Label": format_lag_days(lag_days),
         "Online_Price_Coverage_Label": format_percent(price_coverage, 0),
         "Online_Fundamental_Coverage_Label": format_percent(fundamental_coverage, 0),
+        "Bank_Metric_Coverage_Label": format_percent(bank_metric_coverage, 0),
         "Stale_Rows_Label": f"{stale_rows:,}",
         "Session_Label": clean_text(session_status.get("Status")),
         "Session_Detail": clean_text(session_status.get("Detail")),
@@ -4573,12 +4655,25 @@ def load_data(data_signature=None):
     online_fundamentals = load_online_fundamentals()
     fundamental_source = online_fundamentals.attrs.get("fundamental_source", "empty")
     fundamental_error = online_fundamentals.attrs.get("fundamental_error")
+    bank_metrics_snapshot = read_bank_metrics_snapshot()
+    bank_metrics_error = bank_metrics_snapshot.attrs.get("bank_metrics_error")
 
     df = universe.merge(online_market, on="Kode", how="left")
     if not online_fundamentals.empty:
         df = df.merge(online_fundamentals, on="Kode", how="left")
     else:
         df["Fundamental_Source"] = np.nan
+    if not bank_metrics_snapshot.empty:
+        snapshot_columns = [
+            column
+            for column in ["Kode"] + BANK_THRESHOLD_METRICS + ["Bank_Metric_Source", "Bank_Metric_Last_Update", "Bank_Metric_Field_Count"]
+            if column in bank_metrics_snapshot.columns
+        ]
+        df = df.merge(bank_metrics_snapshot[snapshot_columns], on="Kode", how="left", suffixes=("", "_BankSnapshot"))
+    else:
+        df["Bank_Metric_Source"] = np.nan
+        df["Bank_Metric_Last_Update"] = np.nan
+        df["Bank_Metric_Field_Count"] = 0
 
     text_online_columns = {
         "Nama Perusahaan": "Nama_Perusahaan_Online",
@@ -4614,6 +4709,18 @@ def load_data(data_signature=None):
         df["Online_Fundamental_Field_Count"] = df[online_fundamental_fields].notna().sum(axis=1)
     else:
         df["Online_Fundamental_Field_Count"] = 0
+    for column in BANK_THRESHOLD_METRICS:
+        snapshot_column = f"{column}_BankSnapshot"
+        if snapshot_column in df.columns:
+            if column not in df.columns:
+                df[column] = np.nan
+            snapshot_values = pd.to_numeric(df[snapshot_column], errors="coerce")
+            has_snapshot_value = snapshot_values.notna()
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+            df.loc[has_snapshot_value, column] = snapshot_values[has_snapshot_value]
+            df = df.drop(columns=[snapshot_column])
+    if "Bank_Metric_Field_Count" not in df.columns:
+        df["Bank_Metric_Field_Count"] = 0
 
     excel_columns = [
         "Kode",
@@ -4816,17 +4923,35 @@ def load_data(data_signature=None):
     fill_columns = BANK_THRESHOLD_METRICS
     merge_columns = ["Kode"] + [column for column in fill_columns if column in threshold_values.columns]
     df = df.merge(threshold_values[merge_columns], on="Kode", how="left", suffixes=("", "_Threshold"))
+    excel_bank_metric_fill_count = pd.Series(0, index=df.index, dtype="int64")
     for column in fill_columns:
         threshold_column = f"{column}_Threshold"
         if threshold_column in df.columns:
-            df[column] = df[column].fillna(df[threshold_column])
+            if column not in df.columns:
+                df[column] = np.nan
+            before_missing = pd.to_numeric(df[column], errors="coerce").isna()
+            threshold_values_column = pd.to_numeric(df[threshold_column], errors="coerce")
+            df[column] = pd.to_numeric(df[column], errors="coerce").fillna(threshold_values_column)
+            filled_from_excel = before_missing & threshold_values_column.notna()
+            excel_bank_metric_fill_count = excel_bank_metric_fill_count + filled_from_excel.astype("int64")
             df = df.drop(columns=[threshold_column])
+    df["Excel_Bank_Metric_Field_Count"] = excel_bank_metric_fill_count
+    snapshot_bank_count = pd.to_numeric(df.get("Bank_Metric_Field_Count", pd.Series(0, index=df.index)), errors="coerce").fillna(0)
+    df["Bank_Metric_Field_Count"] = snapshot_bank_count + excel_bank_metric_fill_count
+    if "Bank_Metric_Source" not in df.columns:
+        df["Bank_Metric_Source"] = np.nan
+    excel_bank_source_mask = excel_bank_metric_fill_count.gt(0) & (
+        df["Bank_Metric_Source"].isna() | df["Bank_Metric_Source"].astype(str).str.strip().isin(["", "nan"])
+    )
+    df.loc[excel_bank_source_mask, "Bank_Metric_Source"] = "Excel Banking/NonBank fallback"
+    df["Bank_Metric_Source"] = df["Bank_Metric_Source"].fillna("missing")
     df = apply_threshold_profile(df)
     raw.attrs["data_source"] = f"{summarize_universe_source(universe)}; Market {market_source}; Fundamental {fundamental_source}"
     raw.attrs["online_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     raw.attrs["universe_error"] = universe_error
     raw.attrs["market_error"] = market_error
     raw.attrs["fundamental_error"] = fundamental_error
+    raw.attrs["bank_metrics_error"] = bank_metrics_error
     return df, raw
 
 
@@ -4987,6 +5112,8 @@ if raw_df.attrs.get("market_error"):
     st.warning(f"Sebagian data pasar online memakai fallback/cache. Detail: {raw_df.attrs.get('market_error')}")
 if raw_df.attrs.get("fundamental_error"):
     st.warning(f"Sebagian data fundamental online memakai fallback Excel. Detail: {raw_df.attrs.get('fundamental_error')}")
+if raw_df.attrs.get("bank_metrics_error"):
+    st.warning(f"Metrik bank memakai fallback Excel bila snapshot belum tersedia. Detail: {raw_df.attrs.get('bank_metrics_error')}")
 
 with st.expander("Panduan singkat penggunaan", expanded=False):
     st.info(
@@ -5009,6 +5136,7 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
         - `Universe`: semua kode hasil merge dari BEI/IDX, fallback online, dan Excel. `Universe analisis` adalah subset aktif sesuai kebijakan BEI/fallback.
         - `Astro-Fibo`: indikator timing tambahan dari Fibonacci time window, Moon/Sun cycle, dan aspek planet JPL DE421 via Skyfield.
         - `Clean_Data`: data lolos pemeriksaan minimum; ini bukan jaminan aman investasi.
+        - `Bank_Metric_Source`: sumber NIM/CAR/LDR/NPL/BOPO/CIR/LAR. Snapshot bank dipakai lebih dulu; Excel hanya fallback bila snapshot belum ada/kosong.
 
         **Rumus ringkas**
         - `Score = weighted average(faktor) - penalty`, dibatasi 0-100.
@@ -5018,7 +5146,7 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
 
         **Sumber data**
-        BEI/IDX diprioritaskan sebagai sumber resmi di universe merge, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan Excel hanya fallback/audit. Semua fallback dan data tidak tersedia ditampilkan di **Audit Data** agar tidak disamarkan.
+        BEI/IDX diprioritaskan sebagai sumber resmi di universe merge, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, snapshot bank untuk metrik bank khusus, dan Excel hanya fallback/audit. Semua fallback dan data tidak tersedia ditampilkan di **Audit Data** agar tidak disamarkan.
         """
     )
 
@@ -5359,7 +5487,7 @@ with st.expander("Status data aktif", expanded=False):
     data_status_cols[0].metric("Sumber aktif", data_status["Source_Label"])
     data_status_cols[1].metric("Latest online", data_status["Latest_Online_Label"], data_status["Online_Lag_Label"])
     data_status_cols[2].metric("Coverage harga", data_status["Online_Price_Coverage_Label"], f"Stale {data_status['Stale_Rows_Label']}")
-    data_status_cols[3].metric("Coverage fundamental", data_status["Online_Fundamental_Coverage_Label"])
+    data_status_cols[3].metric("Coverage fundamental", data_status["Online_Fundamental_Coverage_Label"], f"Bank {data_status['Bank_Metric_Coverage_Label']}")
     data_status_cols[4].metric("Universe analisis", data_status["Universe_Active_Label"], universe_policy_label)
     st.info(data_status["Market_Action"])
     st.caption(
@@ -5500,7 +5628,7 @@ with tab_summary:
                 show_chart(fig)
             with chart_cols[1]:
                 source_mix = build_source_mix(summary_chart_data)
-                source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Universe_Diff_Status"])].copy()
+                source_view = source_mix[source_mix["Area"].isin(["Price_Source", "Fundamental_Source", "Bank_Metric_Source", "Universe_Diff_Status"])].copy()
                 if source_view.empty:
                     st.info("Ringkasan sumber data belum tersedia.")
                 else:
@@ -7983,7 +8111,8 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
     with st.expander("Rencana auto update data", expanded=False):
         st.caption(
             f"Status aktif: {data_status['Freshness_Label']}; latest online {data_status['Latest_Online_Label']}; "
-            f"coverage harga {data_status['Online_Price_Coverage_Label']}; fundamental online {data_status['Online_Fundamental_Coverage_Label']}."
+            f"coverage harga {data_status['Online_Price_Coverage_Label']}; fundamental online {data_status['Online_Fundamental_Coverage_Label']}; "
+            f"metrik bank {data_status['Bank_Metric_Coverage_Label']}."
         )
         show_table(refresh_plan, hide_index=True)
 
@@ -8013,6 +8142,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
                 {"Area": "Kesegaran data", "Metric": "Status", "Value": data_status["Freshness_Label"], "Detail": f"Umur data online {data_status['Online_Lag_Label']}"},
                 {"Area": "Kesegaran data", "Metric": "Coverage harga online", "Value": data_status["Online_Price_Coverage_Label"], "Detail": f"Baris stale: {data_status['Stale_Rows_Label']}"},
                 {"Area": "Kesegaran data", "Metric": "Coverage fundamental online", "Value": data_status["Online_Fundamental_Coverage_Label"], "Detail": f"Field Excel fallback {format_percent(data_freshness.get('Excel_Fundamental_Coverage_%'), 0)}"},
+                {"Area": "Kesegaran data", "Metric": "Coverage metrik bank", "Value": data_status["Bank_Metric_Coverage_Label"], "Detail": "NIM/CAR/LDR/NPL/BOPO/CIR/LAR dari snapshot bank atau fallback Excel"},
             ]
         )
         show_table(freshness_rows, hide_index=True)
@@ -8130,7 +8260,9 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
             if source_mix.empty:
                 st.info("Ringkasan sumber data belum tersedia.")
             else:
-                source_focus = source_mix[source_mix["Area"].isin(["Price_Source", "Volume_Source", "Fundamental_Source", "Universe_Diff_Status"])]
+                source_focus = source_mix[
+                    source_mix["Area"].isin(["Price_Source", "Volume_Source", "Fundamental_Source", "Bank_Metric_Source", "Universe_Diff_Status"])
+                ]
                 fig = px.bar(
                     source_focus,
                     x="Jumlah",
@@ -8303,7 +8435,16 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
             )
     with status_right:
         st.write("Status cache & snapshot")
-        show_table(pd.DataFrame([get_file_status(MARKET_SNAPSHOT_FILE), get_file_status(FUNDAMENTAL_SNAPSHOT_FILE)]), hide_index=True)
+        show_table(
+            pd.DataFrame(
+                [
+                    get_file_status(MARKET_SNAPSHOT_FILE),
+                    get_file_status(FUNDAMENTAL_SNAPSHOT_FILE),
+                    get_file_status(BANK_METRICS_SNAPSHOT_FILE),
+                ]
+            ),
+            hide_index=True,
+        )
         cache_status = get_history_cache_status()
         if cache_status.empty:
             st.info("Belum ada cache histori online.")
@@ -8393,6 +8534,7 @@ with tab_method.expander("Metodologi dan formula", expanded=False):
         - Data harga/histori: yfinance, pandas-datareader, cache repo, dan fallback Excel.
         - Universe kode: BEI/IDX resmi bila tersedia; endpoint utama `https://www.idx.id/primary/StockData/GetSecuritiesStock?start=0&length=9999&code=&sector=&board=&language=en-us`; TradingView/StockAnalysis/Excel hanya fallback transparan.
         - Fundamental online: TradingView scanner dan snapshot repo; Excel fallback bila field online kosong.
+        - Metrik bank khusus: `data_cache/bank_metrics_snapshot.csv` dipakai lebih dulu untuk NIM/CAR/LDR/NPL/BOPO/CIR/LAR; Excel hanya fallback bila snapshot kosong.
         - RSI/ATR: J. Welles Wilder Jr., New Concepts in Technical Trading Systems.
         - MACD: Gerald Appel, Moving Average Convergence/Divergence.
         - Ehlers adaptive filter: John F. Ehlers, cycle/dominant-cycle based digital signal processing concepts; implementasi dashboard memakai autocorrelation rolling yang dapat diaudit.
@@ -8426,6 +8568,7 @@ with tab_method.expander("Metodologi dan formula", expanded=False):
     st.caption(
         f"Status data metodologi mengikuti sesi aktif: {data_status['Freshness_Label']}, "
         f"coverage harga {data_status['Online_Price_Coverage_Label']}, coverage fundamental online {data_status['Online_Fundamental_Coverage_Label']}, "
+        f"coverage metrik bank {data_status['Bank_Metric_Coverage_Label']}, "
         f"universe {data_status['Universe_Detail']}."
     )
 
@@ -8447,6 +8590,12 @@ with tab_method.expander("Metodologi dan formula", expanded=False):
             "Ketersediaan": f"Online {data_status['Online_Fundamental_Coverage_Label']}",
             "Syarat": "TradingView scanner/snapshot repo berisi rasio fundamental.",
             "Fallback": "Excel fallback mengisi field yang kosong dan tetap diberi label sumber.",
+        },
+        {
+            "Modul": "Metrik bank khusus",
+            "Ketersediaan": f"Snapshot {data_status['Bank_Metric_Coverage_Label']}",
+            "Syarat": "data_cache/bank_metrics_snapshot.csv berisi NIM/CAR/LDR/NPL/BOPO/CIR/LAR.",
+            "Fallback": "Excel Banking/NonBank mengisi field kosong dan tetap diberi label sumber.",
         },
         {
             "Modul": "Teknikal",
