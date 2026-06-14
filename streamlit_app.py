@@ -8,6 +8,7 @@ import inspect
 import os
 import re
 import json
+import hashlib
 from pathlib import Path
 from io import StringIO
 from urllib.parse import quote_plus
@@ -711,6 +712,70 @@ def get_file_status(path):
     }
 
 
+def file_dependency_signature(path):
+    file_path = Path(path)
+    if not file_path.exists():
+        return {"path": str(path), "exists": False}
+    stat = file_path.stat()
+    return {
+        "path": str(file_path),
+        "exists": True,
+        "mtime_ns": stat.st_mtime_ns,
+        "size": stat.st_size,
+    }
+
+
+def folder_dependency_signature(path, pattern="*.csv"):
+    folder_path = Path(path)
+    if not folder_path.exists():
+        return {"path": str(path), "exists": False, "count": 0, "latest_mtime_ns": 0, "total_size": 0}
+    latest_mtime_ns = 0
+    total_size = 0
+    count = 0
+    for file_path in folder_path.glob(pattern):
+        if not file_path.is_file():
+            continue
+        stat = file_path.stat()
+        count += 1
+        total_size += stat.st_size
+        latest_mtime_ns = max(latest_mtime_ns, stat.st_mtime_ns)
+    return {
+        "path": str(folder_path),
+        "exists": True,
+        "count": count,
+        "latest_mtime_ns": latest_mtime_ns,
+        "total_size": total_size,
+    }
+
+
+def build_data_dependency_signature():
+    signature = {
+        "excel": file_dependency_signature(DATA_FILE),
+        "market_snapshot": file_dependency_signature(MARKET_SNAPSHOT_FILE),
+        "fundamental_snapshot": file_dependency_signature(FUNDAMENTAL_SNAPSHOT_FILE),
+        "history_cache": folder_dependency_signature(HISTORY_CACHE_DIR, "*.csv"),
+    }
+    return json.dumps(signature, sort_keys=True)
+
+
+def format_data_signature(signature):
+    if not signature:
+        return "-"
+    return hashlib.sha1(signature.encode("utf-8")).hexdigest()[:10]
+
+
+@st.fragment(run_every="60s")
+def watch_data_dependency_changes(active_signature):
+    latest_signature = build_data_dependency_signature()
+    if st.session_state.get("active_data_dependency_signature") is None:
+        st.session_state["active_data_dependency_signature"] = active_signature
+        return
+    if latest_signature != active_signature:
+        st.session_state["active_data_dependency_signature"] = latest_signature
+        st.cache_data.clear()
+        st.rerun()
+
+
 def get_excel_sheet_code_counts():
     rows = []
     try:
@@ -751,7 +816,7 @@ def get_excel_sheet_code_counts():
 
 
 @st.cache_data(show_spinner=False)
-def extract_sheet_codes(sheet_name):
+def extract_sheet_codes(sheet_name, data_signature=None):
     try:
         sheet = pd.read_excel(DATA_FILE, sheet_name=sheet_name)
     except Exception:
@@ -770,14 +835,14 @@ def extract_sheet_codes(sheet_name):
     return set(codes)
 
 
-def build_universe_reconciliation(full_scored, active_scored):
+def build_universe_reconciliation(full_scored, active_scored, data_signature=None):
     full_codes = set(full_scored["Kode"].dropna().astype(str).str.upper()) if "Kode" in full_scored.columns else set()
     active_codes = set(active_scored["Kode"].dropna().astype(str).str.upper()) if "Kode" in active_scored.columns else set()
     idx_mask = full_scored.get("In_IDX_Official", pd.Series(False, index=full_scored.index)).fillna(False)
     idx_codes = set(full_scored.loc[idx_mask, "Kode"].dropna().astype(str).str.upper()) if "Kode" in full_scored.columns else set()
     fallback_codes = full_codes - idx_codes
-    ringkasan_codes = extract_sheet_codes("Ringkasan")
-    metrik_codes = extract_sheet_codes("Metrik")
+    ringkasan_codes = extract_sheet_codes("Ringkasan", data_signature)
+    metrik_codes = extract_sheet_codes("Metrik", data_signature)
 
     rows = [
         {
@@ -4354,7 +4419,7 @@ def apply_threshold_profile(df_input, forced_mode=None):
 
 
 @st.cache_data(show_spinner=False)
-def load_data():
+def load_data(data_signature=None):
     excel_summary, raw = build_excel_fallback_summary()
     universe = load_idx_universe_online()
     universe_error = universe.attrs.get("universe_error")
@@ -4784,7 +4849,10 @@ def calculate_scores(df, weights):
     return scored.sort_values("Score", ascending=False)
 
 
-df, raw_df = load_data()
+data_dependency_signature = build_data_dependency_signature()
+df, raw_df = load_data(data_dependency_signature)
+st.session_state["active_data_dependency_signature"] = data_dependency_signature
+watch_data_dependency_changes(data_dependency_signature)
 data_file_status = get_file_status(DATA_FILE)
 data_update_label = get_data_update_label(raw_df, data_file_status)
 market_session_status = get_market_session_status()
@@ -5102,6 +5170,21 @@ if require_core_thresholds:
 if clean_data_only:
     filtered = filtered[filtered["Clean_Data"]]
 
+dashboard_state = {
+    "data_signature": data_dependency_signature,
+    "data_version": format_data_signature(data_dependency_signature),
+    "raw": raw_df,
+    "base": df,
+    "full_scored": full_scored_df,
+    "active_scored": scored_df,
+    "filtered": filtered,
+    "freshness": data_freshness,
+    "status": data_status,
+    "market_context": market_context,
+    "filter_criteria": active_filter_criteria,
+    "universe_policy": universe_policy_label,
+}
+
 status_cols = st.columns(4)
 status_cols[0].metric("Universe aktif", f"{scored_df['Kode'].nunique():,}", universe_policy_label)
 status_cols[1].metric("Lolos filter", f"{len(filtered):,}")
@@ -5141,7 +5224,7 @@ if market_context.get("Breadth_Error"):
 
 with st.expander("Status data aktif", expanded=False):
     st.caption(
-        "Ringkasan ini otomatis mengikuti data yang sedang dipakai dashboard, termasuk perubahan cache, snapshot, universe, dan jam bursa."
+        "Ringkasan ini otomatis mengikuti data yang sedang dipakai dashboard. Jika Excel, snapshot, atau cache berubah, versi data berubah dan semua tab dihitung ulang dari state yang sama."
     )
     data_status_cols = st.columns(5)
     data_status_cols[0].metric("Sumber aktif", data_status["Source_Label"])
@@ -5150,7 +5233,10 @@ with st.expander("Status data aktif", expanded=False):
     data_status_cols[3].metric("Coverage fundamental", data_status["Online_Fundamental_Coverage_Label"])
     data_status_cols[4].metric("Universe", data_status["Universe_Active_Label"], universe_policy_label)
     st.info(data_status["Market_Action"])
-    st.caption(f"Universe penuh: {data_status['Universe_Total_Label']} kode ({data_status['Universe_Detail']}). {data_status['Session_Detail']}")
+    st.caption(
+        f"Versi data aktif: {dashboard_state['data_version']}. "
+        f"Universe penuh: {data_status['Universe_Total_Label']} kode ({data_status['Universe_Detail']}). {data_status['Session_Detail']}"
+    )
 
 (
     tab_summary,
@@ -7711,7 +7797,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
     )
     universe_summary["Status Kode"] = universe_summary["Status Kode"].replace({"Match BEI/IDX official": "Match BEI/IDX resmi"})
     universe_summary["Sumber Kode"] = universe_summary["Sumber Kode"].replace({"BEI/IDX official": "BEI/IDX resmi"})
-    reconciliation, reconciliation_detail = build_universe_reconciliation(full_scored_df, scored_df)
+    reconciliation, reconciliation_detail = build_universe_reconciliation(full_scored_df, scored_df, data_dependency_signature)
     universe_cols = st.columns(4)
     universe_cols[0].metric("Kode universe", f"{scored_df['Kode'].nunique():,}")
     universe_cols[1].metric("Match BEI/IDX", f"{full_scored_df['In_IDX_Official'].fillna(False).sum():,}")
