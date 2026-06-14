@@ -4589,6 +4589,9 @@ with st.sidebar:
         st.caption(f"Snapshot fundamental repo: {fundamental_snapshot_status['Status']} | Modified: {fundamental_snapshot_status['Last Modified']} | Size: {fundamental_snapshot_status['Ukuran']}")
         cache_status_sidebar = get_history_cache_status()
         st.caption(f"Cache histori: {len(cache_status_sidebar):,} file di `{HISTORY_CACHE_DIR}`")
+        st.info(
+            "Strategi ringan: dashboard membaca snapshot/cache lebih dulu. Refresh online dipakai manual untuk kode prioritas, lalu snapshot dibangun ulang dari cache agar sesi berikutnya cepat."
+        )
         refresh_period = st.selectbox(
             "Periode histori",
             ONLINE_PERIOD_OPTIONS,
@@ -4605,8 +4608,8 @@ with st.sidebar:
                 "Refresh fundamental online",
                 "Clear cache aplikasi",
             ],
-            default=["Refresh histori top saham", "Bangun snapshot pasar dari cache"],
-            help="Pilih aksi update sekali jalan. Saat bursa berjalan, refresh histori dulu lalu bangun snapshot pasar agar data Detail saham tetap cepat.",
+            default=["Bangun snapshot pasar dari cache"],
+            help="Default ringan: bangun snapshot dari cache. Pilih refresh histori/fundamental hanya saat perlu mengambil data online terbaru.",
         )
         run_update = st.button("Jalankan update terpilih", type="primary", disabled=not update_actions)
         if run_update:
@@ -5743,7 +5746,7 @@ with tab_predict.expander("Prediksi probabilistik", expanded=False):
             prediction_period = st.selectbox(
                 "Periode histori prediksi",
                 ONLINE_PERIOD_OPTIONS,
-                index=ONLINE_PERIOD_OPTIONS.index("2y"),
+                index=ONLINE_PERIOD_OPTIONS.index("1y"),
                 format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
                 help=HELP_TEXT["prediction"],
             )
@@ -6390,7 +6393,7 @@ with tab_history:
             chart_style = st.segmented_control("Chart harga", ["Candlestick", "Line"], default="Candlestick")
 
         load_technical = st.toggle("Tampilkan hasil analisa teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari refresh online sementara.")
-        show_auto_scan = st.toggle("Tampilkan ringkasan teknikal top kandidat", value=True, help="Menghitung teknikal otomatis untuk maksimal 5 saham teratas dari hasil filter agar keputusan entry/posisi langsung terlihat.")
+        show_auto_scan = st.toggle("Tampilkan ringkasan teknikal top kandidat", value=False, help="Opsional dan lebih berat: menghitung teknikal untuk maksimal 5 saham teratas dari hasil filter.")
         show_fibonacci = st.toggle("Tampilkan level Fibonacci", value=True, help=HELP_TEXT["fibonacci"])
         if not load_technical:
             st.info("Aktifkan toggle di atas untuk menampilkan Entry Action, Position Action, candlestick, MA, RSI, MACD, ATR, dan Technical Score.")
@@ -6477,29 +6480,6 @@ with tab_history:
                 metric_cols[3].metric("Sinyal", clean_text(latest_tech.get("Technical_Signal")))
                 metric_cols[4].metric("Exit Risk", clean_text(latest_tech.get("Exit_Risk")))
                 metric_cols[5].metric("RSI 14", format_number(latest_tech.get("RSI14")))
-                fib_cols = st.columns(4)
-                fib_cols[0].metric("Fibo Zone", clean_text(latest_tech.get("Fibo_Zone")), help=HELP_TEXT["fibonacci"])
-                fib_cols[1].metric("Nearest Fibo", clean_text(latest_tech.get("Nearest_Fibo_Level")), format_percent(latest_tech.get("Distance_To_Fibo_%")), help=HELP_TEXT["fibonacci"])
-                fib_cols[2].metric("Fibo Score", format_number(latest_tech.get("Fibo_Confluence_Score")), help=HELP_TEXT["fibonacci"])
-                fib_cols[3].metric("Fibo Price", format_rupiah(latest_tech.get("Nearest_Fibo_Price")), help=HELP_TEXT["fibonacci"])
-                astro_cols = st.columns(4)
-                astro_cols[0].metric("Astro-Fibo", clean_text(latest_tech.get("Astro_Fibo_Bias")), format_number(latest_tech.get("Astro_Fibo_Timing_Score")), help=HELP_TEXT["astro_fibo"])
-                astro_cols[1].metric("Time Window", clean_text(latest_tech.get("Time_Window")), help=HELP_TEXT["astro_fibo"])
-                astro_cols[2].metric("Fibo Time", f"{format_number(latest_tech.get('Nearest_Fibo_Time_Day'), 0)}D", help=HELP_TEXT["astro_fibo"])
-                astro_cols[3].metric("Moon Phase", clean_text(latest_tech.get("Moon_Phase")), help=HELP_TEXT["astro_fibo"])
-                sun_cols = st.columns(2)
-                sun_cols[0].metric("Sun Sign", clean_text(latest_tech.get("Sun_Sign")), clean_text(latest_tech.get("Sun_Element")), help=HELP_TEXT["astro_fibo"])
-                sun_cols[1].metric("Sun Window", clean_text(latest_tech.get("Sun_Window")), help=HELP_TEXT["astro_fibo"])
-                planet_cols = st.columns(3)
-                planet_cols[0].metric("Planet Score", format_number(latest_tech.get("Planetary_Cycle_Score")), help=HELP_TEXT["astro_fibo"])
-                planet_cols[1].metric("Jupiter", clean_text(latest_tech.get("Jupiter_Window")), clean_text(latest_tech.get("Jupiter_Sign")), help=HELP_TEXT["astro_fibo"])
-                planet_cols[2].metric("Saturn", clean_text(latest_tech.get("Saturn_Window")), clean_text(latest_tech.get("Saturn_Sign")), help=HELP_TEXT["astro_fibo"])
-                st.caption(f"Ephemeris: {clean_text(latest_tech.get('Ephemeris_Source'))}. {clean_text(latest_tech.get('Planetary_Detail'))}")
-                filter_cols = st.columns(4)
-                filter_cols[0].metric("Ehlers Filter", clean_text(latest_tech.get("Ehlers_Filter_Signal")), f"Cycle {format_number(latest_tech.get('Ehlers_Dominant_Cycle'), 1)}", help=HELP_TEXT["ehlers_filter"])
-                filter_cols[1].metric("Ehlers Level", format_rupiah(latest_tech.get("Ehlers_Filter")), help=HELP_TEXT["ehlers_filter"])
-                filter_cols[2].metric("Donchian Ribbon", clean_text(latest_tech.get("Donchian_Ribbon_Trend")), format_number(latest_tech.get("Donchian_Ribbon_Score")), help=HELP_TEXT["donchian_ribbon"])
-                filter_cols[3].metric("Donchian Mid 20", format_rupiah(latest_tech.get("Donchian_Mid_20")), help=HELP_TEXT["donchian_ribbon"])
                 tech_start = tech_history["Date"].min()
                 tech_end = tech_history["Date"].max()
                 tech_range_label = f"{tech_start:%Y-%m-%d} s.d. {tech_end:%Y-%m-%d}" if pd.notna(tech_start) and pd.notna(tech_end) else "-"
@@ -6508,54 +6488,79 @@ with tab_history:
                     f"Entry: {clean_text(latest_tech.get('Timing_Reason'))} Posisi: {clean_text(latest_tech.get('Position_Reason'))}"
                 )
 
-                decision_columns = [
-                    "Kode",
-                    "Nama Perusahaan",
-                    "Score",
-                    "Recommendation",
-                    "Entry_Action",
-                    "Position_Action",
-                    "Exit_Risk",
-                    "Technical_Score",
-                    "Technical_Signal",
-                    "Ehlers_Filter_Signal",
-                    "Donchian_Ribbon_Trend",
-                    "Donchian_Ribbon_Score",
-                    "RSI14",
-                    "Fibo_Zone",
-                    "Nearest_Fibo_Level",
-                    "Distance_To_Fibo_%",
-                    "Fibo_Confluence_Score",
-                    "Astro_Fibo_Timing_Score",
-                    "Astro_Fibo_Bias",
-                    "Time_Window",
-                    "Planetary_Cycle_Score",
-                    "Planetary_Window",
-                    "Ephemeris_Source",
-                    "ATR_Stop_2x",
-                    "ATR_Stop_Distance_%",
-                    "Timing_Reason",
-                    "Position_Reason",
-                ]
-                st.markdown("**Ringkasan keputusan teknikal**")
-                show_table(
-                    tech_decision[[column for column in decision_columns if column in tech_decision.columns]],
-                    hide_index=True,
-                    column_config={
-                        "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
-                        "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
-                        "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help=HELP_TEXT["donchian_ribbon"]),
-                        "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
-                        "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
-                        "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
-                        "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
-                        "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help=HELP_TEXT["astro_fibo"]),
-                        "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
-                        "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
-                    },
-                )
+                with st.expander("Detail sinyal lanjutan", expanded=False):
+                    fib_cols = st.columns(4)
+                    fib_cols[0].metric("Fibo Zone", clean_text(latest_tech.get("Fibo_Zone")), help=HELP_TEXT["fibonacci"])
+                    fib_cols[1].metric("Nearest Fibo", clean_text(latest_tech.get("Nearest_Fibo_Level")), format_percent(latest_tech.get("Distance_To_Fibo_%")), help=HELP_TEXT["fibonacci"])
+                    fib_cols[2].metric("Fibo Score", format_number(latest_tech.get("Fibo_Confluence_Score")), help=HELP_TEXT["fibonacci"])
+                    fib_cols[3].metric("Fibo Price", format_rupiah(latest_tech.get("Nearest_Fibo_Price")), help=HELP_TEXT["fibonacci"])
+                    filter_cols = st.columns(4)
+                    filter_cols[0].metric("Ehlers Filter", clean_text(latest_tech.get("Ehlers_Filter_Signal")), f"Cycle {format_number(latest_tech.get('Ehlers_Dominant_Cycle'), 1)}", help=HELP_TEXT["ehlers_filter"])
+                    filter_cols[1].metric("Ehlers Level", format_rupiah(latest_tech.get("Ehlers_Filter")), help=HELP_TEXT["ehlers_filter"])
+                    filter_cols[2].metric("Donchian Ribbon", clean_text(latest_tech.get("Donchian_Ribbon_Trend")), format_number(latest_tech.get("Donchian_Ribbon_Score")), help=HELP_TEXT["donchian_ribbon"])
+                    filter_cols[3].metric("Donchian Mid 20", format_rupiah(latest_tech.get("Donchian_Mid_20")), help=HELP_TEXT["donchian_ribbon"])
+                    astro_cols = st.columns(4)
+                    astro_cols[0].metric("Astro-Fibo", clean_text(latest_tech.get("Astro_Fibo_Bias")), format_number(latest_tech.get("Astro_Fibo_Timing_Score")), help=HELP_TEXT["astro_fibo"])
+                    astro_cols[1].metric("Time Window", clean_text(latest_tech.get("Time_Window")), help=HELP_TEXT["astro_fibo"])
+                    astro_cols[2].metric("Fibo Time", f"{format_number(latest_tech.get('Nearest_Fibo_Time_Day'), 0)}D", help=HELP_TEXT["astro_fibo"])
+                    astro_cols[3].metric("Moon Phase", clean_text(latest_tech.get("Moon_Phase")), help=HELP_TEXT["astro_fibo"])
+                    sun_cols = st.columns(2)
+                    sun_cols[0].metric("Sun Sign", clean_text(latest_tech.get("Sun_Sign")), clean_text(latest_tech.get("Sun_Element")), help=HELP_TEXT["astro_fibo"])
+                    sun_cols[1].metric("Sun Window", clean_text(latest_tech.get("Sun_Window")), help=HELP_TEXT["astro_fibo"])
+                    planet_cols = st.columns(3)
+                    planet_cols[0].metric("Planet Score", format_number(latest_tech.get("Planetary_Cycle_Score")), help=HELP_TEXT["astro_fibo"])
+                    planet_cols[1].metric("Jupiter", clean_text(latest_tech.get("Jupiter_Window")), clean_text(latest_tech.get("Jupiter_Sign")), help=HELP_TEXT["astro_fibo"])
+                    planet_cols[2].metric("Saturn", clean_text(latest_tech.get("Saturn_Window")), clean_text(latest_tech.get("Saturn_Sign")), help=HELP_TEXT["astro_fibo"])
+                    st.caption(f"Ephemeris: {clean_text(latest_tech.get('Ephemeris_Source'))}. {clean_text(latest_tech.get('Planetary_Detail'))}")
 
-                with st.expander("Trade plan & position sizing", expanded=True):
+                    decision_columns = [
+                        "Kode",
+                        "Nama Perusahaan",
+                        "Score",
+                        "Recommendation",
+                        "Entry_Action",
+                        "Position_Action",
+                        "Exit_Risk",
+                        "Technical_Score",
+                        "Technical_Signal",
+                        "Ehlers_Filter_Signal",
+                        "Donchian_Ribbon_Trend",
+                        "Donchian_Ribbon_Score",
+                        "RSI14",
+                        "Fibo_Zone",
+                        "Nearest_Fibo_Level",
+                        "Distance_To_Fibo_%",
+                        "Fibo_Confluence_Score",
+                        "Astro_Fibo_Timing_Score",
+                        "Astro_Fibo_Bias",
+                        "Time_Window",
+                        "Planetary_Cycle_Score",
+                        "Planetary_Window",
+                        "Ephemeris_Source",
+                        "ATR_Stop_2x",
+                        "ATR_Stop_Distance_%",
+                        "Timing_Reason",
+                        "Position_Reason",
+                    ]
+                    st.markdown("**Ringkasan keputusan teknikal**")
+                    show_table(
+                        tech_decision[[column for column in decision_columns if column in tech_decision.columns]],
+                        hide_index=True,
+                        column_config={
+                            "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
+                            "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                            "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help=HELP_TEXT["donchian_ribbon"]),
+                            "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
+                            "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
+                            "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
+                            "Nearest_Fibo_Time_Day": st.column_config.NumberColumn("Fibo Time", format="%.0fD", help=HELP_TEXT["astro_fibo"]),
+                            "Planetary_Cycle_Score": st.column_config.NumberColumn("Planet Score", format="%.1f", help=HELP_TEXT["astro_fibo"]),
+                            "ATR_Stop_2x": st.column_config.NumberColumn("ATR Stop 2x", format="%.0f", help=HELP_TEXT["atr_stop"]),
+                            "ATR_Stop_Distance_%": st.column_config.NumberColumn("Jarak Stop", format="%.1f%%", help=HELP_TEXT["atr_stop"]),
+                        },
+                    )
+
+                with st.expander("Trade plan & position sizing", expanded=False):
                     st.caption("Gunakan sebagai alat perencanaan risiko. Dashboard tidak memakai harga beli pribadi dan tidak membuat instruksi order otomatis.")
                     close_value = pd.to_numeric(latest_tech.get("Close"), errors="coerce")
                     atr_stop_value = pd.to_numeric(latest_tech.get("ATR_Stop_2x"), errors="coerce")
