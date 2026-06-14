@@ -5594,8 +5594,7 @@ with tab_summary:
             else:
                 st.caption("Gunakan insight ini sebagai daftar awal; ranking detail ada di Cari Saham dan audit sumber ada di Audit Data.")
 
-        with st.container(border=True):
-            st.markdown("**Konteks market & freshness**")
+        with st.expander("Konteks market & freshness", expanded=False):
             regime_cols = st.columns(5)
             regime_cols[0].metric("Regime", clean_text(market_context.get("Market_Regime")), clean_text(market_context.get("Breadth_Label")))
             regime_cols[1].metric("IHSG", format_number(market_context.get("IHSG_Close")), f"MA200 {format_number(market_context.get('IHSG_MA200'))}")
@@ -5670,52 +5669,41 @@ with tab_summary:
                     fig.update_layout(height=330, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
                     show_chart(fig)
 
-        overview_cols = st.columns([1.2, 1])
-        with overview_cols[0]:
-            st.write("Top kandidat")
-            top_summary_columns = [
-                "Kode",
-                "Nama Perusahaan",
-                "Final_Action",
-                "Decision_Confidence",
-                "Recommendation",
-                "Risk_Level",
-                "Clean_Data",
-                "Decision_Summary",
-                "Score",
-                "Sector_Relative_Score",
-                "Threshold_Pass_Ratio",
-                "Penutupan",
-                "PER",
-                "PBV",
-                "ROE",
-                "Return_52W",
-                "Price_Source",
-                "Next_Step",
-            ]
-            top_summary = summary_chart_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
-            show_table(
-                top_summary[[column for column in top_summary_columns if column in top_summary.columns]],
-                hide_index=True,
-                column_config={
-                    "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
-                    "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
-                    "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
-                    "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
-                    "Volume": st.column_config.NumberColumn("Volume", format="%.0f", help=HELP_TEXT["volume"]),
-                    "Market_Cap": st.column_config.NumberColumn("Market Cap", format="Rp %.0f", help="Kapitalisasi pasar dari sheet Metrik bila tersedia."),
-                    "Revenue": st.column_config.NumberColumn("Revenue", format="Rp %.0f", help="Total revenue dari sheet Metrik bila tersedia."),
-                    "Sales_Multiple": st.column_config.NumberColumn("MCap/Revenue", format="%.2f", help="Market cap dibagi total revenue. Dipakai sebagai konteks tambahan, bukan rumus utama score."),
-                    "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help="Return satu tahun terakhir untuk membandingkan saham fokus dengan shortlist."),
-                    "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
-                    "Final_Action": st.column_config.TextColumn("Aksi Akhir", help="Aksi ringkas untuk daftar top kandidat di Beranda; cek Detail Saham untuk timing entry."),
-                    "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help="Level keyakinan keputusan; turun jika ada blocker seperti risk high, threshold rendah, atau market risk-off."),
-                    "Decision_Blockers": st.column_config.TextColumn("Penghambat", help="Alasan utama saham belum layak naik kelas, misalnya data belum bersih, risiko tinggi, atau relatif sektor lemah."),
-                    "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help="Tindakan praktis berikutnya untuk user: cek entry, tunggu konfirmasi, review data, atau hindari."),
-                },
-            )
-        with overview_cols[1]:
-            st.write("Matriks faktor top score")
+        st.write("Top kandidat")
+        top_summary_columns = [
+            "Kode",
+            "Nama Perusahaan",
+            "Final_Action",
+            "Decision_Confidence",
+            "Risk_Level",
+            "Clean_Data",
+            "Score",
+            "Sector_Relative_Score",
+            "Threshold_Pass_Ratio",
+            "Penutupan",
+            "Return_52W",
+            "Price_Source",
+            "Next_Step",
+        ]
+        top_summary = summary_chart_data.sort_values(["Score", "Threshold_Pass_Ratio", "Liquidity_Score"], ascending=False).head(15)
+        show_table(
+            top_summary[[column for column in top_summary_columns if column in top_summary.columns]],
+            hide_index=True,
+            column_config={
+                "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
+                "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
+                "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
+                "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
+                "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help="Return satu tahun terakhir untuk membandingkan saham fokus dengan shortlist."),
+                "Clean_Data": st.column_config.CheckboxColumn("Clean Data", help=HELP_TEXT["clean_data"]),
+                "Final_Action": st.column_config.TextColumn("Aksi Akhir", help="Aksi ringkas untuk daftar top kandidat di Beranda; cek Detail Saham untuk timing entry."),
+                "Decision_Confidence": st.column_config.TextColumn("Keyakinan", help="Level keyakinan keputusan; turun jika ada blocker seperti risk high, threshold rendah, atau market risk-off."),
+                "Decision_Blockers": st.column_config.TextColumn("Penghambat", help="Alasan utama saham belum layak naik kelas, misalnya data belum bersih, risiko tinggi, atau relatif sektor lemah."),
+                "Next_Step": st.column_config.TextColumn("Langkah Berikutnya", help="Tindakan praktis berikutnya untuk user: cek entry, tunggu konfirmasi, review data, atau hindari."),
+            },
+        )
+
+        with st.expander("Matriks faktor top score", expanded=False):
             factor_columns = ["Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Index_Score"]
             factor_matrix = summary_chart_data.sort_values("Score", ascending=False).head(12).set_index("Kode")[
                 [column for column in factor_columns if column in summary_chart_data.columns]
@@ -8134,7 +8122,7 @@ with tab_sector.expander("Analisis sektor", expanded=False):
         },
     )
 
-with tab_quality.expander("Ringkasan kualitas data", expanded=True):
+with tab_quality.expander("Ringkasan kualitas data", expanded=False):
     st.subheader("Ringkasan kualitas data")
     quality_report = build_data_quality_report(scored_df, raw_df)
     review_count = int((quality_report["Rows"].gt(0) & ~quality_report["Severity"].eq("Info")).sum())
