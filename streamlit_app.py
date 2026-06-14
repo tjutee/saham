@@ -278,7 +278,7 @@ HELP_TEXT = {
     "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai hasil Cari Saham.",
     "audit_code": "Pilih satu atau beberapa kode saham untuk melihat alasan lolos/gagal pada filter aktif dan preset pembanding.",
     "audit_scope": "Cakupan audit filter. Semua saham mengecek seluruh universe final, Hasil filter aktif hanya saham yang lolos filter sidebar, Kode pilihan untuk investigasi spesifik.",
-    "universe_audit": "Universe utama memakai kode yang match BEI/IDX resmi. Kode fallback non-BEI tetap ditampilkan untuk audit, tetapi tidak otomatis masuk analisis utama bila data BEI resmi tersedia.",
+    "universe_audit": "Universe adalah semua kode hasil merge dari BEI/IDX, fallback online, dan Excel. Universe analisis default hanya memakai kode yang match BEI/IDX resmi; fallback tetap tersedia untuk audit.",
     "refresh_period": "Periode histori online untuk auto update cache. Pilih pendek untuk pembaruan cepat, panjang untuk analisis/teknikal yang lebih stabil.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
@@ -855,10 +855,16 @@ def build_universe_reconciliation(full_scored, active_scored, data_signature=Non
 
     rows = [
         {
-            "Area": "Universe aktif",
+            "Area": "Universe merge semua sumber",
+            "Jumlah": len(full_codes),
+            "Status": "Basis audit",
+            "Catatan": "Gabungan BEI/IDX, fallback online, dan Excel setelah deduplikasi kode.",
+        },
+        {
+            "Area": "Universe analisis",
             "Jumlah": len(active_codes),
             "Status": "Dipakai analisis",
-            "Catatan": "Mengikuti kebijakan cakupan di sidebar.",
+            "Catatan": "Mengikuti kebijakan cakupan di sidebar; default fokus pada kode resmi BEI/IDX.",
         },
         {
             "Area": "Match BEI/IDX resmi",
@@ -5228,7 +5234,7 @@ dashboard_state = {
 }
 
 status_cols = st.columns(4)
-status_cols[0].metric("Universe aktif", f"{scored_df['Kode'].nunique():,}", universe_policy_label)
+status_cols[0].metric("Universe analisis", f"{scored_df['Kode'].nunique():,}", universe_policy_label)
 status_cols[1].metric("Lolos filter", f"{len(filtered):,}")
 status_cols[2].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filtered) else "-")
 status_cols[3].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
@@ -5273,11 +5279,11 @@ with st.expander("Status data aktif", expanded=False):
     data_status_cols[1].metric("Latest online", data_status["Latest_Online_Label"], data_status["Online_Lag_Label"])
     data_status_cols[2].metric("Coverage harga", data_status["Online_Price_Coverage_Label"], f"Stale {data_status['Stale_Rows_Label']}")
     data_status_cols[3].metric("Coverage fundamental", data_status["Online_Fundamental_Coverage_Label"])
-    data_status_cols[4].metric("Universe", data_status["Universe_Active_Label"], universe_policy_label)
+    data_status_cols[4].metric("Universe analisis", data_status["Universe_Active_Label"], universe_policy_label)
     st.info(data_status["Market_Action"])
     st.caption(
         f"Versi data aktif: {dashboard_state['data_version']}. "
-        f"Universe penuh: {data_status['Universe_Total_Label']} kode ({data_status['Universe_Detail']}). {data_status['Session_Detail']}"
+        f"Universe merge semua sumber: {data_status['Universe_Total_Label']} kode ({data_status['Universe_Detail']}). {data_status['Session_Detail']}"
     )
 
 (
@@ -6637,22 +6643,22 @@ with tab_history:
             "Price_Source",
             "Next_Step",
         ]
-        st.markdown("**Perbandingan shortlist**")
-        show_table(
-            shortlist_view[[column for column in shortlist_columns if column in shortlist_view.columns]].sort_values("Score", ascending=False),
-            hide_index=True,
-            column_config={
-                "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
-                "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
-                "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
-                "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
-                "PER": st.column_config.NumberColumn("PER", format="%.2f", help=HELP_TEXT["per"]),
-                "PBV": st.column_config.NumberColumn("PBV", format="%.2f", help=HELP_TEXT["pbv"]),
-                "ROE": st.column_config.NumberColumn("ROE", format="%.1f%%", help=HELP_TEXT["roe"]),
-                "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
-                "Clean_Data": st.column_config.CheckboxColumn("Clean", help=HELP_TEXT["clean_data"]),
-            },
-        )
+        with st.expander("Perbandingan shortlist", expanded=False):
+            show_table(
+                shortlist_view[[column for column in shortlist_columns if column in shortlist_view.columns]].sort_values("Score", ascending=False),
+                hide_index=True,
+                column_config={
+                    "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["score"]),
+                    "Sector_Relative_Score": st.column_config.ProgressColumn("Relatif Sektor", min_value=0, max_value=100, format="%.1f", help=HELP_TEXT["sector_relative"]),
+                    "Threshold_Pass_Ratio": st.column_config.ProgressColumn("Threshold", min_value=0, max_value=100, format="%.0f%%", help=HELP_TEXT["threshold_ratio"]),
+                    "Penutupan": st.column_config.NumberColumn("Harga", format="Rp %.0f", help=HELP_TEXT["price"]),
+                    "PER": st.column_config.NumberColumn("PER", format="%.2f", help=HELP_TEXT["per"]),
+                    "PBV": st.column_config.NumberColumn("PBV", format="%.2f", help=HELP_TEXT["pbv"]),
+                    "ROE": st.column_config.NumberColumn("ROE", format="%.1f%%", help=HELP_TEXT["roe"]),
+                    "Return_52W": st.column_config.NumberColumn("52W", format="%.1f%%", help=HELP_TEXT["return"]),
+                    "Clean_Data": st.column_config.CheckboxColumn("Clean", help=HELP_TEXT["clean_data"]),
+                },
+            )
 
         focus_stock = scored_df[scored_df["Kode"].astype(str).str.upper().eq(focus_code)].head(1)
         if not focus_stock.empty:
@@ -6736,7 +6742,7 @@ with tab_history:
         default="Line",
         help=HELP_TEXT["history_chart_type"],
     )
-    show_history_table = st.toggle("Tampilkan tabel ringkasan histori", value=True, help=HELP_TEXT["history_table"])
+    show_history_table = st.toggle("Tampilkan tabel ringkasan histori", value=False, help=HELP_TEXT["history_table"])
 
     if chart_scope == "All/top N hasil filter":
         selected_codes = history_source.head(top_n_history)["Kode"].tolist()
@@ -7017,13 +7023,12 @@ with tab_history:
                 tech_decision = add_entry_decision(tech_summary, scored_df)
                 latest_tech = tech_decision.iloc[0] if not tech_decision.empty else pd.Series(dtype=object)
 
-                metric_cols = st.columns(6)
+                metric_cols = st.columns(5)
                 metric_cols[0].metric("Entry Action", clean_text(latest_tech.get("Entry_Action")), help=HELP_TEXT["entry_action"])
                 metric_cols[1].metric("Position Action", clean_text(latest_tech.get("Position_Action")), help=HELP_TEXT["position_action"])
                 metric_cols[2].metric("Technical Score", format_number(latest_tech.get("Technical_Score")), help=HELP_TEXT["technical_score"])
                 metric_cols[3].metric("Sinyal", clean_text(latest_tech.get("Technical_Signal")))
                 metric_cols[4].metric("Exit Risk", clean_text(latest_tech.get("Exit_Risk")))
-                metric_cols[5].metric("RSI 14", format_number(latest_tech.get("RSI14")))
                 tech_start = tech_history["Date"].min()
                 tech_end = tech_history["Date"].max()
                 tech_range_label = f"{tech_start:%Y-%m-%d} s.d. {tech_end:%Y-%m-%d}" if pd.notna(tech_start) and pd.notna(tech_end) else "-"
@@ -7176,9 +7181,9 @@ with tab_history:
                 with indicator_cols[1]:
                     show_donchian_ribbon = st.toggle("Donchian ribbon bar", value=True, help=HELP_TEXT["donchian_ribbon"])
                 with indicator_cols[2]:
-                    show_astro_fibo_chart = st.toggle("Astro-Fibo bar", value=True, help=HELP_TEXT["astro_fibo"])
+                    show_astro_fibo_chart = st.toggle("Astro-Fibo bar", value=False, help=HELP_TEXT["astro_fibo"])
                 with indicator_cols[3]:
-                    show_planet_sine_chart = st.toggle("Planet sinusoidal", value=True, help=HELP_TEXT["astro_fibo"])
+                    show_planet_sine_chart = st.toggle("Planet sinusoidal", value=False, help=HELP_TEXT["astro_fibo"])
                 with indicator_cols[4]:
                     st.caption("Layout seperti TradingView: candlestick di atas, indikator ditumpuk sebagai bar/ribbon di bawah dengan tanggal yang sama.")
 
@@ -7495,7 +7500,7 @@ with tab_history:
                                     hovertemplate=(
                                         "Tanggal=%{x|%Y-%m-%d}<br>"
                                         f"{body} sin=%{{y:.2f}}<br>"
-                                        "Longitude=%{customdata[0]}°<br>"
+                                        "Longitude=%{customdata[0]} deg<br>"
                                         "Sign=%{customdata[1]}<br>"
                                         "Window=%{customdata[2]}<extra></extra>"
                                     ),
@@ -7545,22 +7550,23 @@ with tab_history:
                 fig.update_xaxes(title_text="Tanggal", row=1 + len(stacked_panels), col=1)
                 show_chart(fig)
 
-                lower_cols = st.columns([1, 1])
-                with lower_cols[0]:
-                    momentum_panel = price_panel[["Date", "RSI14", "MACD", "MACD_Signal"]].copy()
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["RSI14"], mode="lines", name="RSI14", line=dict(color="#2563eb")))
-                    fig.add_hline(y=70, line_dash="dash", line_color="#ea580c")
-                    fig.add_hline(y=30, line_dash="dash", line_color="#15803d")
-                    fig.update_layout(title="RSI 14", height=320, yaxis_title="RSI", margin=dict(l=20, r=20, t=60, b=40))
-                    show_chart(fig)
-                with lower_cols[1]:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD"], mode="lines", name="MACD", line=dict(color="#7c3aed")))
-                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD_Signal"], mode="lines", name="Signal", line=dict(color="#ca8a04")))
-                    fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
-                    fig.update_layout(title="MACD", height=320, yaxis_title="MACD", margin=dict(l=20, r=20, t=60, b=40))
-                    show_chart(fig)
+                with st.expander("Momentum lanjutan: RSI & MACD", expanded=False):
+                    lower_cols = st.columns([1, 1])
+                    with lower_cols[0]:
+                        momentum_panel = price_panel[["Date", "RSI14", "MACD", "MACD_Signal"]].copy()
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["RSI14"], mode="lines", name="RSI14", line=dict(color="#2563eb")))
+                        fig.add_hline(y=70, line_dash="dash", line_color="#ea580c")
+                        fig.add_hline(y=30, line_dash="dash", line_color="#15803d")
+                        fig.update_layout(title="RSI 14", height=320, yaxis_title="RSI", margin=dict(l=20, r=20, t=60, b=40))
+                        show_chart(fig)
+                    with lower_cols[1]:
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD"], mode="lines", name="MACD", line=dict(color="#7c3aed")))
+                        fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD_Signal"], mode="lines", name="Signal", line=dict(color="#ca8a04")))
+                        fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
+                        fig.update_layout(title="MACD", height=320, yaxis_title="MACD", margin=dict(l=20, r=20, t=60, b=40))
+                        show_chart(fig)
 
                 detail_columns = [
                     "Date",
@@ -7976,7 +7982,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
     universe_summary["Sumber Kode"] = universe_summary["Sumber Kode"].replace({"BEI/IDX official": "BEI/IDX resmi"})
     reconciliation, reconciliation_detail = build_universe_reconciliation(full_scored_df, scored_df, data_dependency_signature)
     universe_cols = st.columns(4)
-    universe_cols[0].metric("Kode universe", f"{scored_df['Kode'].nunique():,}")
+    universe_cols[0].metric("Universe merge", f"{full_scored_df['Kode'].nunique():,}", f"Analisis {scored_df['Kode'].nunique():,}")
     universe_cols[1].metric("Match BEI/IDX", f"{full_scored_df['In_IDX_Official'].fillna(False).sum():,}")
     universe_cols[2].metric("Fallback audit", f"{(~full_scored_df['In_IDX_Official'].fillna(False)).sum():,}")
     universe_cols[3].metric("Sumber aktif", f"{full_scored_df['Universe_Source'].nunique():,}")
