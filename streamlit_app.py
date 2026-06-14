@@ -7289,7 +7289,7 @@ with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True)
             st.warning(f"Ada {len(diff_codes):,} kode yang tidak match dengan daftar resmi BEI/IDX dan tetap dipertahankan dari fallback.")
             show_table(diff_codes, hide_index=True)
 
-    with st.expander("Kelengkapan kolom & sumber data", expanded=True):
+    with st.expander("Kelengkapan kolom & sumber data", expanded=False):
         completeness_report = build_completeness_report(scored_df)
         completeness_metric = completeness_report.groupby("Grup", as_index=False)["Coverage"].mean().sort_values("Coverage")
         source_mix = build_source_mix(scored_df)
@@ -7336,7 +7336,7 @@ with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True)
             },
         )
 
-    with st.expander("Audit Kode Saham: alasan lolos/gagal filter", expanded=True):
+    with st.expander("Audit Kode Saham: alasan lolos/gagal filter", expanded=False):
         audit_scope = st.radio(
             "Cakupan audit",
             ["Semua saham", "Hasil filter aktif", "Kode pilihan"],
@@ -7492,7 +7492,7 @@ with tab_quality.expander("Kualitas data, freshness, dan update", expanded=True)
         else:
             show_table(cache_status.sort_values("Modified", ascending=False).head(50), hide_index=True)
 
-    with st.expander("Workflow rutin yang disarankan", expanded=True):
+    with st.expander("Workflow rutin yang disarankan", expanded=False):
         st.markdown(
             """
             1. Ambil universe kode dari daftar resmi BEI/IDX sebagai sumber utama.
