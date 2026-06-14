@@ -261,6 +261,8 @@ HELP_TEXT = {
     "technical_period": "Rentang OHLCV online untuk analisa teknikal fokus detail. Periode pendek cocok untuk RSI/MACD cepat; 1-2 tahun lebih stabil untuk MA200, 52W, ATR, dan Fibonacci.",
     "technical_code": "Kode teknikal default mengikuti Fokus detail di Detail saham. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
+    "ehlers_filter": "Ehlers-style Auto Tune Filter memakai estimasi dominant cycle dari autocorrelation rolling untuk memilih periode smoothing adaptif. Ini implementasi transparan, bukan formula proprietary.",
+    "donchian_ribbon": "Donchian Trend Ribbon memakai beberapa kanal Donchian: upper = highest high N, lower = lowest low N, middle = rata-rata upper/lower. Score membaca berapa banyak horizon yang sedang bullish.",
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif. Kosongkan pilihan untuk menampilkan semua sinyal.",
     "entry_action": "Entry_Action menggabungkan fundamental dan teknikal: fundamental memilih saham layak, teknikal menentukan timing entry/tunggu/tahan/take profit. Kosongkan filter untuk menampilkan semua aksi entry.",
     "position_action": "Position_Action adalah arahan umum untuk saham yang sudah dimiliki, tanpa memakai harga beli pribadi. Kosongkan filter untuk menampilkan semua aksi posisi.",
@@ -2360,6 +2362,99 @@ def compute_rsi(close, window=14):
     return rsi.clip(0, 100)
 
 
+def estimate_dominant_cycle(close, min_period=10, max_period=48):
+    prices = pd.to_numeric(close, errors="coerce").astype(float)
+    output = pd.Series(np.nan, index=prices.index, dtype="float64")
+    for position in range(len(prices)):
+        best_period = np.nan
+        best_corr = -np.inf
+        for period in range(min_period, max_period + 1):
+            lookback = period * 2
+            if position + 1 < lookback:
+                continue
+            window = prices.iloc[position + 1 - lookback : position + 1]
+            current = window.iloc[period:].to_numpy(dtype=float)
+            lagged = window.iloc[:-period].to_numpy(dtype=float)
+            valid = np.isfinite(current) & np.isfinite(lagged)
+            if valid.sum() < max(6, period // 2):
+                continue
+            corr = np.corrcoef(current[valid], lagged[valid])[0, 1]
+            if np.isfinite(corr) and corr > best_corr:
+                best_corr = corr
+                best_period = period
+        output.iloc[position] = best_period
+    return output.ffill().fillna((min_period + max_period) / 2).clip(min_period, max_period)
+
+
+def compute_ehlers_auto_tune_filter(close, min_period=10, max_period=48):
+    prices = pd.to_numeric(close, errors="coerce").astype(float)
+    dominant_cycle = estimate_dominant_cycle(prices, min_period=min_period, max_period=max_period)
+    tuned_filter = pd.Series(np.nan, index=prices.index, dtype="float64")
+    for position, price in enumerate(prices):
+        if not np.isfinite(price):
+            tuned_filter.iloc[position] = tuned_filter.iloc[position - 1] if position else np.nan
+            continue
+        if position == 0 or not np.isfinite(tuned_filter.iloc[position - 1]):
+            tuned_filter.iloc[position] = price
+            continue
+        cycle = dominant_cycle.iloc[position] if np.isfinite(dominant_cycle.iloc[position]) else 20
+        alpha = float(np.clip(2 / (cycle + 1), 0.04, 0.35))
+        tuned_filter.iloc[position] = tuned_filter.iloc[position - 1] + alpha * (price - tuned_filter.iloc[position - 1])
+    slope = tuned_filter.diff()
+    return pd.DataFrame(
+        {
+            "Ehlers_Dominant_Cycle": dominant_cycle.round(1),
+            "Ehlers_Filter": tuned_filter,
+            "Ehlers_Filter_Slope": slope,
+            "Ehlers_Filter_Signal": np.select(
+                [
+                    prices.gt(tuned_filter) & slope.gt(0),
+                    prices.lt(tuned_filter) & slope.lt(0),
+                    prices.gt(tuned_filter),
+                    prices.lt(tuned_filter),
+                ],
+                ["Bullish Tune", "Bearish Tune", "Above Filter", "Below Filter"],
+                default="Neutral",
+            ),
+        },
+        index=prices.index,
+    )
+
+
+def compute_donchian_trend_ribbon(high, low, close, periods=(10, 20, 40, 80)):
+    high = pd.to_numeric(high, errors="coerce").astype(float)
+    low = pd.to_numeric(low, errors="coerce").astype(float)
+    close = pd.to_numeric(close, errors="coerce").astype(float)
+    ribbon = pd.DataFrame(index=close.index)
+    bullish_layers = []
+    bearish_layers = []
+    for period in periods:
+        upper = high.rolling(period, min_periods=max(3, period // 2)).max()
+        lower = low.rolling(period, min_periods=max(3, period // 2)).min()
+        middle = (upper + lower) / 2
+        ribbon[f"Donchian_Upper_{period}"] = upper
+        ribbon[f"Donchian_Lower_{period}"] = lower
+        ribbon[f"Donchian_Mid_{period}"] = middle
+        bullish_layers.append(close.gt(middle) & middle.diff().ge(0))
+        bearish_layers.append(close.lt(middle) & middle.diff().le(0))
+    bullish_count = pd.concat(bullish_layers, axis=1).sum(axis=1)
+    bearish_count = pd.concat(bearish_layers, axis=1).sum(axis=1)
+    total_layers = max(len(periods), 1)
+    score = ((bullish_count - bearish_count) / total_layers * 50 + 50).clip(0, 100)
+    ribbon["Donchian_Ribbon_Score"] = score.round(1)
+    ribbon["Donchian_Ribbon_Trend"] = np.select(
+        [
+            score.ge(75),
+            score.ge(60),
+            score.le(25),
+            score.le(40),
+        ],
+        ["Strong Uptrend", "Uptrend", "Strong Downtrend", "Downtrend"],
+        default="Range",
+    )
+    return ribbon
+
+
 def build_technical_indicators(history):
     if history.empty:
         return pd.DataFrame()
@@ -2399,6 +2494,9 @@ def build_technical_indicators(history):
         tech["Trend_Bullish"] = (close > tech["MA50"]) & (tech["MA50"] > tech["MA200"])
         tech["MACD_Bullish"] = tech["MACD"] > tech["MACD_Signal"]
         tech["Volume_Confirm"] = tech["Volume_Ratio"] >= 1
+        ehlers_filter = compute_ehlers_auto_tune_filter(close)
+        donchian_ribbon = compute_donchian_trend_ribbon(high, low, close)
+        tech = pd.concat([tech, ehlers_filter, donchian_ribbon], axis=1)
         frames.append(tech)
 
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -2834,12 +2932,29 @@ def summarize_technical_indicators(technical_history):
     latest["MACD_Score"] = np.where(latest["MACD_Bullish"], 80, 35)
     latest["Volume_Score"] = score_target_range(latest["Volume_Ratio"], low=0.5, high=2.0, center=1.2)
     latest["Volatility_Score"] = (100 - (latest["ATR_%"].fillna(6) / 12 * 100)).clip(0, 100)
+    ehlers_signal = latest.get("Ehlers_Filter_Signal", pd.Series("Neutral", index=latest.index)).astype(str)
+    latest["Ehlers_Filter_Score"] = np.select(
+        [
+            ehlers_signal.eq("Bullish Tune"),
+            ehlers_signal.eq("Above Filter"),
+            ehlers_signal.eq("Below Filter"),
+            ehlers_signal.eq("Bearish Tune"),
+        ],
+        [85, 65, 40, 20],
+        default=50,
+    )
+    latest["Donchian_Ribbon_Filter_Score"] = pd.to_numeric(
+        latest.get("Donchian_Ribbon_Score", pd.Series(50, index=latest.index)),
+        errors="coerce",
+    ).fillna(50)
     latest["Technical_Score"] = (
-        latest["Trend_Score"] * 0.30
-        + latest["RSI_Score"] * 0.20
-        + latest["MACD_Score"] * 0.20
-        + latest["Volume_Score"] * 0.15
-        + latest["Volatility_Score"] * 0.15
+        latest["Trend_Score"] * 0.25
+        + latest["RSI_Score"] * 0.15
+        + latest["MACD_Score"] * 0.15
+        + latest["Volume_Score"] * 0.10
+        + latest["Volatility_Score"] * 0.10
+        + latest["Ehlers_Filter_Score"] * 0.10
+        + latest["Donchian_Ribbon_Filter_Score"] * 0.15
     ).round(1)
     latest["Technical_Signal"] = np.select(
         [
@@ -2858,6 +2973,8 @@ def summarize_technical_indicators(technical_history):
                 ("trend bullish", bool(row.get("Trend_Bullish"))),
                 ("MACD bullish", bool(row.get("MACD_Bullish"))),
                 ("volume confirm", bool(row.get("Volume_Confirm"))),
+                ("Ehlers bullish", row.get("Ehlers_Filter_Signal") == "Bullish Tune"),
+                ("Donchian uptrend", row.get("Donchian_Ribbon_Trend") in {"Strong Uptrend", "Uptrend"}),
                 ("RSI tinggi", pd.notna(row.get("RSI14")) and row.get("RSI14") >= 70),
                 ("volatilitas tinggi", pd.notna(row.get("ATR_%")) and row.get("ATR_%") >= 8),
             ]
@@ -3296,12 +3413,29 @@ def add_historical_technical_scores(technical_history):
     output["MACD_Score"] = np.where(output["MACD_Bullish"], 80, 35)
     output["Volume_Score"] = score_target_range(output["Volume_Ratio"], low=0.5, high=2.0, center=1.2)
     output["Volatility_Score"] = (100 - (output["ATR_%"].fillna(6) / 12 * 100)).clip(0, 100)
+    ehlers_signal = output.get("Ehlers_Filter_Signal", pd.Series("Neutral", index=output.index)).astype(str)
+    output["Ehlers_Filter_Score"] = np.select(
+        [
+            ehlers_signal.eq("Bullish Tune"),
+            ehlers_signal.eq("Above Filter"),
+            ehlers_signal.eq("Below Filter"),
+            ehlers_signal.eq("Bearish Tune"),
+        ],
+        [85, 65, 40, 20],
+        default=50,
+    )
+    output["Donchian_Ribbon_Filter_Score"] = pd.to_numeric(
+        output.get("Donchian_Ribbon_Score", pd.Series(50, index=output.index)),
+        errors="coerce",
+    ).fillna(50)
     output["Technical_Score"] = (
-        output["Trend_Score"] * 0.30
-        + output["RSI_Score"] * 0.20
-        + output["MACD_Score"] * 0.20
-        + output["Volume_Score"] * 0.15
-        + output["Volatility_Score"] * 0.15
+        output["Trend_Score"] * 0.25
+        + output["RSI_Score"] * 0.15
+        + output["MACD_Score"] * 0.15
+        + output["Volume_Score"] * 0.10
+        + output["Volatility_Score"] * 0.10
+        + output["Ehlers_Filter_Score"] * 0.10
+        + output["Donchian_Ribbon_Filter_Score"] * 0.15
     ).round(1)
     output["Technical_Signal"] = np.select(
         [
@@ -4364,7 +4498,7 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
 
         **Rumus ringkas**
         - `Score = weighted average(faktor) - penalty`, dibatasi 0-100.
-        - `Technical_Score = Trend 30% + RSI 20% + MACD 20% + Volume 15% + Volatilitas 15%`.
+        - `Technical_Score = Trend 25% + RSI 15% + MACD 15% + Volume 10% + Volatilitas 10% + Ehlers Filter 10% + Donchian Ribbon 15%`.
         - `ATR_Stop_2x = Close - 2 x ATR14`.
         - `Threshold_Pass_Ratio = Threshold_Pass_Count / Threshold_Applicable x 100`.
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
@@ -6257,6 +6391,11 @@ with tab_history:
         load_technical = st.toggle("Tampilkan hasil analisa teknikal online/cache", value=True, help="Aktif untuk menampilkan OHLCV, indikator, Entry Action, dan Position Action. Matikan bila ingin menghindari refresh online sementara.")
         show_auto_scan = st.toggle("Tampilkan ringkasan teknikal top kandidat", value=True, help="Menghitung teknikal otomatis untuk maksimal 5 saham teratas dari hasil filter agar keputusan entry/posisi langsung terlihat.")
         show_fibonacci = st.toggle("Tampilkan level Fibonacci", value=True, help=HELP_TEXT["fibonacci"])
+        indicator_cols = st.columns(2)
+        with indicator_cols[0]:
+            show_ehlers_filter = st.toggle("Tampilkan Ehlers Auto Tune Filter", value=True, help=HELP_TEXT["ehlers_filter"])
+        with indicator_cols[1]:
+            show_donchian_ribbon = st.toggle("Tampilkan Donchian Trend Ribbon", value=True, help=HELP_TEXT["donchian_ribbon"])
         if not load_technical:
             st.info("Aktifkan toggle di atas untuk menampilkan Entry Action, Position Action, candlestick, MA, RSI, MACD, ATR, dan Technical Score.")
         else:
@@ -6290,6 +6429,9 @@ with tab_history:
                             "Exit_Risk",
                             "Technical_Score",
                             "Technical_Signal",
+                            "Ehlers_Filter_Signal",
+                            "Donchian_Ribbon_Trend",
+                            "Donchian_Ribbon_Score",
                             "RSI14",
                             "Fibo_Zone",
                             "Astro_Fibo_Timing_Score",
@@ -6308,6 +6450,7 @@ with tab_history:
                             column_config={
                                 "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                                 "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                                "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help=HELP_TEXT["donchian_ribbon"]),
                                 "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                                 "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
                                 "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
@@ -6356,6 +6499,11 @@ with tab_history:
                 planet_cols[1].metric("Jupiter", clean_text(latest_tech.get("Jupiter_Window")), clean_text(latest_tech.get("Jupiter_Sign")), help=HELP_TEXT["astro_fibo"])
                 planet_cols[2].metric("Saturn", clean_text(latest_tech.get("Saturn_Window")), clean_text(latest_tech.get("Saturn_Sign")), help=HELP_TEXT["astro_fibo"])
                 st.caption(f"Ephemeris: {clean_text(latest_tech.get('Ephemeris_Source'))}. {clean_text(latest_tech.get('Planetary_Detail'))}")
+                filter_cols = st.columns(4)
+                filter_cols[0].metric("Ehlers Filter", clean_text(latest_tech.get("Ehlers_Filter_Signal")), f"Cycle {format_number(latest_tech.get('Ehlers_Dominant_Cycle'), 1)}", help=HELP_TEXT["ehlers_filter"])
+                filter_cols[1].metric("Ehlers Level", format_rupiah(latest_tech.get("Ehlers_Filter")), help=HELP_TEXT["ehlers_filter"])
+                filter_cols[2].metric("Donchian Ribbon", clean_text(latest_tech.get("Donchian_Ribbon_Trend")), format_number(latest_tech.get("Donchian_Ribbon_Score")), help=HELP_TEXT["donchian_ribbon"])
+                filter_cols[3].metric("Donchian Mid 20", format_rupiah(latest_tech.get("Donchian_Mid_20")), help=HELP_TEXT["donchian_ribbon"])
                 tech_start = tech_history["Date"].min()
                 tech_end = tech_history["Date"].max()
                 tech_range_label = f"{tech_start:%Y-%m-%d} s.d. {tech_end:%Y-%m-%d}" if pd.notna(tech_start) and pd.notna(tech_end) else "-"
@@ -6374,6 +6522,9 @@ with tab_history:
                     "Exit_Risk",
                     "Technical_Score",
                     "Technical_Signal",
+                    "Ehlers_Filter_Signal",
+                    "Donchian_Ribbon_Trend",
+                    "Donchian_Ribbon_Score",
                     "RSI14",
                     "Fibo_Zone",
                     "Nearest_Fibo_Level",
@@ -6397,6 +6548,7 @@ with tab_history:
                     column_config={
                         "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                         "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                        "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help=HELP_TEXT["donchian_ribbon"]),
                         "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
                         "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                         "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
@@ -6492,6 +6644,56 @@ with tab_history:
                 for ma_column, color in [("MA20", "#0891b2"), ("MA50", "#7c3aed"), ("MA200", "#475569")]:
                     if ma_column in price_panel.columns:
                         fig.add_trace(go.Scatter(x=price_panel["Date"], y=price_panel[ma_column], mode="lines", name=ma_column, line=dict(color=color, width=1.6)))
+                if show_ehlers_filter and "Ehlers_Filter" in price_panel.columns:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=price_panel["Date"],
+                            y=price_panel["Ehlers_Filter"],
+                            mode="lines",
+                            name="Ehlers Auto Tune",
+                            line=dict(color="#f97316", width=2.2),
+                        )
+                    )
+                if show_donchian_ribbon:
+                    ribbon_lines = [
+                        ("Donchian_Mid_10", "#bbf7d0", 1.0),
+                        ("Donchian_Mid_20", "#22c55e", 1.2),
+                        ("Donchian_Mid_40", "#16a34a", 1.4),
+                        ("Donchian_Mid_80", "#166534", 1.6),
+                    ]
+                    for column, color, width in ribbon_lines:
+                        if column in price_panel.columns:
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=price_panel["Date"],
+                                    y=price_panel[column],
+                                    mode="lines",
+                                    name=column.replace("_", " "),
+                                    line=dict(color=color, width=width),
+                                    opacity=0.75,
+                                )
+                            )
+                    if {"Donchian_Upper_20", "Donchian_Lower_20"}.issubset(price_panel.columns):
+                        fig.add_trace(
+                            go.Scatter(
+                                x=price_panel["Date"],
+                                y=price_panel["Donchian_Upper_20"],
+                                mode="lines",
+                                name="Donchian Upper 20",
+                                line=dict(color="#86efac", width=1, dash="dot"),
+                                opacity=0.65,
+                            )
+                        )
+                        fig.add_trace(
+                            go.Scatter(
+                                x=price_panel["Date"],
+                                y=price_panel["Donchian_Lower_20"],
+                                mode="lines",
+                                name="Donchian Lower 20",
+                                line=dict(color="#86efac", width=1, dash="dot"),
+                                opacity=0.65,
+                            )
+                        )
                 if show_fibonacci:
                     fib_line_map = [
                         ("Fibo_23_6", "23.6%", "#94a3b8"),
@@ -6513,7 +6715,7 @@ with tab_history:
                                 annotation_position="right",
                             )
                 fig.update_layout(
-                    title=f"{technical_code}: harga, MA20/50/200 ({technical_period})",
+                    title=f"{technical_code}: harga, MA20/50/200, Ehlers, Donchian ({technical_period})",
                     height=520,
                     xaxis_title="Tanggal",
                     yaxis_title="Harga",
@@ -6545,6 +6747,15 @@ with tab_history:
                     "MA20",
                     "MA50",
                     "MA200",
+                    "Ehlers_Dominant_Cycle",
+                    "Ehlers_Filter",
+                    "Ehlers_Filter_Slope",
+                    "Ehlers_Filter_Signal",
+                    "Donchian_Ribbon_Trend",
+                    "Donchian_Ribbon_Score",
+                    "Donchian_Mid_20",
+                    "Donchian_Upper_20",
+                    "Donchian_Lower_20",
                     "RSI14",
                     "MACD",
                     "MACD_Signal",
@@ -6587,6 +6798,13 @@ with tab_history:
                             "MA20": st.column_config.NumberColumn("MA20", format="%.0f"),
                             "MA50": st.column_config.NumberColumn("MA50", format="%.0f"),
                             "MA200": st.column_config.NumberColumn("MA200", format="%.0f"),
+                            "Ehlers_Dominant_Cycle": st.column_config.NumberColumn("Ehlers Cycle", format="%.1f", help=HELP_TEXT["ehlers_filter"]),
+                            "Ehlers_Filter": st.column_config.NumberColumn("Ehlers Filter", format="%.0f", help=HELP_TEXT["ehlers_filter"]),
+                            "Ehlers_Filter_Slope": st.column_config.NumberColumn("Ehlers Slope", format="%.2f", help=HELP_TEXT["ehlers_filter"]),
+                            "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help=HELP_TEXT["donchian_ribbon"]),
+                            "Donchian_Mid_20": st.column_config.NumberColumn("Donchian Mid 20", format="%.0f", help=HELP_TEXT["donchian_ribbon"]),
+                            "Donchian_Upper_20": st.column_config.NumberColumn("Donchian Upper 20", format="%.0f", help=HELP_TEXT["donchian_ribbon"]),
+                            "Donchian_Lower_20": st.column_config.NumberColumn("Donchian Lower 20", format="%.0f", help=HELP_TEXT["donchian_ribbon"]),
                             "RSI14": st.column_config.NumberColumn("RSI", format="%.1f"),
                             "MACD": st.column_config.NumberColumn("MACD", format="%.2f"),
                             "MACD_Signal": st.column_config.NumberColumn("Signal", format="%.2f"),
@@ -6663,7 +6881,20 @@ with tab_history:
                             orientation="h",
                             title="Ranking aksi posisi top saham",
                             color_discrete_map=POSITION_ACTION_COLORS,
-                            hover_data=["Nama Perusahaan", "Sektor", "Score", "Recommendation", "Entry_Action", "Technical_Signal", "RSI14", "ATR_%", "Position_Reason"],
+                            hover_data=[
+                                "Nama Perusahaan",
+                                "Sektor",
+                                "Score",
+                                "Recommendation",
+                                "Entry_Action",
+                                "Technical_Signal",
+                                "Ehlers_Filter_Signal",
+                                "Donchian_Ribbon_Trend",
+                                "Donchian_Ribbon_Score",
+                                "RSI14",
+                                "ATR_%",
+                                "Position_Reason",
+                            ],
                         )
                         fig.update_layout(height=430, xaxis_title="Technical Score", yaxis_title="")
                         show_chart(fig)
@@ -6680,6 +6911,9 @@ with tab_history:
                                     "Exit_Risk",
                                     "Technical_Score",
                                     "Technical_Signal",
+                                    "Ehlers_Filter_Signal",
+                                    "Donchian_Ribbon_Trend",
+                                    "Donchian_Ribbon_Score",
                                     "RSI14",
                                     "Fibo_Zone",
                                     "Distance_To_Fibo_%",
@@ -6699,6 +6933,7 @@ with tab_history:
                             column_config={
                                 "Score": st.column_config.NumberColumn("Fundamental Score", format="%.1f"),
                                 "Technical_Score": st.column_config.NumberColumn("Technical Score", format="%.1f"),
+                                "Donchian_Ribbon_Score": st.column_config.NumberColumn("Donchian Ribbon", format="%.1f", help=HELP_TEXT["donchian_ribbon"]),
                                 "Distance_To_Fibo_%": st.column_config.NumberColumn("Jarak Fibo", format="%.1f%%", help=HELP_TEXT["fibonacci"]),
                                 "Fibo_Confluence_Score": st.column_config.NumberColumn("Fibo Score", format="%.1f", help=HELP_TEXT["fibonacci"]),
                                 "Astro_Fibo_Timing_Score": st.column_config.NumberColumn("Astro-Fibo", format="%.1f", help=HELP_TEXT["astro_fibo"]),
@@ -7151,7 +7386,9 @@ with tab_method.expander("Metodologi dan formula", expanded=False):
         - RSI14 memakai pendekatan 14 periode J. Welles Wilder untuk membaca momentum relatif.
         - MACD memakai selisih EMA12 dan EMA26, dengan EMA9 sebagai signal line.
         - ATR14 memakai rata-rata true range 14 periode sebagai ukuran volatilitas.
-        - Technical Score memakai trend MA20/50/200, RSI, MACD, volume ratio, dan ATR.
+        - Ehlers-style Auto Tune Filter memperkirakan dominant cycle dari autocorrelation rolling, lalu memakai periode tersebut untuk smoothing adaptif.
+        - Donchian Trend Ribbon memakai beberapa middle channel Donchian 10/20/40/80 untuk membaca apakah tren konsisten di banyak horizon.
+        - Technical Score memakai trend MA20/50/200, RSI, MACD, volume ratio, ATR, Ehlers Filter, dan Donchian Ribbon.
         - Entry Action dipakai untuk calon pembelian: fundamental menjadi gerbang awal, teknikal menentukan timing.
         - Position Action dipakai untuk saham yang sudah dimiliki: Hold, Add on Pullback, Review Position, Tight Stop, Take Profit, Reduce, atau Exit / Sell.
         - Tidak ada harga beli pribadi yang dipakai; sinyal posisi adalah arahan umum berbasis data pasar terbaru.
@@ -7169,6 +7406,8 @@ with tab_method.expander("Metodologi dan formula", expanded=False):
         - Data harga/histori: yfinance, pandas-datareader, cache repo, dan fallback Excel.
         - RSI/ATR: J. Welles Wilder Jr., New Concepts in Technical Trading Systems.
         - MACD: Gerald Appel, Moving Average Convergence/Divergence.
+        - Ehlers adaptive filter: John F. Ehlers, cycle/dominant-cycle based digital signal processing concepts; implementasi dashboard memakai autocorrelation rolling yang transparan, bukan formula proprietary.
+        - Donchian Channel/Ribbon: Richard Donchian; upper = highest high N, lower = lowest low N, middle = (upper + lower) / 2.
         - Fibonacci retracement/extension: swing high-low dengan rasio 23.6%, 38.2%, 50%, 61.8%, 78.6%, 127.2%, dan 161.8%.
         - Ephemeris planet: Skyfield + JPL DE421 (`de421.bsp`), dengan longitude geosentris ekliptika.
         """
