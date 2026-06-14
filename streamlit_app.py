@@ -6912,17 +6912,21 @@ with tab_history:
                 st.info(news_error)
             else:
                 st.caption(f"Fokus: {focus_code} - {clean_text(focus_row.get('Nama Perusahaan'))}. Sumber: {news_source}. Berita ditampilkan apa adanya dari provider.")
-                show_table(
-                    news_df,
-                    hide_index=True,
-                    column_config={
-                        "Tanggal": st.column_config.DatetimeColumn("Tanggal", format="YYYY-MM-DD HH:mm"),
-                        "Judul": st.column_config.TextColumn("Judul"),
-                        "Sumber": st.column_config.TextColumn("Sumber"),
-                        "Ringkasan": st.column_config.TextColumn("Ringkasan"),
-                        "Link": st.column_config.LinkColumn("Link"),
-                    },
-                )
+                for _, news_row in news_df.head(news_limit).iterrows():
+                    news_title = clean_text(news_row.get("Judul"), "Tanpa judul")
+                    news_link = clean_text(news_row.get("Link"), "")
+                    news_source_label = clean_text(news_row.get("Sumber"), "-")
+                    news_date = pd.to_datetime(news_row.get("Tanggal"), errors="coerce")
+                    news_date_label = news_date.strftime("%Y-%m-%d %H:%M") if pd.notna(news_date) else "-"
+                    news_summary = clean_text(news_row.get("Ringkasan"), "")
+                    with st.container(border=True):
+                        if news_link:
+                            st.markdown(f"**[{news_title}]({news_link})**")
+                        else:
+                            st.markdown(f"**{news_title}**")
+                        st.caption(f"{news_date_label} | {news_source_label}")
+                        if news_summary and news_summary != "-":
+                            st.write(news_summary)
     else:
         st.warning("Tidak ada kode saham pada filter saat ini.")
         selected_focus_codes = []
@@ -7747,17 +7751,40 @@ with tab_history:
 
                 with st.expander("Momentum lanjutan: RSI & MACD", expanded=False):
                     momentum_panel = price_panel[["Date", "RSI14", "MACD", "MACD_Signal"]].copy()
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["RSI14"], mode="lines", name="RSI14", line=dict(color="#2563eb")))
-                    fig.add_hline(y=70, line_dash="dash", line_color="#ea580c")
-                    fig.add_hline(y=30, line_dash="dash", line_color="#15803d")
-                    fig.update_layout(title="RSI 14", height=320, yaxis_title="RSI", margin=dict(l=20, r=20, t=60, b=40))
-                    show_chart(fig)
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD"], mode="lines", name="MACD", line=dict(color="#7c3aed")))
-                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD_Signal"], mode="lines", name="Signal", line=dict(color="#ca8a04")))
-                    fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
-                    fig.update_layout(title="MACD", height=320, yaxis_title="MACD", margin=dict(l=20, r=20, t=60, b=40))
+                    fig = make_subplots(
+                        rows=2,
+                        cols=1,
+                        shared_xaxes=True,
+                        vertical_spacing=0.08,
+                        subplot_titles=["RSI 14", "MACD"],
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=momentum_panel["Date"], y=momentum_panel["RSI14"], mode="lines", name="RSI14", line=dict(color="#2563eb")),
+                        row=1,
+                        col=1,
+                    )
+                    fig.add_hline(y=70, line_dash="dash", line_color="#ea580c", row=1, col=1)
+                    fig.add_hline(y=30, line_dash="dash", line_color="#15803d", row=1, col=1)
+                    fig.add_trace(
+                        go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD"], mode="lines", name="MACD", line=dict(color="#7c3aed")),
+                        row=2,
+                        col=1,
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD_Signal"], mode="lines", name="Signal", line=dict(color="#ca8a04")),
+                        row=2,
+                        col=1,
+                    )
+                    fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR, row=2, col=1)
+                    fig.update_yaxes(title_text="RSI", range=[0, 100], row=1, col=1)
+                    fig.update_yaxes(title_text="MACD", row=2, col=1)
+                    fig.update_layout(
+                        title="Momentum lanjutan: RSI dan MACD",
+                        height=560,
+                        hovermode="x unified",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                        margin=dict(l=40, r=20, t=80, b=40),
+                    )
                     show_chart(fig)
 
                 detail_columns = [
