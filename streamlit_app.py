@@ -224,7 +224,7 @@ HELP_TEXT = {
     "core_thresholds": "Jika aktif, saham wajib memenuhi inti konservatif: PER <= 15, PBV <= 3, ROE >= 12%, dan NPM >= 7%. Ini tambahan di luar slider umum.",
     "der_banking": "Jika aktif, filter DER maksimum juga diterapkan ke saham Banking. Default mati karena struktur neraca bank berbeda dari non-bank.",
     "history_source": "Online yfinance memakai ticker KODE.JK dan menjadi sumber utama grafik histori. Excel Metrik hanya mode pembanding/cadangan bila data online kosong.",
-    "fundamental_source": "Fundamental diprioritaskan dari online TradingView scanner bila tersedia, lalu Excel mengisi rasio/metadata yang kosong. Sumber BEI/IDX tetap utama untuk universe kode saham.",
+    "fundamental_source": "Fundamental diprioritaskan dari TradingView scanner bila tersedia, lalu Excel mengisi rasio/metadata yang kosong. Sumber BEI/IDX tetap utama untuk universe kode saham.",
     "history_scope": "Shortlist mengikuti saham yang sedang dipilih di Detail saham. All/top N memakai saham teratas dari filter/sidebar saat ini.",
     "history_top_n": "Jumlah kode dari hasil filter/ranking yang dimasukkan ke grafik All/top N. Makin besar makin lengkap, tetapi grafik online bisa lebih lambat.",
     "history_codes": "Pilih kode IDX tanpa akhiran .JK. Default mengikuti shortlist aktif di Detail saham, lalu dashboard memanggil format online KODE.JK.",
@@ -255,14 +255,14 @@ HELP_TEXT = {
     "quality_issue": "Pilih jenis masalah data untuk melihat contoh saham yang perlu direview. Detail ini membantu membersihkan sumber data sebelum memakai hasil Cari Saham.",
     "audit_code": "Pilih satu atau beberapa kode saham untuk melihat alasan lolos/gagal pada filter aktif dan preset pembanding.",
     "audit_scope": "Cakupan audit filter. Semua saham mengecek seluruh universe final, Hasil filter aktif hanya saham yang lolos filter sidebar, Kode pilihan untuk investigasi manual.",
-    "universe_audit": "Universe kode saham diprioritaskan dari daftar resmi BEI/IDX. Setelah itu dashboard melengkapi data dari sumber online seperti yfinance dan TradingView scanner, lalu Excel hanya sebagai fallback/ide algoritme.",
+    "universe_audit": "Universe utama memakai kode yang match BEI/IDX resmi. Kode fallback non-BEI tetap ditampilkan untuk audit, tetapi tidak otomatis masuk analisis utama bila data BEI resmi tersedia.",
     "refresh_period": "Periode histori online yang akan diambil saat memperbarui cache. Pilih pendek untuk refresh cepat, panjang untuk analisis/teknikal yang lebih stabil.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
     "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
     "technical_period": "Rentang OHLCV online untuk analisis teknikal fokus detail. Periode pendek cocok untuk RSI/MACD cepat; 1-2 tahun lebih stabil untuk MA200, 52W, ATR, dan Fibonacci.",
     "technical_code": "Kode teknikal default mengikuti Fokus detail di Detail saham. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
-    "ehlers_filter": "Ehlers-style Auto Tune Filter memakai estimasi dominant cycle dari autocorrelation rolling untuk memilih periode smoothing adaptif. Ini implementasi transparan, bukan formula proprietary.",
+    "ehlers_filter": "Ehlers-style Auto Tune Filter memakai estimasi dominant cycle dari autocorrelation rolling untuk memilih periode smoothing adaptif.",
     "donchian_ribbon": "Donchian Trend Ribbon memakai beberapa kanal Donchian: upper = highest high N, lower = lowest low N, middle = rata-rata upper/lower. Score membaca berapa banyak horizon yang sedang bullish.",
     "technical_filter": "Filter sinyal teknikal untuk melihat kandidat dengan kondisi trend/momentum tertentu dari hasil filter aktif. Kosongkan pilihan untuk menampilkan semua sinyal.",
     "entry_action": "Entry_Action menggabungkan fundamental dan teknikal: fundamental memilih saham layak, teknikal menentukan timing entry/tunggu/tahan/take profit. Kosongkan filter untuk menampilkan semua aksi entry.",
@@ -272,7 +272,7 @@ HELP_TEXT = {
     "atr_stop": "ATR_Stop_2x adalah zona risiko teknikal berbasis dua kali ATR dari harga terakhir. Ini bukan instruksi order otomatis dan tetap perlu disesuaikan dengan profil risiko pribadi.",
     "position_sizing": "Position sizing menghitung estimasi lot dari modal, risiko per transaksi, harga terakhir, dan ATR stop. Ini alat perencanaan risiko, bukan instruksi order.",
     "fibonacci": "Fibonacci confluence membaca support/resistance dari swing high-low pada periode teknikal. Ini layer konfirmasi area harga, bukan prediksi pasti.",
-    "astro_fibo": "Layer terinspirasi Astronacci yang transparan: membaca jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, dan aspek Mercury/Venus/Mars/Jupiter/Saturn dari JPL DE421 via Skyfield. Jika ephemeris asli tidak tersedia, komponen planet ditandai unavailable dan tidak ikut skor. Ini bukan metode proprietary Astronacci dan bukan ramalan pasti.",
+    "astro_fibo": "Indikator timing tambahan: membaca jendela waktu Fibonacci dari swing terakhir, fase bulan sederhana, Sun cycle, dan aspek Mercury/Venus/Mars/Jupiter/Saturn dari JPL DE421 via Skyfield. Jika ephemeris tidak tersedia, komponen planet ditandai tidak tersedia dan tidak ikut skor.",
     "backtest_period": "Periode OHLCV online/cache untuk menguji sinyal historis. 6 bulan cocok untuk cek cepat, 1-2 tahun untuk kondisi terkini, 5-10 tahun untuk sample event lebih besar tetapi lebih lambat.",
     "backtest_signal": "Sinyal historis yang diuji. Backtest ini event-based dan memakai data teknikal historis, bukan backtest broker penuh.",
     "backtest_codes": "Kode yang diuji. Gunakan jumlah terbatas agar proses tetap cepat dan hasil mudah diaudit.",
@@ -735,6 +735,78 @@ def get_excel_sheet_code_counts():
             }
         )
     return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False)
+def extract_sheet_codes(sheet_name):
+    try:
+        sheet = pd.read_excel(DATA_FILE, sheet_name=sheet_name)
+    except Exception:
+        return set()
+    code_column = next(
+        (
+            column
+            for column in sheet.columns
+            if str(column).strip().lower() in ["kode", "kode saham", "code", "symbol", "ticker"]
+        ),
+        None,
+    )
+    if code_column is None:
+        return set()
+    codes = sheet[code_column].astype(str).str.upper().str.extract(r"([A-Z0-9]{3,5})")[0].dropna()
+    return set(codes)
+
+
+def build_universe_reconciliation(full_scored, active_scored):
+    full_codes = set(full_scored["Kode"].dropna().astype(str).str.upper()) if "Kode" in full_scored.columns else set()
+    active_codes = set(active_scored["Kode"].dropna().astype(str).str.upper()) if "Kode" in active_scored.columns else set()
+    idx_mask = full_scored.get("In_IDX_Official", pd.Series(False, index=full_scored.index)).fillna(False)
+    idx_codes = set(full_scored.loc[idx_mask, "Kode"].dropna().astype(str).str.upper()) if "Kode" in full_scored.columns else set()
+    fallback_codes = full_codes - idx_codes
+    ringkasan_codes = extract_sheet_codes("Ringkasan")
+    metrik_codes = extract_sheet_codes("Metrik")
+
+    rows = [
+        {
+            "Area": "Universe aktif",
+            "Jumlah": len(active_codes),
+            "Status": "Dipakai analisis",
+            "Catatan": "Mengikuti kebijakan cakupan di sidebar.",
+        },
+        {
+            "Area": "Match BEI/IDX resmi",
+            "Jumlah": len(idx_codes),
+            "Status": "Sumber utama",
+            "Catatan": "Kode yang match dengan universe resmi BEI/IDX.",
+        },
+        {
+            "Area": "Fallback non-BEI",
+            "Jumlah": len(fallback_codes),
+            "Status": "Audit",
+            "Catatan": "Disimpan untuk transparansi; tidak masuk analisis utama bila filter BEI resmi aktif.",
+        },
+        {
+            "Area": "Excel Ringkasan",
+            "Jumlah": len(ringkasan_codes),
+            "Status": "Fallback",
+            "Catatan": "Sumber pembanding offline setelah deduplikasi kode.",
+        },
+        {
+            "Area": "Excel Metrik",
+            "Jumlah": len(metrik_codes),
+            "Status": "Histori fallback",
+            "Catatan": "Cakupan histori 4W-52W; wajar bila berbeda dari Ringkasan.",
+        },
+    ]
+    details = []
+    for label, codes in [
+        ("Ringkasan tidak ada di Metrik", ringkasan_codes - metrik_codes),
+        ("Metrik tidak ada di Ringkasan", metrik_codes - ringkasan_codes),
+        ("Fallback non-BEI di universe final", fallback_codes),
+    ]:
+        for code in sorted(codes):
+            details.append({"Kategori": label, "Kode": code})
+    return pd.DataFrame(rows), pd.DataFrame(details)
 
 
 def get_data_update_label(raw, file_status):
@@ -1339,8 +1411,8 @@ def build_ui_heuristic_audit():
         {
             "Status": "Monitor",
             "Halaman": "Audit Data",
-            "Fokus": "Freshness, sumber, kualitas, fallback",
-            "Aspek Terpenuhi": "Freshness, source mix, priority issue, fallback, cache, dan snapshot terlihat.",
+            "Fokus": "Kesegaran data, sumber, kualitas, fallback",
+            "Aspek Terpenuhi": "Kesegaran data, source mix, priority issue, fallback, cache, dan snapshot terlihat.",
             "Potensi Redundancy": "Quality report, priority issue, dan detail baris bisa berulang.",
             "Tindak Lanjut": "Ringkasan tetap terbuka; detail quality report dan contoh baris ditutup default.",
         },
@@ -1690,6 +1762,58 @@ def build_data_freshness(scored):
         "Excel_Fundamental_Coverage_%": round(float(excel_fundamental_coverage), 1),
         "Stale_Price_Rows": stale_rows,
     }
+
+
+def build_refresh_plan(freshness, session_status):
+    lag_days = freshness.get("Online_Data_Lag_Days")
+    price_coverage = freshness.get("Online_Price_Coverage_%", 0)
+    fundamental_coverage = freshness.get("Online_Fundamental_Coverage_%", 0)
+    stale_rows = freshness.get("Stale_Price_Rows", 0)
+    label = clean_text(freshness.get("Freshness_Label"))
+    session_label = clean_text(session_status.get("Status"))
+
+    if pd.isna(lag_days):
+        price_action = "Refresh histori top saham, lalu bangun snapshot pasar."
+        price_priority = "High"
+    elif lag_days > 7 or price_coverage < 40:
+        price_action = "Refresh histori top saham prioritas, lanjut bangun snapshot pasar dari cache."
+        price_priority = "High"
+    elif lag_days > 3 or stale_rows > 0:
+        price_action = "Bangun snapshot pasar dari cache; refresh histori hanya untuk kode prioritas."
+        price_priority = "Medium"
+    else:
+        price_action = "Tidak perlu refresh massal; gunakan snapshot/cache."
+        price_priority = "Low"
+
+    if fundamental_coverage < 60:
+        fundamental_action = "Refresh fundamental online saat trafik rendah, lalu simpan snapshot."
+        fundamental_priority = "Medium"
+    else:
+        fundamental_action = "Snapshot fundamental memadai; refresh manual bila ada laporan keuangan baru."
+        fundamental_priority = "Low"
+
+    return pd.DataFrame(
+        [
+            {
+                "Area": "Harga & histori",
+                "Prioritas": price_priority,
+                "Kondisi": f"{label}; umur data {lag_days if pd.notna(lag_days) else '-'} hari; coverage {format_percent(price_coverage, 0)}",
+                "Aksi": price_action,
+            },
+            {
+                "Area": "Fundamental",
+                "Prioritas": fundamental_priority,
+                "Kondisi": f"Coverage online {format_percent(fundamental_coverage, 0)}",
+                "Aksi": fundamental_action,
+            },
+            {
+                "Area": "Jam bursa",
+                "Prioritas": "Info",
+                "Kondisi": session_label,
+                "Aksi": clean_text(session_status.get("Detail")),
+            },
+        ]
+    )
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -2799,12 +2923,12 @@ def nearest_aspect_label(angle):
     return "Neutral Aspect", distance, 0
 
 
-def unavailable_ephemeris_context(reason="Ephemeris unavailable"):
+def unavailable_ephemeris_context(reason="Ephemeris tidak tersedia"):
     rows = {
         "Planetary_Cycle_Score": 0.0,
-        "Planetary_Window": "Ephemeris unavailable",
+        "Planetary_Window": "Ephemeris tidak tersedia",
         "Planetary_Detail": reason,
-        "Ephemeris_Source": "Unavailable",
+        "Ephemeris_Source": "Tidak tersedia",
     }
     for planet in EPHEMERIS_PLANETS:
         rows[f"{planet}_Longitude"] = np.nan
@@ -2812,7 +2936,7 @@ def unavailable_ephemeris_context(reason="Ephemeris unavailable"):
         rows[f"{planet}_Retrograde"] = False
         rows[f"{planet}_Aspect_To_Sun"] = "-"
         rows[f"{planet}_Aspect_Distance"] = np.nan
-        rows[f"{planet}_Window"] = "Ephemeris unavailable"
+        rows[f"{planet}_Window"] = "Ephemeris tidak tersedia"
     return pd.Series(rows)
 
 
@@ -4067,7 +4191,7 @@ def summarize_universe_source(universe):
     total = universe["Kode"].nunique()
     idx_count = int(universe.get("In_IDX_Official", pd.Series(False, index=universe.index)).fillna(False).sum())
     fallback_count = total - idx_count
-    return f"Universe {total:,} kode ({idx_count:,} BEI/IDX official, {fallback_count:,} fallback)"
+    return f"Universe {total:,} kode ({idx_count:,} BEI/IDX resmi, {fallback_count:,} fallback)"
 
 
 def is_banking_row(row):
@@ -4576,7 +4700,7 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
         4. Buka **Portofolio** untuk skenario alokasi dan konsentrasi risiko.
         5. Buka **Validasi** untuk backtest sinyal dan prediksi probabilistik.
         6. Buka **Eksplorasi** untuk scatter, pembanding rasio, dan analisis sektor.
-        7. Buka **Audit Data** untuk freshness, sumber data, fallback, dan kualitas data.
+        7. Buka **Audit Data** untuk kesegaran data, sumber data, fallback, dan kualitas data.
         8. Buka **Metodologi** untuk rumus, bobot, threshold, penalti, dan referensi.
 
         **Definisi inti**
@@ -4584,7 +4708,7 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
         - `Final_Action`: playbook akhir dari Score, data, risiko, sektor, threshold, momentum, dan market regime.
         - `Technical_Score`: timing dari MA, RSI, MACD, volume, dan ATR; tidak mengganti Score fundamental.
         - `Detail Saham`: shortlist membandingkan beberapa saham; fokus detail mengontrol berita, prospek, histori default, dan teknikal.
-        - `Astro-Fibo`: konteks timing dari Fibonacci time window, Moon/Sun cycle, dan aspek planet JPL DE421 via Skyfield. Ini heuristic transparan, bukan formula proprietary dan bukan ramalan.
+        - `Astro-Fibo`: indikator timing tambahan dari Fibonacci time window, Moon/Sun cycle, dan aspek planet JPL DE421 via Skyfield.
         - `Clean_Data`: data lolos pemeriksaan minimum; ini bukan jaminan aman investasi.
 
         **Rumus ringkas**
@@ -4595,7 +4719,7 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
 
         **Sumber data**
-        BEI/IDX diprioritaskan untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan Excel hanya fallback/audit. Semua fallback dan data unavailable ditampilkan agar tidak disamarkan.
+        BEI/IDX diprioritaskan untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan Excel hanya fallback/audit. Semua fallback dan data tidak tersedia ditampilkan agar tidak disamarkan.
         """
     )
 
@@ -4644,6 +4768,11 @@ with st.sidebar:
 
     min_score = st.slider("Score minimum", 0, 100, 60 if safe_preset else 45, help=HELP_TEXT["score"])
     clean_data_only = st.checkbox("Data bersih saja", value=safe_preset, help=HELP_TEXT["clean_data"])
+    include_non_idx_fallback = st.checkbox(
+        "Sertakan fallback non-BEI",
+        value=False,
+        help="Default mati agar analisis utama memakai kode yang match BEI/IDX resmi. Aktifkan hanya untuk investigasi data fallback.",
+    )
 
     per_range = (0.1, 25.0) if safe_preset else (0.0, 35.0)
     pbv_max = 3.5 if safe_preset else 5.0
@@ -4773,6 +4902,15 @@ market_breadth = build_market_breadth(tuple(breadth_codes), period="1y", limit=5
 market_context = {**market_regime, **market_breadth}
 scored_df = add_market_context_to_explainability(scored_df, market_context)
 scored_df = add_final_decision_layer(scored_df)
+full_scored_df = scored_df.copy()
+idx_official_available = bool(full_scored_df.get("In_IDX_Official", pd.Series(False, index=full_scored_df.index)).fillna(False).any())
+if not include_non_idx_fallback and idx_official_available:
+    scored_df = full_scored_df[full_scored_df["In_IDX_Official"].fillna(False)].copy()
+    universe_policy_label = "BEI resmi"
+elif not idx_official_available:
+    universe_policy_label = "Fallback aktif"
+else:
+    universe_policy_label = "BEI + fallback"
 data_freshness = build_data_freshness(scored_df)
 filtered = scored_df.copy()
 
@@ -4809,10 +4947,14 @@ if clean_data_only:
     filtered = filtered[filtered["Clean_Data"]]
 
 status_cols = st.columns(4)
-status_cols[0].metric("Universe", f"{len(df):,}", f"{len(raw_df):,} baris sumber")
+status_cols[0].metric("Universe aktif", f"{scored_df['Kode'].nunique():,}", universe_policy_label)
 status_cols[1].metric("Lolos filter", f"{len(filtered):,}")
 status_cols[2].metric("Top score", f"{filtered['Score'].max():.1f}" if len(filtered) else "-")
 status_cols[3].metric("Data bersih", f"{filtered['Clean_Data'].sum():,}" if len(filtered) else "0")
+if not idx_official_available:
+    st.warning("Universe resmi BEI/IDX belum tersedia pada sesi ini. Analisis memakai fallback online/Excel dan seluruh sumber ditampilkan di Audit Data.")
+elif include_non_idx_fallback:
+    st.info("Fallback non-BEI sedang disertakan dalam analisis. Gunakan mode ini hanya untuk investigasi data.")
 
 market_cols = st.columns(4)
 market_cols[0].metric(
@@ -4832,9 +4974,9 @@ market_cols[2].metric(
     f"MA200 {format_percent(market_context.get('Above_MA200_%'))}",
 )
 market_cols[3].metric(
-    "Freshness",
+    "Kesegaran data",
     clean_text(data_freshness.get("Freshness_Label")),
-    f"Lag {data_freshness.get('Online_Data_Lag_Days') if pd.notna(data_freshness.get('Online_Data_Lag_Days')) else '-'} hari",
+    f"Umur {data_freshness.get('Online_Data_Lag_Days') if pd.notna(data_freshness.get('Online_Data_Lag_Days')) else '-'} hari",
 )
 if market_context.get("Market_Error"):
     st.warning(f"Market regime memakai fallback/terbatas. Detail: {market_context.get('Market_Error')}")
@@ -4920,7 +5062,7 @@ with tab_summary:
             regime_cols[1].metric("IHSG", format_number(market_context.get("IHSG_Close")), f"MA200 {format_number(market_context.get('IHSG_MA200'))}")
             regime_cols[2].metric("Return IHSG 20D", format_percent(market_context.get("IHSG_Return_20D_%")), f"60D {format_percent(market_context.get('IHSG_Return_60D_%'))}")
             regime_cols[3].metric("Breadth MA50", format_percent(market_context.get("Above_MA50_%")), f"MA200 {format_percent(market_context.get('Above_MA200_%'))}")
-            regime_cols[4].metric("Freshness", clean_text(data_freshness.get("Freshness_Label")), f"Online harga {format_percent(data_freshness.get('Online_Price_Coverage_%'), 0)}")
+            regime_cols[4].metric("Kesegaran data", clean_text(data_freshness.get("Freshness_Label")), f"Online harga {format_percent(data_freshness.get('Online_Price_Coverage_%'), 0)}")
             st.caption(clean_text(market_context.get("Regime_Reason"), "Konteks market belum tersedia."))
 
         show_summary_charts = st.toggle("Tampilkan grafik distribusi dan sumber data", value=False)
@@ -5371,7 +5513,7 @@ with tab_reco:
                 "Volume_Online_Latest": st.column_config.NumberColumn("Volume Online", format="%.0f", help="Volume terakhir dari yfinance/cache."),
                 "Volume_Source": st.column_config.TextColumn("Sumber Volume", help="Menunjukkan apakah volume berasal dari yfinance/cache atau Excel fallback."),
                 "Data_Source": st.column_config.TextColumn("Sumber Data", help="Ringkasan sumber data pasar utama untuk baris ini."),
-                "Universe_Source": st.column_config.TextColumn("Sumber Kode", help="Sumber universe kode saham: BEI/IDX official atau fallback."),
+                "Universe_Source": st.column_config.TextColumn("Sumber Kode", help="Sumber universe kode saham: BEI/IDX resmi atau fallback."),
                 "Universe_Diff_Status": st.column_config.TextColumn("Status Kode", help="Menunjukkan apakah kode match dengan daftar resmi BEI/IDX atau hanya ada di fallback."),
                 "ListingBoard": st.column_config.TextColumn("Papan", help="Papan pencatatan dari daftar resmi BEI/IDX bila tersedia."),
                 "ListingDate": st.column_config.DateColumn("Listing", help="Tanggal pencatatan dari daftar resmi BEI/IDX bila tersedia."),
@@ -5393,7 +5535,7 @@ with tab_reco:
         st.download_button(
             "Download hasil pencarian CSV",
             data=csv,
-            file_name="screener_saham_idx.csv",
+            file_name="ringkasan_saham_idx.csv",
             mime="text/csv",
         )
 
@@ -7317,8 +7459,12 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
     quality_cols[2].metric("High severity", f"{high_count}")
     quality_cols[3].metric("Lolos data bersih", f"{scored_df['Clean_Data'].sum():,}")
 
+    refresh_plan = build_refresh_plan(data_freshness, market_session_status)
+    with st.expander("Rencana refresh data", expanded=True):
+        show_table(refresh_plan, hide_index=True)
+
     ux_audit = build_ui_heuristic_audit()
-    with st.expander("Audit heuristik UI/UX seluruh halaman", expanded=False):
+    with st.expander("Review UI/UX seluruh halaman", expanded=False):
         st.caption("Checklist ini memastikan setiap halaman direview dari sisi simplicity, clarity, consistency, integrity, dynamic, interactive, dan informative.")
         ux_cols = st.columns(3)
         ux_cols[0].metric("Area direview", f"{len(ux_audit):,}")
@@ -7340,9 +7486,9 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
                 {"Area": "Market Regime", "Metric": "Regime", "Value": clean_text(market_context.get("Market_Regime")), "Detail": clean_text(market_context.get("Regime_Reason"))},
                 {"Area": "Market Regime", "Metric": "IHSG Last Date", "Value": clean_text(market_context.get("IHSG_Last_Date")), "Detail": f"Source: {clean_text(market_context.get('Market_Source'))}"},
                 {"Area": "Market Breadth", "Metric": "Breadth Label", "Value": clean_text(market_context.get("Breadth_Label")), "Detail": f"{market_context.get('Breadth_Count', 0)} kode; MA50 {format_percent(market_context.get('Above_MA50_%'))}; MA200 {format_percent(market_context.get('Above_MA200_%'))}"},
-                {"Area": "Freshness", "Metric": "Freshness Label", "Value": clean_text(data_freshness.get("Freshness_Label")), "Detail": f"Lag online {data_freshness.get('Online_Data_Lag_Days') if pd.notna(data_freshness.get('Online_Data_Lag_Days')) else '-'} hari"},
-                {"Area": "Freshness", "Metric": "Online Price Coverage", "Value": format_percent(data_freshness.get("Online_Price_Coverage_%"), 0), "Detail": f"Stale rows: {data_freshness.get('Stale_Price_Rows', 0):,}"},
-                {"Area": "Freshness", "Metric": "Online Fundamental Coverage", "Value": format_percent(data_freshness.get("Online_Fundamental_Coverage_%"), 0), "Detail": f"Excel fallback fields {format_percent(data_freshness.get('Excel_Fundamental_Coverage_%'), 0)}"},
+                {"Area": "Kesegaran data", "Metric": "Status", "Value": clean_text(data_freshness.get("Freshness_Label")), "Detail": f"Umur data online {data_freshness.get('Online_Data_Lag_Days') if pd.notna(data_freshness.get('Online_Data_Lag_Days')) else '-'} hari"},
+                {"Area": "Kesegaran data", "Metric": "Coverage harga online", "Value": format_percent(data_freshness.get("Online_Price_Coverage_%"), 0), "Detail": f"Baris stale: {data_freshness.get('Stale_Price_Rows', 0):,}"},
+                {"Area": "Kesegaran data", "Metric": "Coverage fundamental online", "Value": format_percent(data_freshness.get("Online_Fundamental_Coverage_%"), 0), "Detail": f"Field Excel fallback {format_percent(data_freshness.get('Excel_Fundamental_Coverage_%'), 0)}"},
             ]
         )
         show_table(freshness_rows, hide_index=True)
@@ -7359,7 +7505,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
                         hide_index=True,
                         column_config={
                             "Online_Last_Date": st.column_config.DateColumn("Tanggal Online"),
-                            "Online_Lag_Days": st.column_config.NumberColumn("Lag Hari", format="%d"),
+                            "Online_Lag_Days": st.column_config.NumberColumn("Umur Data", format="%d hari"),
                             "Score": st.column_config.NumberColumn("Score", format="%.1f"),
                         },
                     )
@@ -7384,32 +7530,45 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
             )
 
     universe_summary = (
-        scored_df.groupby(["Universe_Diff_Status", "Universe_Source"], dropna=False)
+        full_scored_df.groupby(["Universe_Diff_Status", "Universe_Source"], dropna=False)
         .agg(Jumlah=("Kode", "nunique"))
         .reset_index()
         .rename(columns={"Universe_Diff_Status": "Status Kode", "Universe_Source": "Sumber Kode"})
         .sort_values(["Status Kode", "Sumber Kode"])
     )
+    universe_summary["Status Kode"] = universe_summary["Status Kode"].replace({"Match BEI/IDX official": "Match BEI/IDX resmi"})
+    universe_summary["Sumber Kode"] = universe_summary["Sumber Kode"].replace({"BEI/IDX official": "BEI/IDX resmi"})
+    reconciliation, reconciliation_detail = build_universe_reconciliation(full_scored_df, scored_df)
     universe_cols = st.columns(4)
     universe_cols[0].metric("Kode universe", f"{scored_df['Kode'].nunique():,}")
-    universe_cols[1].metric("Match BEI/IDX", f"{scored_df['In_IDX_Official'].sum():,}")
-    universe_cols[2].metric("Fallback non-BEI", f"{(~scored_df['In_IDX_Official']).sum():,}")
-    universe_cols[3].metric("Sumber aktif", f"{scored_df['Universe_Source'].nunique():,}")
+    universe_cols[1].metric("Match BEI/IDX", f"{full_scored_df['In_IDX_Official'].fillna(False).sum():,}")
+    universe_cols[2].metric("Fallback audit", f"{(~full_scored_df['In_IDX_Official'].fillna(False)).sum():,}")
+    universe_cols[3].metric("Sumber aktif", f"{full_scored_df['Universe_Source'].nunique():,}")
     with st.expander("Audit sumber kode saham", expanded=False):
         st.caption(HELP_TEXT["universe_audit"])
+        show_table(
+            reconciliation,
+            hide_index=True,
+            column_config={"Jumlah": st.column_config.NumberColumn("Jumlah", format="%d")},
+        )
+        if not reconciliation_detail.empty:
+            show_table(reconciliation_detail, hide_index=True)
         show_table(
             universe_summary,
             hide_index=True,
             column_config={"Jumlah": st.column_config.NumberColumn("Jumlah", format="%d")},
         )
-        diff_codes = scored_df[~scored_df["In_IDX_Official"]][
+        diff_codes = full_scored_df[~full_scored_df["In_IDX_Official"].fillna(False)][
             ["Kode", "Nama Perusahaan", "Universe_Source", "Universe_Diff_Status", "Sektor", "Industry", "ListingBoard"]
         ].sort_values("Kode")
         if diff_codes.empty:
             st.success("Semua kode di universe match dengan daftar resmi BEI/IDX.")
         else:
-            st.warning(f"Ada {len(diff_codes):,} kode yang tidak match dengan daftar resmi BEI/IDX dan tetap dipertahankan dari fallback.")
-            show_table(diff_codes, hide_index=True)
+            st.info(f"Ada {len(diff_codes):,} kode fallback non-BEI. Kode ini dipertahankan untuk audit dan hanya masuk analisis bila opsi fallback di sidebar diaktifkan.")
+            diff_display = diff_codes.copy()
+            diff_display["Universe_Source"] = diff_display["Universe_Source"].replace({"BEI/IDX official": "BEI/IDX resmi"})
+            diff_display["Universe_Diff_Status"] = diff_display["Universe_Diff_Status"].replace({"Match BEI/IDX official": "Match BEI/IDX resmi"})
+            show_table(diff_display, hide_index=True)
 
     with st.expander("Kelengkapan kolom & sumber data", expanded=False):
         completeness_report = build_completeness_report(scored_df)
@@ -7625,7 +7784,7 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
             5. Refresh snapshot fundamental online hanya saat perlu update rasio massal.
             6. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
             7. Buka `Audit sumber kode saham`, `Jumlah kode per sheet Excel`, dan `Kelengkapan kolom & sumber data` untuk memastikan fallback terlihat jelas.
-            8. Update `Ringkasan.xlsx` hanya bila ada data offline yang lebih baik atau ide algoritme baru yang perlu diuji.
+            8. Update `Ringkasan.xlsx` hanya bila ada data offline yang lebih lengkap atau aturan scoring yang perlu diuji.
             9. Simpan/export hasil Cari Saham hanya setelah check High severity terkendali.
             """
         )
@@ -7635,11 +7794,11 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
     st.markdown(
         """
         Dashboard ini adalah penyaring kuantitatif awal. Data yang dipakai berasal dari sumber online, snapshot/cache repo,
-        cache histori, atau fallback Excel yang ditandai sumbernya; tidak ada data dummy/acak yang dibuat untuk menggantikan
-        data asli. Jika data asli tidak tersedia, status fallback/unavailable tetap ditampilkan agar keputusan bisa diaudit.
+        cache histori, atau fallback Excel yang ditandai sumbernya; tidak ada data contoh/acak yang dibuat untuk menggantikan
+        data asli. Jika data asli tidak tersedia, status fallback atau tidak tersedia tetap ditampilkan agar keputusan bisa diaudit.
 
         Urutan kerja dashboard:
-        1. Ambil universe kode dari BEI/IDX official bila tersedia, lalu fallback online/Excel.
+        1. Ambil universe kode dari BEI/IDX resmi bila tersedia, lalu fallback online/Excel.
         2. Gabungkan harga, volume, fundamental, histori, threshold, dan metadata sumber.
         3. Hitung Score fundamental, Clean Data, risk label, explainability, dan Final Action.
         4. Hitung teknikal hanya saat histori OHLCV tersedia untuk kode/periode yang dipilih.
@@ -7677,7 +7836,7 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
         - ATR Stop 2x adalah zona risiko teknikal berbasis volatilitas, bukan instruksi order otomatis.
         - Fibonacci Confluence membaca swing high-low periode teknikal, retracement, extension, jarak harga ke level terdekat, zona, trend, dan RSI.
         - Astro-Fibo Timing memakai jendela waktu Fibonacci 5/8/13/21/34/55/89/144 hari dari swing terakhir, fase Bulan sederhana, Sun ingress/zodiac cycle, aspek Mercury/Venus/Mars/Jupiter/Saturn terhadap Sun dari JPL DE421 via Skyfield, Fibo score, technical score, dan trend.
-        - Astro-Fibo adalah heuristik transparan yang terinspirasi pendekatan astro-cycle/Fibonacci, bukan formula proprietary Astronacci dan bukan ramalan pasti. Jika `de421.bsp` atau Skyfield tidak tersedia, komponen planet diberi status unavailable dan tidak disamarkan.
+        - Astro-Fibo adalah indikator timing tambahan berbasis astro-cycle/Fibonacci. Ini bukan metode tertutup Astronacci. Jika `de421.bsp` atau Skyfield tidak tersedia, komponen planet diberi status tidak tersedia dan tidak disamarkan.
 
         Validasi:
         - Backtest event-based mengambil hari pertama sinyal muncul, lalu menghitung Return nD = Close(t+n) / Close(t) - 1, ditampilkan dalam persen.
@@ -7692,11 +7851,11 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
 
         Referensi:
         - Data harga/histori: yfinance, pandas-datareader, cache repo, dan fallback Excel.
-        - Universe kode: BEI/IDX official bila tersedia; TradingView/StockAnalysis/Excel hanya fallback transparan.
+        - Universe kode: BEI/IDX resmi bila tersedia; TradingView/StockAnalysis/Excel hanya fallback transparan.
         - Fundamental online: TradingView scanner dan snapshot repo; Excel fallback bila field online kosong.
         - RSI/ATR: J. Welles Wilder Jr., New Concepts in Technical Trading Systems.
         - MACD: Gerald Appel, Moving Average Convergence/Divergence.
-        - Ehlers adaptive filter: John F. Ehlers, cycle/dominant-cycle based digital signal processing concepts; implementasi dashboard memakai autocorrelation rolling yang transparan, bukan formula proprietary.
+        - Ehlers adaptive filter: John F. Ehlers, cycle/dominant-cycle based digital signal processing concepts; implementasi dashboard memakai autocorrelation rolling yang dapat diaudit.
         - Donchian Channel/Ribbon: Richard Donchian; upper = highest high N, lower = lowest low N, middle = (upper + lower) / 2.
         - Fibonacci retracement/extension: swing high-low dengan rasio 23.6%, 38.2%, 50%, 61.8%, 78.6%, 127.2%, dan 161.8%.
         - Ephemeris planet: Skyfield + JPL DE421 (`de421.bsp`), dengan longitude geosentris ekliptika.
@@ -7715,42 +7874,42 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
     availability_rows = [
         {
             "Modul": "Universe kode",
-            "Availability": data_freshness.get("Universe_Label", "Aktif") if isinstance(data_freshness, dict) else "Aktif",
-            "Syarat": "BEI/IDX official atau fallback online/Excel tersedia.",
+            "Ketersediaan": universe_policy_label,
+            "Syarat": "BEI/IDX resmi atau fallback online/Excel tersedia.",
             "Fallback": clean_text(raw_df.attrs.get("universe_error"), "Fallback hanya muncul bila sumber utama gagal."),
         },
         {
             "Modul": "Harga & histori",
-            "Availability": clean_text(data_freshness.get("Freshness_Label")),
+            "Ketersediaan": clean_text(data_freshness.get("Freshness_Label")),
             "Syarat": "Snapshot/cache/yfinance/pandas-datareader punya OHLCV.",
             "Fallback": "Excel Metrik dipakai untuk ringkasan return saat OHLCV online/cache kosong.",
         },
         {
             "Modul": "Fundamental",
-            "Availability": f"Online {format_percent(data_freshness.get('Online_Fundamental_Coverage_%'), 0)}",
+            "Ketersediaan": f"Online {format_percent(data_freshness.get('Online_Fundamental_Coverage_%'), 0)}",
             "Syarat": "TradingView scanner/snapshot repo berisi rasio fundamental.",
             "Fallback": "Excel fallback mengisi field yang kosong dan tetap diberi label sumber.",
         },
         {
             "Modul": "Teknikal",
-            "Availability": "Manual per kode/periode",
+            "Ketersediaan": "Manual per kode/periode",
             "Syarat": "OHLCV tersedia untuk periode teknikal.",
             "Fallback": "Jika kosong, UI menampilkan warning dan tidak membuat sinyal palsu.",
         },
         {
             "Modul": "Ephemeris planet",
-            "Availability": "Tersedia" if Path(EPHEMERIS_FILE).exists() else "Unavailable",
+            "Ketersediaan": "Tersedia" if Path(EPHEMERIS_FILE).exists() else "Tidak tersedia",
             "Syarat": "`de421.bsp` tersedia dan Skyfield bisa membaca JPL DE421.",
-            "Fallback": "Planetary score = 0 dan status `Ephemeris unavailable` bila gagal.",
+            "Fallback": "Planetary score = 0 dan status tidak tersedia bila gagal.",
         },
         {
             "Modul": "Backtest & prediksi",
-            "Availability": "Manual trigger",
+            "Ketersediaan": "Manual",
             "Syarat": "Histori OHLCV cukup panjang dan event/sample historis tersedia.",
-            "Fallback": "Menampilkan Low sample/kosong; tidak membuat probabilitas dummy.",
+            "Fallback": "Menampilkan Low sample/kosong; tidak membuat probabilitas pengganti.",
         },
     ]
-    st.write("Availability modul:")
+    st.write("Ketersediaan modul:")
     show_table(pd.DataFrame(availability_rows), hide_index=True)
 
     st.write("Bobot aktif:")
