@@ -2073,6 +2073,7 @@ def build_data_status_summary(freshness, session_status, source_label, full_univ
     lag_days = freshness.get("Online_Data_Lag_Days")
     price_coverage = freshness.get("Online_Price_Coverage_%", 0)
     fundamental_coverage = freshness.get("Online_Fundamental_Coverage_%", 0)
+    bank_metric_coverage = freshness.get("Bank_Metric_Coverage_%", 0)
     stale_rows = int(freshness.get("Stale_Price_Rows", 0) or 0)
     latest_online = freshness.get("Latest_Online_Date")
     latest_label = latest_online.strftime("%Y-%m-%d") if pd.notna(latest_online) else "-"
