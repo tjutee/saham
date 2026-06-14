@@ -1828,6 +1828,65 @@ def build_refresh_plan(freshness, session_status):
     )
 
 
+def format_lag_days(value):
+    if pd.isna(value):
+        return "-"
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        return "-"
+    return f"{days} hari"
+
+
+def build_data_status_summary(freshness, session_status, source_label, full_universe=None, active_universe=None):
+    lag_days = freshness.get("Online_Data_Lag_Days")
+    price_coverage = freshness.get("Online_Price_Coverage_%", 0)
+    fundamental_coverage = freshness.get("Online_Fundamental_Coverage_%", 0)
+    stale_rows = int(freshness.get("Stale_Price_Rows", 0) or 0)
+    latest_online = freshness.get("Latest_Online_Date")
+    latest_label = latest_online.strftime("%Y-%m-%d") if pd.notna(latest_online) else "-"
+    session_open = bool(session_status.get("Is_Open"))
+    freshness_label = clean_text(freshness.get("Freshness_Label"), "Unknown")
+
+    if freshness_label == "Fresh":
+        market_action = "Pantau otomatis; tidak perlu refresh massal."
+    elif session_open:
+        market_action = "Auto update akan memprioritaskan saham utama saat interval jatuh tempo."
+    else:
+        market_action = "Di luar jam bursa, tampilkan snapshot/cache terakhir dan update lagi saat sesi buka."
+
+    official_count = 0
+    fallback_count = 0
+    if full_universe is not None and not full_universe.empty and "In_IDX_Official" in full_universe.columns:
+        official_mask = full_universe["In_IDX_Official"].fillna(False)
+        official_count = int(official_mask.sum())
+        fallback_count = int((~official_mask).sum())
+
+    active_count = active_universe["Kode"].nunique() if active_universe is not None and not active_universe.empty else 0
+    total_count = full_universe["Kode"].nunique() if full_universe is not None and not full_universe.empty else active_count
+    universe_detail = (
+        f"{official_count:,} BEI/IDX resmi, {fallback_count:,} fallback audit"
+        if total_count
+        else "Universe belum tersedia"
+    )
+
+    return {
+        "Freshness_Label": freshness_label,
+        "Latest_Online_Label": latest_label,
+        "Online_Lag_Label": format_lag_days(lag_days),
+        "Online_Price_Coverage_Label": format_percent(price_coverage, 0),
+        "Online_Fundamental_Coverage_Label": format_percent(fundamental_coverage, 0),
+        "Stale_Rows_Label": f"{stale_rows:,}",
+        "Session_Label": clean_text(session_status.get("Status")),
+        "Session_Detail": clean_text(session_status.get("Detail")),
+        "Source_Label": clean_text(source_label),
+        "Market_Action": market_action,
+        "Universe_Total_Label": f"{total_count:,}",
+        "Universe_Active_Label": f"{active_count:,}",
+        "Universe_Detail": universe_detail,
+    }
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def build_market_regime(period="2y"):
     history, error, source = fetch_yahoo_symbol_history(["^JKSE"], period=period)
@@ -4738,6 +4797,10 @@ if raw_df.attrs.get("fundamental_error"):
     st.warning(f"Sebagian data fundamental online memakai fallback Excel. Detail: {raw_df.attrs.get('fundamental_error')}")
 
 with st.expander("Panduan singkat penggunaan", expanded=False):
+    st.info(
+        f"Kondisi saat ini: sumber aktif {data_update_label}; status bursa {market_session_status['Status']} ({market_session_status['Now']}). "
+        "Auto update berjalan terkontrol saat bursa buka, lalu dashboard membaca snapshot/cache terbaru agar tetap ringan."
+    )
     st.markdown(
         """
         **Cara pakai cepat**
@@ -4766,7 +4829,7 @@ with st.expander("Panduan singkat penggunaan", expanded=False):
         - `Backtest Return nD = Close(t+n) / Close(t) - 1`.
 
         **Sumber data**
-        BEI/IDX diprioritaskan untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan Excel hanya fallback/audit. Semua fallback dan data tidak tersedia ditampilkan agar tidak disamarkan.
+        BEI/IDX diprioritaskan untuk universe kode, yfinance/cache untuk harga dan histori, TradingView scanner untuk fundamental online, dan Excel hanya fallback/audit. Semua fallback dan data tidak tersedia ditampilkan di **Audit Data** agar tidak disamarkan.
         """
     )
 
@@ -4993,6 +5056,13 @@ elif not idx_official_available:
 else:
     universe_policy_label = "BEI + fallback"
 data_freshness = build_data_freshness(scored_df)
+data_status = build_data_status_summary(
+    data_freshness,
+    market_session_status,
+    data_update_label,
+    full_universe=full_scored_df,
+    active_universe=scored_df,
+)
 filtered = scored_df.copy()
 
 if sector_filter != "Semua Sektor":
@@ -5056,13 +5126,26 @@ market_cols[2].metric(
 )
 market_cols[3].metric(
     "Kesegaran data",
-    clean_text(data_freshness.get("Freshness_Label")),
-    f"Umur {data_freshness.get('Online_Data_Lag_Days') if pd.notna(data_freshness.get('Online_Data_Lag_Days')) else '-'} hari",
+    data_status["Freshness_Label"],
+    f"Umur {data_status['Online_Lag_Label']}",
 )
 if market_context.get("Market_Error"):
     st.warning(f"Market regime memakai fallback/terbatas. Detail: {market_context.get('Market_Error')}")
 if market_context.get("Breadth_Error"):
     st.caption(f"Market breadth terbatas: {market_context.get('Breadth_Error')}")
+
+with st.expander("Status data aktif", expanded=False):
+    st.caption(
+        "Ringkasan ini otomatis mengikuti data yang sedang dipakai dashboard, termasuk perubahan cache, snapshot, universe, dan jam bursa."
+    )
+    data_status_cols = st.columns(5)
+    data_status_cols[0].metric("Sumber aktif", data_status["Source_Label"])
+    data_status_cols[1].metric("Latest online", data_status["Latest_Online_Label"], data_status["Online_Lag_Label"])
+    data_status_cols[2].metric("Coverage harga", data_status["Online_Price_Coverage_Label"], f"Stale {data_status['Stale_Rows_Label']}")
+    data_status_cols[3].metric("Coverage fundamental", data_status["Online_Fundamental_Coverage_Label"])
+    data_status_cols[4].metric("Universe", data_status["Universe_Active_Label"], universe_policy_label)
+    st.info(data_status["Market_Action"])
+    st.caption(f"Universe penuh: {data_status['Universe_Total_Label']} kode ({data_status['Universe_Detail']}). {data_status['Session_Detail']}")
 
 (
     tab_summary,
@@ -7542,6 +7625,10 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
 
     refresh_plan = build_refresh_plan(data_freshness, market_session_status)
     with st.expander("Rencana refresh data", expanded=True):
+        st.caption(
+            f"Status aktif: {data_status['Freshness_Label']}; latest online {data_status['Latest_Online_Label']}; "
+            f"coverage harga {data_status['Online_Price_Coverage_Label']}; fundamental online {data_status['Online_Fundamental_Coverage_Label']}."
+        )
         show_table(refresh_plan, hide_index=True)
 
     ux_audit = build_ui_heuristic_audit()
@@ -7567,9 +7654,9 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
                 {"Area": "Market Regime", "Metric": "Regime", "Value": clean_text(market_context.get("Market_Regime")), "Detail": clean_text(market_context.get("Regime_Reason"))},
                 {"Area": "Market Regime", "Metric": "IHSG Last Date", "Value": clean_text(market_context.get("IHSG_Last_Date")), "Detail": f"Source: {clean_text(market_context.get('Market_Source'))}"},
                 {"Area": "Market Breadth", "Metric": "Breadth Label", "Value": clean_text(market_context.get("Breadth_Label")), "Detail": f"{market_context.get('Breadth_Count', 0)} kode; MA50 {format_percent(market_context.get('Above_MA50_%'))}; MA200 {format_percent(market_context.get('Above_MA200_%'))}"},
-                {"Area": "Kesegaran data", "Metric": "Status", "Value": clean_text(data_freshness.get("Freshness_Label")), "Detail": f"Umur data online {data_freshness.get('Online_Data_Lag_Days') if pd.notna(data_freshness.get('Online_Data_Lag_Days')) else '-'} hari"},
-                {"Area": "Kesegaran data", "Metric": "Coverage harga online", "Value": format_percent(data_freshness.get("Online_Price_Coverage_%"), 0), "Detail": f"Baris stale: {data_freshness.get('Stale_Price_Rows', 0):,}"},
-                {"Area": "Kesegaran data", "Metric": "Coverage fundamental online", "Value": format_percent(data_freshness.get("Online_Fundamental_Coverage_%"), 0), "Detail": f"Field Excel fallback {format_percent(data_freshness.get('Excel_Fundamental_Coverage_%'), 0)}"},
+                {"Area": "Kesegaran data", "Metric": "Status", "Value": data_status["Freshness_Label"], "Detail": f"Umur data online {data_status['Online_Lag_Label']}"},
+                {"Area": "Kesegaran data", "Metric": "Coverage harga online", "Value": data_status["Online_Price_Coverage_Label"], "Detail": f"Baris stale: {data_status['Stale_Rows_Label']}"},
+                {"Area": "Kesegaran data", "Metric": "Coverage fundamental online", "Value": data_status["Online_Fundamental_Coverage_Label"], "Detail": f"Field Excel fallback {format_percent(data_freshness.get('Excel_Fundamental_Coverage_%'), 0)}"},
             ]
         )
         show_table(freshness_rows, hide_index=True)
@@ -7856,12 +7943,16 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=True):
             show_table(cache_status.sort_values("Modified", ascending=False).head(50), hide_index=True)
 
     with st.expander("Workflow rutin yang disarankan", expanded=False):
+        st.caption(
+            f"Kondisi aktif: {data_status['Freshness_Label']}, latest online {data_status['Latest_Online_Label']}, "
+            f"universe aktif {data_status['Universe_Active_Label']} dari {data_status['Universe_Total_Label']} kode."
+        )
         st.markdown(
-            """
+            f"""
             1. Ambil universe kode dari daftar resmi BEI/IDX sebagai sumber utama.
-            2. Pakai snapshot repo `data_cache/market_snapshot_1y.csv` untuk startup cepat saat jam bursa.
+            2. Pakai snapshot repo `data_cache/market_snapshot_1y.csv` untuk startup cepat; status saat ini: **{data_status['Freshness_Label']}**.
             3. Pakai snapshot fundamental `data_cache/fundamental_snapshot.csv` agar rasio massal tidak selalu fetch live.
-            4. Refresh histori online secara terkontrol, lalu bangun snapshot pasar dari cache agar bisa di-commit ke repository.
+            4. Biarkan auto update memperbarui kode prioritas saat bursa buka; cakupan tetap dibatasi agar dashboard tidak berat.
             5. Refresh snapshot fundamental online hanya saat perlu update rasio massal.
             6. Pakai `Ringkasan.xlsx` hanya untuk mengisi kolom yang belum tersedia online dan sebagai pembanding metodologi.
             7. Buka `Audit sumber kode saham`, `Jumlah kode per sheet Excel`, dan `Kelengkapan kolom & sumber data` untuk memastikan fallback terlihat jelas.
@@ -7951,6 +8042,11 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
     method_cols[2].metric("Duplikasi indeks dibersihkan", f"{len(raw_df) - len(df):,}")
     method_cols[3].metric("Histori 52W tersedia", f"{df['Return_52W'].notna().sum():,}")
     method_cols[4].metric("Update data", data_update_label)
+    st.caption(
+        f"Status data metodologi mengikuti sesi aktif: {data_status['Freshness_Label']}, "
+        f"coverage harga {data_status['Online_Price_Coverage_Label']}, coverage fundamental online {data_status['Online_Fundamental_Coverage_Label']}, "
+        f"universe {data_status['Universe_Detail']}."
+    )
 
     availability_rows = [
         {
@@ -7961,13 +8057,13 @@ with tab_method.expander("Metodologi dan formula", expanded=True):
         },
         {
             "Modul": "Harga & histori",
-            "Ketersediaan": clean_text(data_freshness.get("Freshness_Label")),
+            "Ketersediaan": f"{data_status['Freshness_Label']} ({data_status['Online_Price_Coverage_Label']})",
             "Syarat": "Snapshot/cache/yfinance/pandas-datareader punya OHLCV.",
             "Fallback": "Excel Metrik dipakai untuk ringkasan return saat OHLCV online/cache kosong.",
         },
         {
             "Modul": "Fundamental",
-            "Ketersediaan": f"Online {format_percent(data_freshness.get('Online_Fundamental_Coverage_%'), 0)}",
+            "Ketersediaan": f"Online {data_status['Online_Fundamental_Coverage_Label']}",
             "Syarat": "TradingView scanner/snapshot repo berisi rasio fundamental.",
             "Fallback": "Excel fallback mengisi field yang kosong dan tetap diberi label sumber.",
         },
