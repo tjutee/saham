@@ -194,6 +194,10 @@ BANKING_THRESHOLDS = {
     "LAR": ("<=", 11.0),
 }
 
+BANK_CORE_METRICS = ["NIM", "CAR", "LDR", "NPL", "BOPO"]
+BANK_OPTIONAL_METRICS = ["CIR", "LAR"]
+BANK_THRESHOLD_METRICS = BANK_CORE_METRICS + BANK_OPTIONAL_METRICS
+
 PROFILE_WEIGHTS = {
     "Balanced": BASE_WEIGHTS,
     "Defensive": {
@@ -280,7 +284,7 @@ HELP_TEXT = {
     "universe_audit": "Universe adalah semua kode hasil merge dari BEI/IDX, fallback online, dan Excel. Universe analisis default hanya memakai kode yang match BEI/IDX resmi; fallback tetap tersedia untuk audit.",
     "refresh_period": "Periode histori online untuk auto update cache. Pilih pendek untuk pembaruan cepat, panjang untuk analisis/teknikal yang lebih stabil.",
     "refresh_top_n": "Jumlah saham teratas berdasarkan Index_Count yang cache historinya akan diperbarui dari sumber online.",
-    "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik bank lengkap, dan DER non-bank <= 2.5.",
+    "clean_data": "Jika aktif, hanya tampil saham Clean_Data=True: kode valid, harga > 0, volume >= 10 juta, PER 0.1-35, PBV 0.05-8, ROE >= 5, ROA ada, NPM >= 0, threshold >= 55%, Risk_Level bukan High, Penalty <= 10, metrik inti bank lengkap, dan DER non-bank <= 2.5.",
     "technical_period": "Rentang OHLCV online untuk analisis teknikal fokus detail. Periode pendek cocok untuk RSI/MACD cepat; 1-2 tahun lebih stabil untuk MA200, 52W, ATR, dan Fibonacci.",
     "technical_code": "Kode teknikal default mengikuti Fokus detail di Detail saham. Data diambil dari yfinance/cache memakai format KODE.JK.",
     "technical_score": "Technical_Score adalah konfirmasi timing berbasis trend, RSI, MACD, volume, dan volatilitas. Ini tidak mengganti Score fundamental utama.",
@@ -665,7 +669,7 @@ def build_completeness_report(data):
         "Ukuran Emiten": ["Market_Cap", "Revenue", "Sales_Multiple"],
         "Valuasi": ["PER", "PBV"],
         "Profitabilitas": ["ROE", "ROA", "NPM"],
-        "Banking": ["NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"],
+        "Banking": BANK_THRESHOLD_METRICS,
         "Histori": ["Return_4W", "Return_13W", "Return_26W", "Return_52W", "Return_YTD"],
         "Scoring": ["Score", "Valuation_Score", "Quality_Score", "Risk_Score", "Liquidity_Score", "Momentum_Score", "Index_Score"],
         "Sumber Data": ["Price_Source", "Volume_Source", "Fundamental_Source", "Universe_Source", "Universe_Diff_Status"],
@@ -1379,7 +1383,7 @@ def build_data_quality_report(scored, raw):
     invalid_pbv = scored["PBV"].isna() | scored["PBV"].le(0)
     missing_profit = scored[["ROE", "ROA", "NPM"]].isna().any(axis=1)
     missing_size_data = scored.get("Market_Cap", pd.Series(index=scored.index)).isna() | scored.get("Revenue", pd.Series(index=scored.index)).isna()
-    bank_metric_columns = [column for column in ["NIM", "CAR", "LDR", "NPL", "BOPO"] if column in scored.columns]
+    bank_metric_columns = [column for column in BANK_CORE_METRICS if column in scored.columns]
     bank_missing_metrics = scored["Threshold_Mode"].eq("Banking") & scored[bank_metric_columns].isna().any(axis=1) if bank_metric_columns else pd.Series(False, index=scored.index)
     low_threshold = scored["Threshold_Pass_Ratio"].lt(40)
     missing_history = scored["Return_52W"].isna()
@@ -1604,7 +1608,7 @@ def add_safety_flags(scored):
         & output["Risk_Level"].ne("High")
         & output["Penalty"].le(10)
     )
-    bank_metrics = [column for column in ["NIM", "CAR", "LDR", "NPL", "BOPO"] if column in output.columns]
+    bank_metrics = [column for column in BANK_CORE_METRICS if column in output.columns]
     bank_ok = pd.Series(True, index=output.index)
     if bank_metrics:
         bank_ok = ~banking_mask | output[bank_metrics].notna().all(axis=1)
@@ -4809,7 +4813,7 @@ def load_data(data_signature=None):
     threshold_nonbank = aggregate_threshold_sheet("NonBank")
     threshold_values = pd.concat([threshold_bank, threshold_nonbank], ignore_index=True)
     threshold_values = threshold_values.groupby("Kode", as_index=False).median(numeric_only=True) if "Kode" in threshold_values.columns else pd.DataFrame(columns=["Kode"])
-    fill_columns = ["NIM", "CAR", "LDR", "NPL", "BOPO", "CIR", "LAR"]
+    fill_columns = BANK_THRESHOLD_METRICS
     merge_columns = ["Kode"] + [column for column in fill_columns if column in threshold_values.columns]
     df = df.merge(threshold_values[merge_columns], on="Kode", how="left", suffixes=("", "_Threshold"))
     for column in fill_columns:
@@ -4927,6 +4931,7 @@ def calculate_scores(df, weights):
         (scored.get("NPL", pd.Series(index=scored.index)) > 5)
         | (scored.get("BOPO", pd.Series(index=scored.index)) > 90)
         | (scored.get("CAR", pd.Series(index=scored.index)) < 12)
+        | (scored.get("LDR", pd.Series(index=scored.index)) > 110)
         | (scored["ROE"] < 0)
         | (scored["NPM"] < 0)
         | (scored["Volume"] < 1_000_000)
@@ -4934,6 +4939,7 @@ def calculate_scores(df, weights):
     banking_medium_risk = banking_mask & (
         (scored.get("NPL", pd.Series(index=scored.index)) > 3.5)
         | (scored.get("BOPO", pd.Series(index=scored.index)) > 80)
+        | (scored.get("LDR", pd.Series(index=scored.index)) < 75)
         | (scored.get("LDR", pd.Series(index=scored.index)) > 100)
         | (scored["Volume"] < 10_000_000)
         | (scored["%Change"].abs() > 10)
