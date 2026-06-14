@@ -5752,81 +5752,78 @@ with tab_reco:
         with st.expander("Grafik Cari Saham", expanded=False):
             st.caption("Opsional untuk membaca pola visual. Tabel di bawah tetap menjadi sumber utama keputusan.")
             reco_chart_view = chart_market_frame(reco_view, "Grafik Cari Saham")
-            left, right = st.columns([1.25, 1])
-            with left:
-                chart_data = prepare_chart_frame(reco_chart_view.sort_values(reco_sort), reco_sort)
-                if chart_data.empty:
-                    st.warning(f"Tidak ada data valid untuk grafik {reco_sort}. Pilih metrik sort lain.")
-                else:
-                    fig = px.bar(
-                        chart_data,
-                        x=reco_sort,
-                        y="Chart_Label",
-                        text="Kode",
-                        orientation="h",
-                        color="Recommendation",
-                        hover_name="Kode",
-                        hover_data={
-                            "Chart_Label": False,
-                            "Nama Perusahaan": True,
-                            "Sektor": True,
-                            "PER": ":.2f",
-                            "PBV": ":.2f",
-                            "ROE": ":.1f",
-                            "DER": ":.2f",
-                            "Threshold_Pass_Ratio": ":.0f",
-                            "Return_52W": ":.1f",
-                            "Volume": ":,.0f",
-                        },
-                        title=f"Top kandidat berdasarkan {reco_sort}",
-                        color_discrete_map=RECOMMENDATION_COLORS,
-                    )
-                    fig.update_traces(textposition="outside", cliponaxis=False)
-                    fig.update_layout(height=520, xaxis_title=reco_sort, yaxis_title="", margin=dict(l=20, r=80, t=70, b=40))
-                    show_chart(fig)
-
-            with right:
-                component_cols = [
-                    "Valuation_Score",
-                    "Quality_Score",
-                    "Risk_Score",
-                    "Liquidity_Score",
-                    "Momentum_Score",
-                    "Index_Score",
-                    "Sector_Relative_Score",
-                ]
-                radar_base = reco_chart_view.head(5)
-                fig = go.Figure()
-                for index, (_, row) in enumerate(radar_base.iterrows()):
-                    values = [row[col] for col in component_cols]
-                    color = STOCK_LINE_COLORS[index % len(STOCK_LINE_COLORS)]
-                    fig.add_trace(
-                        go.Scatterpolar(
-                            r=values + [values[0]],
-                            theta=[
-                                "Valuasi",
-                                "Kualitas",
-                                "Risiko",
-                                "Likuiditas",
-                                "Momentum",
-                                "Indeks",
-                                "Relatif Sektor",
-                                "Valuasi",
-                            ],
-                            fill="toself",
-                            name=row["Kode"],
-                            line=dict(color=color),
-                            fillcolor=color,
-                            opacity=0.32,
-                        )
-                    )
-                fig.update_layout(
-                    title="Profil faktor top 5",
-                    polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-                    height=520,
-                    margin=dict(l=30, r=30, t=60, b=30),
+            chart_data = prepare_chart_frame(reco_chart_view.sort_values(reco_sort), reco_sort)
+            if chart_data.empty:
+                st.warning(f"Tidak ada data valid untuk grafik {reco_sort}. Pilih metrik sort lain.")
+            else:
+                fig = px.bar(
+                    chart_data,
+                    x=reco_sort,
+                    y="Chart_Label",
+                    text="Kode",
+                    orientation="h",
+                    color="Recommendation",
+                    hover_name="Kode",
+                    hover_data={
+                        "Chart_Label": False,
+                        "Nama Perusahaan": True,
+                        "Sektor": True,
+                        "PER": ":.2f",
+                        "PBV": ":.2f",
+                        "ROE": ":.1f",
+                        "DER": ":.2f",
+                        "Threshold_Pass_Ratio": ":.0f",
+                        "Return_52W": ":.1f",
+                        "Volume": ":,.0f",
+                    },
+                    title=f"Top kandidat berdasarkan {reco_sort}",
+                    color_discrete_map=RECOMMENDATION_COLORS,
                 )
+                fig.update_traces(textposition="outside", cliponaxis=False)
+                fig.update_layout(height=520, xaxis_title=reco_sort, yaxis_title="", margin=dict(l=20, r=80, t=70, b=40))
                 show_chart(fig)
+
+            component_cols = [
+                "Valuation_Score",
+                "Quality_Score",
+                "Risk_Score",
+                "Liquidity_Score",
+                "Momentum_Score",
+                "Index_Score",
+                "Sector_Relative_Score",
+            ]
+            radar_base = reco_chart_view.head(5)
+            fig = go.Figure()
+            for index, (_, row) in enumerate(radar_base.iterrows()):
+                values = [row[col] for col in component_cols]
+                color = STOCK_LINE_COLORS[index % len(STOCK_LINE_COLORS)]
+                fig.add_trace(
+                    go.Scatterpolar(
+                        r=values + [values[0]],
+                        theta=[
+                            "Valuasi",
+                            "Kualitas",
+                            "Risiko",
+                            "Likuiditas",
+                            "Momentum",
+                            "Indeks",
+                            "Relatif Sektor",
+                            "Valuasi",
+                        ],
+                        fill="toself",
+                        name=row["Kode"],
+                        line=dict(color=color),
+                        fillcolor=color,
+                        opacity=0.32,
+                    )
+                )
+            fig.update_layout(
+                title="Profil faktor top 5",
+                polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+                height=520,
+                margin=dict(l=30, r=30, t=60, b=30),
+            )
+            show_chart(fig)
 
         display_columns = [
             "Kode",
@@ -6074,33 +6071,30 @@ with tab_reco:
             "Panel ini membantu mengecek apakah Aksi Akhir terlalu ketat atau terlalu longgar dibanding label Score. "
                 "Gunakan untuk audit metodologi, bukan untuk mengubah data sumber dari dashboard."
             )
-            calibration_cols = st.columns([1, 1])
-            with calibration_cols[0]:
-                calibration = pd.crosstab(reco_view["Recommendation"], reco_view["Final_Action"])
-                if calibration.empty:
-                    st.info("Kalibrasi belum tersedia untuk hasil filter ini.")
-                else:
-                    show_table(calibration, height=260)
-            with calibration_cols[1]:
-                blocker_text = reco_view.get("Decision_Blockers", pd.Series("", index=reco_view.index)).fillna("").astype(str)
-                blocker_items = []
-                for value in blocker_text:
-                    blocker_items.extend([item.strip() for item in value.split(",") if item.strip() and item.strip().lower() != "none"])
-                if blocker_items:
-                    blocker_counts = pd.Series(blocker_items).value_counts().reset_index()
-                    blocker_counts.columns = ["Penghambat", "Jumlah"]
-                    fig = px.bar(
-                        blocker_counts.head(8),
-                        x="Jumlah",
-                        y="Penghambat",
-                        orientation="h",
-                        title="Penghambat paling sering",
-                        color_discrete_sequence=["#475569"],
-                    )
-                    fig.update_layout(height=300, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
-                    show_chart(fig)
-                else:
-                    st.info("Tidak ada penghambat dominan pada hasil filter ini.")
+            calibration = pd.crosstab(reco_view["Recommendation"], reco_view["Final_Action"])
+            if calibration.empty:
+                st.info("Kalibrasi belum tersedia untuk hasil filter ini.")
+            else:
+                show_table(calibration, height=260)
+            blocker_text = reco_view.get("Decision_Blockers", pd.Series("", index=reco_view.index)).fillna("").astype(str)
+            blocker_items = []
+            for value in blocker_text:
+                blocker_items.extend([item.strip() for item in value.split(",") if item.strip() and item.strip().lower() != "none"])
+            if blocker_items:
+                blocker_counts = pd.Series(blocker_items).value_counts().reset_index()
+                blocker_counts.columns = ["Penghambat", "Jumlah"]
+                fig = px.bar(
+                    blocker_counts.head(8),
+                    x="Jumlah",
+                    y="Penghambat",
+                    orientation="h",
+                    title="Penghambat paling sering",
+                    color_discrete_sequence=["#475569"],
+                )
+                fig.update_layout(height=300, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+                show_chart(fig)
+            else:
+                st.info("Tidak ada penghambat dominan pada hasil filter ini.")
 
 with tab_portfolio.expander("Skenario alokasi portofolio", expanded=False):
     st.subheader("Perencana portofolio")
@@ -6217,31 +6211,28 @@ with tab_portfolio.expander("Skenario alokasi portofolio", expanded=False):
                     + ", ".join(f"{row['Sektor']} {row['Weight_%']:.1f}%" for _, row in over_sector.iterrows())
                 )
 
-            port_chart_cols = st.columns([1, 1])
-            with port_chart_cols[0]:
-                fig = px.pie(
-                    sector_alloc,
-                    names="Sektor",
-                    values="Actual_Value",
-                    hole=0.45,
-                    title="Alokasi per sektor",
-                    color_discrete_sequence=STOCK_LINE_COLORS,
-                )
-                fig.update_layout(height=360, margin=dict(l=20, r=20, t=60, b=40))
-                show_chart(fig)
-            with port_chart_cols[1]:
-                action_alloc = portfolio_view.groupby("Final_Action", dropna=False)["Actual_Value"].sum().reset_index()
-                fig = px.bar(
-                    action_alloc,
-                    x="Actual_Value",
-                    y="Final_Action",
-                    color="Final_Action",
-                    orientation="h",
-                    title="Alokasi menurut aksi akhir",
-                    color_discrete_map=FINAL_ACTION_COLORS,
-                )
-                fig.update_layout(height=360, xaxis_title="Nilai", yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
-                show_chart(fig)
+            fig = px.pie(
+                sector_alloc,
+                names="Sektor",
+                values="Actual_Value",
+                hole=0.45,
+                title="Alokasi per sektor",
+                color_discrete_sequence=STOCK_LINE_COLORS,
+            )
+            fig.update_layout(height=360, margin=dict(l=20, r=20, t=60, b=40))
+            show_chart(fig)
+            action_alloc = portfolio_view.groupby("Final_Action", dropna=False)["Actual_Value"].sum().reset_index()
+            fig = px.bar(
+                action_alloc,
+                x="Actual_Value",
+                y="Final_Action",
+                color="Final_Action",
+                orientation="h",
+                title="Alokasi menurut aksi akhir",
+                color_discrete_map=FINAL_ACTION_COLORS,
+            )
+            fig.update_layout(height=360, xaxis_title="Nilai", yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
+            show_chart(fig)
 
             portfolio_columns = [
                 "Kode",
@@ -6752,57 +6743,52 @@ with tab_explore.expander("Explorer saham", expanded=False):
     explore_limit = safe_slider("Jumlah titik Explorer", explore_min, explore_max, explore_default, step=explore_step, help=HELP_TEXT["explore_limit"])
     explore_plot = explorer_chart_data.sort_values("Score", ascending=False).head(explore_limit)
 
-    left, right = st.columns(2)
-    with left:
-        fig = px.scatter(
-            explore_plot,
-            x=explore_x,
-            y=explore_y,
-            size=explore_size,
-            color=explore_color,
-            hover_name="Kode",
-            hover_data=["Nama Perusahaan", "Sektor", "PBV", "DER", "NPM", "Recommendation", "Final_Action", "Decision_Confidence"],
-            title=f"{explore_x} vs {explore_y}",
-            **chart_color_kwargs(explore_color),
-        )
-        fig.update_layout(height=460)
-        show_chart(fig)
+    fig = px.scatter(
+        explore_plot,
+        x=explore_x,
+        y=explore_y,
+        size=explore_size,
+        color=explore_color,
+        hover_name="Kode",
+        hover_data=["Nama Perusahaan", "Sektor", "PBV", "DER", "NPM", "Recommendation", "Final_Action", "Decision_Confidence"],
+        title=f"{explore_x} vs {explore_y}",
+        **chart_color_kwargs(explore_color),
+    )
+    fig.update_layout(height=460)
+    show_chart(fig)
 
-    with right:
-        pair_x = st.selectbox("Pembanding X", ["PBV", "PER", "DER", "Threshold_Pass_Ratio", "Return_52W"], index=0)
-        pair_y = st.selectbox("Pembanding Y", ["DER", "ROE", "NPM", "Score", "Risk_Score"], index=0)
-        fig = px.scatter(
-            explore_plot,
-            x=pair_x,
-            y=pair_y,
-            color="Quality_Score",
-            size="Turnover",
-            hover_name="Kode",
-            hover_data=["Nama Perusahaan", "Sektor", "Score", "Risk_Level"],
-            title=f"{pair_x} vs {pair_y}, warna = kualitas profit",
-            **chart_color_kwargs("Quality_Score"),
-        )
-        fig.update_layout(height=460)
-        show_chart(fig)
+    pair_x = st.selectbox("Pembanding X", ["PBV", "PER", "DER", "Threshold_Pass_Ratio", "Return_52W"], index=0)
+    pair_y = st.selectbox("Pembanding Y", ["DER", "ROE", "NPM", "Score", "Risk_Score"], index=0)
+    fig = px.scatter(
+        explore_plot,
+        x=pair_x,
+        y=pair_y,
+        color="Quality_Score",
+        size="Turnover",
+        hover_name="Kode",
+        hover_data=["Nama Perusahaan", "Sektor", "Score", "Risk_Level"],
+        title=f"{pair_x} vs {pair_y}, warna = kualitas profit",
+        **chart_color_kwargs("Quality_Score"),
+    )
+    fig.update_layout(height=460)
+    show_chart(fig)
 
-    hist_cols = st.columns(3)
     histogram_columns = st.multiselect(
         "Histogram",
         ANALYSIS_COLUMNS,
         default=["Score", "ROE", "PER"],
         help=HELP_TEXT["histogram"],
     )[:3]
-    for index, (column, container) in enumerate(zip(histogram_columns, hist_cols)):
-        with container:
-            fig = px.histogram(
-                explore_plot,
-                x=column,
-                nbins=35,
-                title=f"Distribusi {column}",
-                color_discrete_sequence=[FACTOR_COLORS.get(column, "#2563eb")],
-            )
-            fig.update_layout(height=340)
-            show_chart(fig)
+    for column in histogram_columns:
+        fig = px.histogram(
+            explore_plot,
+            x=column,
+            nbins=35,
+            title=f"Distribusi {column}",
+            color_discrete_sequence=[FACTOR_COLORS.get(column, "#2563eb")],
+        )
+        fig.update_layout(height=340)
+        show_chart(fig)
 
 with tab_history:
     st.subheader("Detail saham")
@@ -6899,47 +6885,44 @@ with tab_history:
             focus_cols[5].metric("Threshold", format_percent(focus_row.get("Threshold_Pass_Ratio"), 0), clean_text(focus_row.get("Threshold_Mode")))
             st.caption(clean_text(focus_row.get("Decision_Summary"), "Ringkasan keputusan belum tersedia."))
 
-            focus_info_cols = st.columns([1, 1])
-            with focus_info_cols[0]:
-                st.markdown("**Prospek berbasis data dashboard**")
-                st.write(f"Faktor kuat: {clean_text(focus_row.get('Top_Strengths'), '-')}")
-                st.write(f"Faktor risiko: {clean_text(focus_row.get('Top_Risks'), '-')}")
-                st.write(f"Langkah berikutnya: {clean_text(focus_row.get('Next_Step'), '-')}")
-            with focus_info_cols[1]:
-                st.markdown("**Berita & issue terbaru**")
-                news_controls = st.columns([1, 1, 1])
-                with news_controls[0]:
-                    news_source_mode = st.selectbox(
-                        "Sumber berita",
-                        ["Auto", "Google News", "Yahoo Finance"],
-                        help=HELP_TEXT["news_source"],
-                    )
-                with news_controls[1]:
-                    news_limit = safe_slider("Jumlah berita", 3, 10, 5, step=1, help="Jumlah headline live untuk fokus detail. Lebih banyak berita bisa membuat tabel lebih panjang.")
-                with news_controls[2]:
-                    if st.button("Ambil ulang berita", help="Opsional: hapus cache berita untuk kode fokus dan ambil ulang dari sumber live. Berita tetap otomatis mengikuti saham fokus."):
-                        fetch_yahoo_news.clear()
-                news_df, news_error, news_source = fetch_yahoo_news(
-                    focus_code,
-                    company_name=focus_row.get("Nama Perusahaan"),
-                    limit=news_limit,
-                    source_mode=news_source_mode,
+            st.markdown("**Prospek berbasis data dashboard**")
+            st.write(f"Faktor kuat: {clean_text(focus_row.get('Top_Strengths'), '-')}")
+            st.write(f"Faktor risiko: {clean_text(focus_row.get('Top_Risks'), '-')}")
+            st.write(f"Langkah berikutnya: {clean_text(focus_row.get('Next_Step'), '-')}")
+            st.markdown("**Berita & issue terbaru**")
+            news_controls = st.columns([1, 1, 1])
+            with news_controls[0]:
+                news_source_mode = st.selectbox(
+                    "Sumber berita",
+                    ["Auto", "Google News", "Yahoo Finance"],
+                    help=HELP_TEXT["news_source"],
                 )
-                if news_error:
-                    st.info(news_error)
-                else:
-                    st.caption(f"Fokus: {focus_code} - {clean_text(focus_row.get('Nama Perusahaan'))}. Sumber: {news_source}. Berita ditampilkan apa adanya dari provider.")
-                    show_table(
-                        news_df,
-                        hide_index=True,
-                        column_config={
-                            "Tanggal": st.column_config.DatetimeColumn("Tanggal", format="YYYY-MM-DD HH:mm"),
-                            "Judul": st.column_config.TextColumn("Judul"),
-                            "Sumber": st.column_config.TextColumn("Sumber"),
-                            "Ringkasan": st.column_config.TextColumn("Ringkasan"),
-                            "Link": st.column_config.LinkColumn("Link"),
-                        },
-                    )
+            with news_controls[1]:
+                news_limit = safe_slider("Jumlah berita", 3, 10, 5, step=1, help="Jumlah headline live untuk fokus detail. Lebih banyak berita bisa membuat tabel lebih panjang.")
+            with news_controls[2]:
+                if st.button("Ambil ulang berita", help="Opsional: hapus cache berita untuk kode fokus dan ambil ulang dari sumber live. Berita tetap otomatis mengikuti saham fokus."):
+                    fetch_yahoo_news.clear()
+            news_df, news_error, news_source = fetch_yahoo_news(
+                focus_code,
+                company_name=focus_row.get("Nama Perusahaan"),
+                limit=news_limit,
+                source_mode=news_source_mode,
+            )
+            if news_error:
+                st.info(news_error)
+            else:
+                st.caption(f"Fokus: {focus_code} - {clean_text(focus_row.get('Nama Perusahaan'))}. Sumber: {news_source}. Berita ditampilkan apa adanya dari provider.")
+                show_table(
+                    news_df,
+                    hide_index=True,
+                    column_config={
+                        "Tanggal": st.column_config.DatetimeColumn("Tanggal", format="YYYY-MM-DD HH:mm"),
+                        "Judul": st.column_config.TextColumn("Judul"),
+                        "Sumber": st.column_config.TextColumn("Sumber"),
+                        "Ringkasan": st.column_config.TextColumn("Ringkasan"),
+                        "Link": st.column_config.LinkColumn("Link"),
+                    },
+                )
     else:
         st.warning("Tidak ada kode saham pada filter saat ini.")
         selected_focus_codes = []
@@ -7763,22 +7746,19 @@ with tab_history:
                 show_chart(fig)
 
                 with st.expander("Momentum lanjutan: RSI & MACD", expanded=False):
-                    lower_cols = st.columns([1, 1])
-                    with lower_cols[0]:
-                        momentum_panel = price_panel[["Date", "RSI14", "MACD", "MACD_Signal"]].copy()
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["RSI14"], mode="lines", name="RSI14", line=dict(color="#2563eb")))
-                        fig.add_hline(y=70, line_dash="dash", line_color="#ea580c")
-                        fig.add_hline(y=30, line_dash="dash", line_color="#15803d")
-                        fig.update_layout(title="RSI 14", height=320, yaxis_title="RSI", margin=dict(l=20, r=20, t=60, b=40))
-                        show_chart(fig)
-                    with lower_cols[1]:
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD"], mode="lines", name="MACD", line=dict(color="#7c3aed")))
-                        fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD_Signal"], mode="lines", name="Signal", line=dict(color="#ca8a04")))
-                        fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
-                        fig.update_layout(title="MACD", height=320, yaxis_title="MACD", margin=dict(l=20, r=20, t=60, b=40))
-                        show_chart(fig)
+                    momentum_panel = price_panel[["Date", "RSI14", "MACD", "MACD_Signal"]].copy()
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["RSI14"], mode="lines", name="RSI14", line=dict(color="#2563eb")))
+                    fig.add_hline(y=70, line_dash="dash", line_color="#ea580c")
+                    fig.add_hline(y=30, line_dash="dash", line_color="#15803d")
+                    fig.update_layout(title="RSI 14", height=320, yaxis_title="RSI", margin=dict(l=20, r=20, t=60, b=40))
+                    show_chart(fig)
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD"], mode="lines", name="MACD", line=dict(color="#7c3aed")))
+                    fig.add_trace(go.Scatter(x=momentum_panel["Date"], y=momentum_panel["MACD_Signal"], mode="lines", name="Signal", line=dict(color="#ca8a04")))
+                    fig.add_hline(y=0, line_dash="dash", line_color=CHART_AXIS_COLOR)
+                    fig.update_layout(title="MACD", height=320, yaxis_title="MACD", margin=dict(l=20, r=20, t=60, b=40))
+                    show_chart(fig)
 
                 detail_columns = [
                     "Date",
@@ -8030,58 +8010,55 @@ with tab_sector.expander("Analisis sektor", expanded=False):
         st.warning("Tidak ada kelompok yang memenuhi minimum saham. Menampilkan semua kelompok sementara.")
         sector_summary = sector_summary_all
 
-    left, right = st.columns([1.1, 1])
-    with left:
-        if sector_chart == "Scatter":
-            fig = px.scatter(
-                sector_summary,
-                x="Total_Market_Cap",
-                y="Median_Score",
-                size="Saham",
-                color="Strong_Buy",
-                hover_name=sector_group,
-                title=f"{sector_group}: market cap vs median score",
-                color_continuous_scale=COUNT_SCALE,
-            )
-        elif sector_chart == "Treemap":
-            fig = px.treemap(
-                sector_summary,
-                path=[sector_group],
-                values="Total_Market_Cap",
-                color="Median_Score",
-                title=f"Peta market cap dan score {sector_group.lower()}",
-                color_continuous_scale=SCORE_SCALE,
-                range_color=[0, 100],
-            )
-        else:
-            fig = px.bar(
-                sector_summary,
-                x=sector_sort,
-                y=sector_group,
-                orientation="h",
-                color="Strong_Buy",
-                title=f"Ranking {sector_group.lower()} berdasarkan {sector_sort}",
-                color_continuous_scale=COUNT_SCALE,
-            )
-            fig.update_layout(yaxis={"categoryorder": "total ascending"})
-        fig.update_layout(height=520)
-        show_chart(fig)
-
-    with right:
-        market_cap_view = sector_summary.sort_values("Total_Market_Cap", ascending=True).tail(15)
-        fig = px.bar(
-            market_cap_view,
+    if sector_chart == "Scatter":
+        fig = px.scatter(
+            sector_summary,
             x="Total_Market_Cap",
-            y=sector_group,
-            orientation="h",
+            y="Median_Score",
+            size="Saham",
+            color="Strong_Buy",
+            hover_name=sector_group,
+            title=f"{sector_group}: market cap vs median score",
+            color_continuous_scale=COUNT_SCALE,
+        )
+    elif sector_chart == "Treemap":
+        fig = px.treemap(
+            sector_summary,
+            path=[sector_group],
+            values="Total_Market_Cap",
             color="Median_Score",
-            title=f"Kontribusi market cap {sector_group.lower()}",
+            title=f"Peta market cap dan score {sector_group.lower()}",
             color_continuous_scale=SCORE_SCALE,
             range_color=[0, 100],
         )
-        fig.update_layout(xaxis_title="Total market cap", yaxis_title="")
-        fig.update_layout(height=520)
-        show_chart(fig)
+    else:
+        fig = px.bar(
+            sector_summary,
+            x=sector_sort,
+            y=sector_group,
+            orientation="h",
+            color="Strong_Buy",
+            title=f"Ranking {sector_group.lower()} berdasarkan {sector_sort}",
+            color_continuous_scale=COUNT_SCALE,
+        )
+        fig.update_layout(yaxis={"categoryorder": "total ascending"})
+    fig.update_layout(height=520)
+    show_chart(fig)
+
+    market_cap_view = sector_summary.sort_values("Total_Market_Cap", ascending=True).tail(15)
+    fig = px.bar(
+        market_cap_view,
+        x="Total_Market_Cap",
+        y=sector_group,
+        orientation="h",
+        color="Median_Score",
+        title=f"Kontribusi market cap {sector_group.lower()}",
+        color_continuous_scale=SCORE_SCALE,
+        range_color=[0, 100],
+    )
+    fig.update_layout(xaxis_title="Total market cap", yaxis_title="")
+    fig.update_layout(height=520)
+    show_chart(fig)
 
     show_table(
         sector_summary,
@@ -8242,40 +8219,37 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=False):
         completeness_report = build_completeness_report(scored_df)
         completeness_metric = completeness_report.groupby("Grup", as_index=False)["Coverage"].mean().sort_values("Coverage")
         source_mix = build_source_mix(scored_df)
-        data_health_cols = st.columns([1, 1])
-        with data_health_cols[0]:
+        fig = px.bar(
+            completeness_metric,
+            x="Coverage",
+            y="Grup",
+            orientation="h",
+            text="Coverage",
+            title="Coverage rata-rata per grup data",
+            color="Coverage",
+            color_continuous_scale=SCORE_SCALE,
+            range_color=[0, 100],
+        )
+        fig.update_traces(texttemplate="%{text:.0f}%", textposition="outside", cliponaxis=False)
+        fig.update_layout(height=360, xaxis_title="Coverage", yaxis_title="", margin=dict(l=20, r=70, t=60, b=40))
+        show_chart(fig)
+        if source_mix.empty:
+            st.info("Ringkasan sumber data belum tersedia.")
+        else:
+            source_focus = source_mix[
+                source_mix["Area"].isin(["Price_Source", "Volume_Source", "Fundamental_Source", "Bank_Metric_Source", "Universe_Diff_Status"])
+            ]
             fig = px.bar(
-                completeness_metric,
-                x="Coverage",
-                y="Grup",
+                source_focus,
+                x="Jumlah",
+                y="Nilai",
+                color="Area",
                 orientation="h",
-                text="Coverage",
-                title="Coverage rata-rata per grup data",
-                color="Coverage",
-                color_continuous_scale=SCORE_SCALE,
-                range_color=[0, 100],
+                title="Campuran sumber data utama",
+                color_discrete_map=SOURCE_COLORS,
             )
-            fig.update_traces(texttemplate="%{text:.0f}%", textposition="outside", cliponaxis=False)
-            fig.update_layout(height=360, xaxis_title="Coverage", yaxis_title="", margin=dict(l=20, r=70, t=60, b=40))
+            fig.update_layout(height=360, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
             show_chart(fig)
-        with data_health_cols[1]:
-            if source_mix.empty:
-                st.info("Ringkasan sumber data belum tersedia.")
-            else:
-                source_focus = source_mix[
-                    source_mix["Area"].isin(["Price_Source", "Volume_Source", "Fundamental_Source", "Bank_Metric_Source", "Universe_Diff_Status"])
-                ]
-                fig = px.bar(
-                    source_focus,
-                    x="Jumlah",
-                    y="Nilai",
-                    color="Area",
-                    orientation="h",
-                    title="Campuran sumber data utama",
-                    color_discrete_map=SOURCE_COLORS,
-                )
-                fig.update_layout(height=360, yaxis_title="", margin=dict(l=20, r=20, t=60, b=40))
-                show_chart(fig)
 
         show_table(
             completeness_report.sort_values(["Coverage", "Grup", "Kolom"]),
@@ -8422,36 +8396,33 @@ with tab_quality.expander("Ringkasan kualitas data", expanded=False):
         else:
             st.success("Tidak ada issue data quality pada check utama.")
 
-    status_left, status_right = st.columns([1, 1])
-    with status_left:
-        st.write("Status Excel fallback")
-        show_table(pd.DataFrame([get_file_status(DATA_FILE)]), hide_index=True)
-        with st.expander("Jumlah kode per sheet Excel", expanded=False):
-            show_table(
-                get_excel_sheet_code_counts(),
-                hide_index=True,
-                column_config={
-                    "Rows": st.column_config.NumberColumn("Rows", format="%d"),
-                    "Unique Codes": st.column_config.NumberColumn("Kode Unik", format="%d"),
-                },
-            )
-    with status_right:
-        st.write("Status cache & snapshot")
+    st.write("Status Excel fallback")
+    show_table(pd.DataFrame([get_file_status(DATA_FILE)]), hide_index=True)
+    with st.expander("Jumlah kode per sheet Excel", expanded=False):
         show_table(
-            pd.DataFrame(
-                [
-                    get_file_status(MARKET_SNAPSHOT_FILE),
-                    get_file_status(FUNDAMENTAL_SNAPSHOT_FILE),
-                    get_file_status(BANK_METRICS_SNAPSHOT_FILE),
-                ]
-            ),
+            get_excel_sheet_code_counts(),
             hide_index=True,
+            column_config={
+                "Rows": st.column_config.NumberColumn("Rows", format="%d"),
+                "Unique Codes": st.column_config.NumberColumn("Kode Unik", format="%d"),
+            },
         )
-        cache_status = get_history_cache_status()
-        if cache_status.empty:
-            st.info("Belum ada cache histori online.")
-        else:
-            show_table(cache_status.sort_values("Modified", ascending=False).head(50), hide_index=True)
+    st.write("Status cache & snapshot")
+    show_table(
+        pd.DataFrame(
+            [
+                get_file_status(MARKET_SNAPSHOT_FILE),
+                get_file_status(FUNDAMENTAL_SNAPSHOT_FILE),
+                get_file_status(BANK_METRICS_SNAPSHOT_FILE),
+            ]
+        ),
+        hide_index=True,
+    )
+    cache_status = get_history_cache_status()
+    if cache_status.empty:
+        st.info("Belum ada cache histori online.")
+    else:
+        show_table(cache_status.sort_values("Modified", ascending=False).head(50), hide_index=True)
 
     with st.expander("Workflow rutin yang disarankan", expanded=False):
         st.caption(
