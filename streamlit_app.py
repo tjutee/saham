@@ -2791,6 +2791,88 @@ def fetch_google_news_rss(code, company_name="", limit=6, prior_error=None):
     return news, None, "Google News RSS"
 
 
+NEWS_THEME_RULES = [
+    (
+        "Prospek",
+        ["naik", "menguat", "prospek", "target", "ekspansi", "kontrak", "laba", "profit", "dividen", "akuisisi", "buyback", "growth", "upgrade"],
+        "Berita berpotensi mendukung sentimen atau prospek. Cocokkan dengan Score, threshold, dan momentum sebelum tindak lanjut.",
+    ),
+    (
+        "Risiko",
+        ["turun", "melemah", "rugi", "utang", "gugat", "sanksi", "default", "pailit", "restrukturisasi", "downgrade", "tekanan", "risiko"],
+        "Berita berpotensi menambah risiko. Cek data quality, Risk_Level, dan tunggu konfirmasi harga bila sinyal teknikal belum kuat.",
+    ),
+    (
+        "Aksi Korporasi",
+        ["rights issue", "private placement", "ipo", "divestasi", "merger", "spin off", "stock split", "rups", "waran", "saham baru"],
+        "Aksi korporasi dapat mengubah valuasi, likuiditas, dan struktur modal. Review dampaknya sebelum memakai ranking.",
+    ),
+    (
+        "Market/Sektor",
+        ["ihsg", "sektor", "komoditas", "batubara", "emas", "minyak", "rupiah", "suku bunga", "inflasi", "fed", "bi rate", "ojk", "bei"],
+        "Konteks pasar/sektor. Gunakan sebagai filter timing, bukan pengganti analisis emiten.",
+    ),
+]
+
+
+def classify_news_theme(title, summary=""):
+    text = f"{clean_text(title, '')} {clean_text(summary, '')}".lower()
+    for theme, keywords, implication in NEWS_THEME_RULES:
+        if any(keyword in text for keyword in keywords):
+            return theme, implication
+    return "Netral", "Berita belum menunjukkan sinyal sentimen yang jelas. Pakai sebagai konteks, bukan pemicu keputusan."
+
+
+def enrich_news_view(news_df, focus_row):
+    if news_df is None or news_df.empty:
+        return pd.DataFrame()
+    view = news_df.copy()
+    if "Tanggal" in view.columns:
+        view["Tanggal"] = pd.to_datetime(view["Tanggal"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M")
+    for column in ["Judul", "Sumber", "Ringkasan", "Link"]:
+        if column in view.columns:
+            view[column] = view[column].map(clean_text)
+    themes = view.apply(lambda row: classify_news_theme(row.get("Judul"), row.get("Ringkasan")), axis=1)
+    view["Tema"] = [item[0] for item in themes]
+    view["Implikasi"] = [item[1] for item in themes]
+    final_action = clean_text(focus_row.get("Final_Action"), "-")
+    next_step = clean_text(focus_row.get("Next_Step"), "-")
+    risk_level = clean_text(focus_row.get("Risk_Level"), "-")
+    view["Konteks Dashboard"] = (
+        "Aksi: " + final_action + " | Risiko: " + risk_level + " | Langkah: " + next_step
+    )
+    columns = ["Tanggal", "Tema", "Sumber", "Judul", "Ringkasan", "Implikasi", "Konteks Dashboard", "Link"]
+    return view[[column for column in columns if column in view.columns]]
+
+
+def build_news_brief(news_view, focus_row):
+    if news_view is None or news_view.empty:
+        return pd.DataFrame()
+    counts = news_view["Tema"].value_counts().to_dict() if "Tema" in news_view.columns else {}
+    dominant_theme = max(counts, key=counts.get) if counts else "Netral"
+    latest_title = clean_text(news_view.iloc[0].get("Judul"), "-")
+    latest_theme = clean_text(news_view.iloc[0].get("Tema"), "Netral")
+    return pd.DataFrame(
+        [
+            {
+                "Area": "Keputusan dashboard",
+                "Ringkasan": clean_text(focus_row.get("Decision_Summary"), "-"),
+                "Implikasi": clean_text(focus_row.get("Next_Step"), "-"),
+            },
+            {
+                "Area": "Tema berita dominan",
+                "Ringkasan": f"{dominant_theme} ({counts.get(dominant_theme, 0)} dari {len(news_view)} headline)",
+                "Implikasi": "Gunakan tema dominan untuk memvalidasi narasi prospek/risiko, bukan untuk mengganti score.",
+            },
+            {
+                "Area": "Headline terbaru",
+                "Ringkasan": f"{latest_theme}: {latest_title}",
+                "Implikasi": clean_text(news_view.iloc[0].get("Implikasi"), "-"),
+            },
+        ]
+    )
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_yahoo_symbol_history(symbols, period="2y"):
     cleaned_symbols = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
@@ -5994,10 +6076,8 @@ with tab_reco:
             "Nama Perusahaan",
             "Final_Action",
             "Decision_Confidence",
-            "Recommendation",
             "Risk_Level",
             "Clean_Data",
-            "Decision_Summary",
             "Score",
             "Sector_Relative_Score",
             "Threshold_Pass_Ratio",
@@ -6971,9 +7051,22 @@ with tab_history:
             st.caption(clean_text(focus_row.get("Decision_Summary"), "Ringkasan keputusan belum tersedia."))
 
             st.markdown("**Prospek berbasis data dashboard**")
-            st.write(f"Faktor kuat: {clean_text(focus_row.get('Top_Strengths'), '-')}")
-            st.write(f"Faktor risiko: {clean_text(focus_row.get('Top_Risks'), '-')}")
-            st.write(f"Langkah berikutnya: {clean_text(focus_row.get('Next_Step'), '-')}")
+            decision_context = pd.DataFrame(
+                [
+                    {"Area": "Faktor kuat", "Isi": clean_text(focus_row.get("Top_Strengths"), "-")},
+                    {"Area": "Faktor risiko", "Isi": clean_text(focus_row.get("Top_Risks"), "-")},
+                    {"Area": "Langkah berikutnya", "Isi": clean_text(focus_row.get("Next_Step"), "-")},
+                ]
+            )
+            show_table(
+                decision_context,
+                hide_index=True,
+                column_config={
+                    "Area": st.column_config.TextColumn("Area", width="small"),
+                    "Isi": st.column_config.TextColumn("Ringkasan", width="large"),
+                },
+                height=190,
+            )
             st.markdown("**Berita & issue terbaru**")
             news_controls = st.columns([1, 1, 1])
             with news_controls[0]:
@@ -6996,25 +7089,34 @@ with tab_history:
             if news_error:
                 st.info(news_error)
             else:
-                st.caption(f"Fokus: {focus_code} - {clean_text(focus_row.get('Nama Perusahaan'))}. Sumber: {news_source}. Berita ditampilkan apa adanya dari provider.")
-                news_view = news_df.head(news_limit).copy()
-                if "Tanggal" in news_view.columns:
-                    news_view["Tanggal"] = pd.to_datetime(news_view["Tanggal"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M")
-                for column in ["Judul", "Sumber", "Ringkasan", "Link"]:
-                    if column in news_view.columns:
-                        news_view[column] = news_view[column].map(clean_text)
-                news_columns = [column for column in ["Tanggal", "Sumber", "Judul", "Ringkasan", "Link"] if column in news_view.columns]
+                st.caption(f"Fokus: {focus_code} - {clean_text(focus_row.get('Nama Perusahaan'))}. Sumber: {news_source}. Tema/implikasi dihitung dari judul dan ringkasan provider.")
+                news_view = enrich_news_view(news_df.head(news_limit), focus_row)
+                news_brief = build_news_brief(news_view, focus_row)
+                if not news_brief.empty:
+                    show_table(
+                        news_brief,
+                        hide_index=True,
+                        column_config={
+                            "Area": st.column_config.TextColumn("Area", width="small"),
+                            "Ringkasan": st.column_config.TextColumn("Ringkasan", width="large"),
+                            "Implikasi": st.column_config.TextColumn("Implikasi", width="large"),
+                        },
+                        height=210,
+                    )
                 show_table(
-                    news_view[news_columns],
+                    news_view,
                     hide_index=True,
                     column_config={
                         "Tanggal": st.column_config.TextColumn("Tanggal", width="small"),
+                        "Tema": st.column_config.TextColumn("Tema", width="small"),
                         "Sumber": st.column_config.TextColumn("Sumber", width="small"),
                         "Judul": st.column_config.TextColumn("Judul berita", width="large"),
                         "Ringkasan": st.column_config.TextColumn("Ringkasan / issue", width="large"),
+                        "Implikasi": st.column_config.TextColumn("Implikasi", width="large"),
+                        "Konteks Dashboard": st.column_config.TextColumn("Konteks Dashboard", width="large"),
                         "Link": st.column_config.LinkColumn("Link", width="medium", help="Buka berita asli dari provider."),
                     },
-                    height=min(520, 120 + 56 * max(1, len(news_view))),
+                    height=min(680, 150 + 58 * max(1, len(news_view))),
                 )
     else:
         st.warning("Tidak ada kode saham pada filter saat ini.")
