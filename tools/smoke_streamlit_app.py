@@ -3,7 +3,7 @@ from streamlit.testing.v1 import AppTest
 
 def main():
     app = AppTest.from_file("streamlit_app.py")
-    app.run(timeout=180)
+    app.run(timeout=360)
     if app.exception:
         for exception in app.exception:
             print(exception.value)

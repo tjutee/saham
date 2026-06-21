@@ -43,6 +43,20 @@ AUTO_REFRESH_SCOPE_OPTIONS = {
     "Top 50": 50,
     "Top 100": 100,
 }
+INDEX_COMPARISON_SYMBOLS = {
+    "IHSG": "^JKSE",
+    "IDX80": "IDX80.JK",
+    "KOMPAS100": "KOMPAS100.JK",
+    "LQ45": "LQ45.JK",
+    "IDX30": "IDX30.JK",
+}
+INDEX_COMPARISON_COLORS = {
+    "IHSG": "#111827",
+    "IDX80": "#2563eb",
+    "KOMPAS100": "#dc2626",
+    "LQ45": "#16a34a",
+    "IDX30": "#9333ea",
+}
 JAKARTA_TZ = timezone(timedelta(hours=7), name="WIB")
 REGULAR_TRADING_SESSIONS = {
     "weekday": [("09:00", "11:30"), ("13:30", "15:50")],
@@ -2962,6 +2976,166 @@ def fetch_yahoo_symbol_history(symbols, period="2y"):
     return history, None, "yfinance"
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def build_index_comparison_history(symbol_map, period="1y"):
+    symbols = list(symbol_map.values())
+    labels_by_symbol = {symbol: label for label, symbol in symbol_map.items()}
+    history, error, source = fetch_yahoo_symbol_history(symbols, period=period)
+    if history.empty:
+        return pd.DataFrame(), error, source
+
+    view = history.copy()
+    view["Index"] = view["Symbol"].map(labels_by_symbol).fillna(view["Symbol"])
+    view["Date"] = pd.to_datetime(view["Date"], errors="coerce")
+    view["Close"] = pd.to_numeric(view["Close"], errors="coerce")
+    view = view.dropna(subset=["Date", "Close"]).sort_values(["Index", "Date"])
+    first_close = view.groupby("Index")["Close"].transform("first")
+    view["Normalized"] = np.where(first_close.gt(0), view["Close"] / first_close * 100, np.nan)
+    view["Return_%"] = view["Normalized"] - 100
+    view["Latest_Close"] = view.groupby("Index")["Close"].transform("last")
+    view["Latest_Return_%"] = view.groupby("Index")["Return_%"].transform("last")
+    return view.dropna(subset=["Normalized"]), error, source
+
+
+def build_index_proxy_history(scored, selected_indices, period="1y", max_members=80):
+    if scored is None or scored.empty:
+        return pd.DataFrame(), "Universe aktif kosong.", "proxy unavailable"
+    frames = []
+    membership = scored.copy()
+    membership["Kode"] = membership["Kode"].astype(str).str.upper().str.strip()
+    membership["Index"] = membership.get("Index", pd.Series("", index=membership.index)).fillna("").astype(str)
+    membership["Volume"] = pd.to_numeric(membership.get("Volume", pd.Series(0, index=membership.index)), errors="coerce").fillna(0)
+    official_mask = membership.get("In_IDX_Official", pd.Series(True, index=membership.index)).fillna(True)
+    for label in selected_indices:
+        if label == "IHSG":
+            codes = (
+                membership[official_mask]
+                .sort_values("Volume", ascending=False)["Kode"]
+                .drop_duplicates()
+                .head(max_members)
+                .tolist()
+            )
+        else:
+            codes = (
+                membership[membership["Index"].str.contains(label, case=False, na=False)]
+                .sort_values("Volume", ascending=False)["Kode"]
+                .drop_duplicates()
+                .head(max_members)
+                .tolist()
+            )
+        history = read_history_cache(codes, "1y")
+        if history.empty:
+            continue
+        history = trim_history_to_period(history, period)
+        history["Close"] = pd.to_numeric(history["Close"], errors="coerce")
+        history = history.dropna(subset=["Date", "Close"])
+        first_close = history.groupby("Kode")["Close"].transform("first")
+        history["Stock_Normalized"] = np.where(first_close.gt(0), history["Close"] / first_close * 100, np.nan)
+        proxy = (
+            history.dropna(subset=["Stock_Normalized"])
+            .groupby("Date", as_index=False)
+            .agg(Normalized=("Stock_Normalized", "mean"), Members=("Kode", "nunique"))
+        )
+        if proxy.empty:
+            continue
+        proxy["Index"] = label
+        proxy["Close"] = proxy["Normalized"]
+        proxy["Return_%"] = proxy["Normalized"] - 100
+        proxy["Latest_Close"] = proxy["Close"].iloc[-1]
+        proxy["Latest_Return_%"] = proxy["Return_%"].iloc[-1]
+        proxy["Source_Detail"] = f"Proxy equal-weight dari {int(proxy['Members'].max())} saham anggota/cache"
+        frames.append(proxy)
+    if not frames:
+        return pd.DataFrame(), "Cache histori anggota indeks belum cukup untuk membuat proxy.", "history cache proxy"
+    return pd.concat(frames, ignore_index=True), None, "history cache proxy"
+
+
+def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode="Normalized 100", source_mode="Proxy anggota cepat", proxy_source=None):
+    selected_indices = selected_indices or list(INDEX_COMPARISON_SYMBOLS)
+    selected_indices = [label for label in selected_indices if label in INDEX_COMPARISON_SYMBOLS]
+    if not selected_indices:
+        st.info("Pilih minimal satu indeks untuk grafik komparasi.")
+        return
+
+    if source_mode == "Online indeks resmi":
+        symbol_map = {label: INDEX_COMPARISON_SYMBOLS[label] for label in selected_indices}
+        index_history, index_error, index_source = build_index_comparison_history(symbol_map, period=period)
+    else:
+        index_history, index_error, index_source = build_index_proxy_history(proxy_source, selected_indices, period=period)
+    if index_history.empty:
+        st.warning(index_error or "Data indeks belum tersedia dari provider.")
+        return
+
+    available_indices = index_history["Index"].dropna().unique().tolist()
+    missing_indices = [label for label in selected_indices if label not in available_indices]
+    proxy_mode = index_source == "history cache proxy"
+    y_column = "Normalized" if scale_mode == "Normalized 100" or proxy_mode else "Close"
+    y_title = "Indeks normalized (awal periode = 100)" if y_column == "Normalized" else "Level indeks"
+    hover_columns = {
+        "Index": True,
+        "Date": "|%Y-%m-%d",
+        "Close": ":,.2f",
+        "Normalized": ":.2f",
+        "Return_%": ":.2f",
+    }
+    fig = px.line(
+        index_history,
+        x="Date",
+        y=y_column,
+        color="Index",
+        color_discrete_map=INDEX_COMPARISON_COLORS,
+        custom_data=["Index", "Close", "Return_%"],
+        title="Komparasi IHSG, IDX80, KOMPAS100, LQ45, IDX30",
+        markers=False,
+        hover_data=hover_columns,
+    )
+    fig.update_traces(line=dict(width=3))
+    fig.update_layout(
+        height=720,
+        hovermode="x unified",
+        legend_title_text="Indeks",
+        xaxis_title="Tanggal",
+        yaxis_title=y_title,
+        margin=dict(l=40, r=30, t=70, b=45),
+    )
+    fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", spikecolor="#334155", spikethickness=1)
+    fig.update_yaxes(showgrid=True, gridcolor="#e5e7eb", zeroline=True, zerolinecolor="#94a3b8")
+    if scale_mode == "Normalized 100":
+        fig.add_hline(y=100, line_dash="dot", line_color="#64748b", annotation_text="Awal periode", annotation_position="bottom right")
+    show_chart(fig)
+
+    latest = (
+        index_history.sort_values("Date")
+        .groupby("Index", as_index=False)
+        .tail(1)
+        .sort_values("Latest_Return_%", ascending=False)
+    )
+    st.caption(
+        f"Sumber: {index_source}. Skala default normalized 100 agar semua indeks dibandingkan pada satu sumbu yang sama."
+        + (" Mode proxy memakai rata-rata equal-weight saham anggota dari history_cache, bukan level indeks resmi." if proxy_mode else "")
+        + (f" Tidak tersedia dari provider: {', '.join(missing_indices)}." if missing_indices else "")
+        + (f" Catatan provider: {index_error}" if index_error else "")
+    )
+    latest_columns = ["Index", "Date", "Close", "Latest_Return_%"]
+    if "Members" in latest.columns:
+        latest_columns.append("Members")
+    if "Source_Detail" in latest.columns:
+        latest_columns.append("Source_Detail")
+    show_table(
+        latest[latest_columns],
+        hide_index=True,
+        column_config={
+            "Index": st.column_config.TextColumn("Indeks", width="small"),
+            "Date": st.column_config.DateColumn("Tanggal", width="small"),
+            "Close": st.column_config.NumberColumn("Close", format="%.2f"),
+            "Latest_Return_%": st.column_config.NumberColumn("Return periode", format="%.2f%%"),
+            "Members": st.column_config.NumberColumn("Anggota", format="%.0f"),
+            "Source_Detail": st.column_config.TextColumn("Detail sumber", width="large"),
+        },
+        height=250,
+    )
+
+
 def fetch_history_pandas_datareader(codes, period="max"):
     try:
         from pandas_datareader import data as pdr
@@ -5793,6 +5967,40 @@ with tab_summary:
             regime_cols[3].metric("Breadth MA50", format_percent(market_context.get("Above_MA50_%")), f"MA200 {format_percent(market_context.get('Above_MA200_%'))}")
             regime_cols[4].metric("Kesegaran data", data_status["Freshness_Label"], f"Online harga {data_status['Online_Price_Coverage_Label']}")
             st.caption(clean_text(market_context.get("Regime_Reason"), "Konteks market belum tersedia."))
+
+        st.markdown("**Komparasi indeks pasar**")
+        st.caption("Grafik full-width ini memakai satu sumbu. Default normalized 100 agar IHSG, IDX80, KOMPAS100, LQ45, dan IDX30 bisa dibandingkan adil walau level nominal berbeda.")
+        index_controls = st.columns([2, 1, 1, 1])
+        with index_controls[0]:
+            selected_indices = st.multiselect(
+                "Indeks yang ditampilkan",
+                list(INDEX_COMPARISON_SYMBOLS),
+                default=list(INDEX_COMPARISON_SYMBOLS),
+                help="Pilih satu atau beberapa indeks. Legend Plotly juga bisa diklik untuk hide/show seri secara interaktif.",
+            )
+        with index_controls[1]:
+            index_period = st.selectbox(
+                "Periode indeks",
+                ["1mo", "3mo", "6mo", "1y", "2y", "5y"],
+                index=3,
+                format_func=lambda value: ONLINE_PERIOD_LABELS.get(value, value),
+                help="Rentang data indeks dari provider online.",
+            )
+        with index_controls[2]:
+            index_source_mode = st.selectbox(
+                "Sumber grafik",
+                ["Proxy anggota cepat", "Online indeks resmi"],
+                index=0,
+                help="Proxy anggota cepat memakai cache histori saham anggota indeks agar grafik langsung tampil. Online indeks resmi mencoba simbol indeks dari provider.",
+            )
+        with index_controls[3]:
+            index_scale_mode = st.segmented_control(
+                "Skala",
+                ["Normalized 100", "Level asli"],
+                default="Normalized 100",
+                help="Normalized 100 memakai awal periode sebagai 100 supaya semua indeks berada pada satu skala perbandingan.",
+            )
+        render_index_comparison_chart(index_period, selected_indices, index_scale_mode, index_source_mode, scored_df)
 
         show_summary_charts = st.toggle("Tampilkan grafik distribusi dan sumber data", value=False)
         if show_summary_charts:
