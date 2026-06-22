@@ -2994,6 +2994,9 @@ def build_index_comparison_history(symbol_map, period="1y"):
     view["Return_%"] = view["Normalized"] - 100
     view["Latest_Close"] = view.groupby("Index")["Close"].transform("last")
     view["Latest_Return_%"] = view.groupby("Index")["Return_%"].transform("last")
+    view["Members"] = np.nan
+    view["Source_Type"] = "official"
+    view["Source_Detail"] = "Online indeks resmi via yfinance"
     return view.dropna(subset=["Normalized"]), error, source
 
 
@@ -3043,6 +3046,7 @@ def build_index_proxy_history(scored, selected_indices, period="1y", max_members
         proxy["Return_%"] = proxy["Normalized"] - 100
         proxy["Latest_Close"] = proxy["Close"].iloc[-1]
         proxy["Latest_Return_%"] = proxy["Return_%"].iloc[-1]
+        proxy["Source_Type"] = "proxy"
         proxy["Source_Detail"] = f"Proxy equal-weight dari {int(proxy['Members'].max())} saham anggota/cache"
         frames.append(proxy)
     if not frames:
@@ -3060,6 +3064,16 @@ def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode
     if source_mode == "Online indeks resmi":
         symbol_map = {label: INDEX_COMPARISON_SYMBOLS[label] for label in selected_indices}
         index_history, index_error, index_source = build_index_comparison_history(symbol_map, period=period)
+    elif source_mode == "Online resmi + proxy missing":
+        symbol_map = {label: INDEX_COMPARISON_SYMBOLS[label] for label in selected_indices}
+        official_history, official_error, official_source = build_index_comparison_history(symbol_map, period=period)
+        available_official = official_history["Index"].dropna().unique().tolist() if not official_history.empty else []
+        missing_for_proxy = [label for label in selected_indices if label not in available_official]
+        proxy_history, proxy_error, _ = build_index_proxy_history(proxy_source, missing_for_proxy, period=period) if missing_for_proxy else (pd.DataFrame(), None, "history cache proxy")
+        parts = [frame for frame in [official_history, proxy_history] if frame is not None and not frame.empty]
+        index_history = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        index_error = official_error or proxy_error
+        index_source = "online official + history cache proxy"
     else:
         index_history, index_error, index_source = build_index_proxy_history(proxy_source, selected_indices, period=period)
     if index_history.empty:
@@ -3068,7 +3082,17 @@ def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode
 
     available_indices = index_history["Index"].dropna().unique().tolist()
     missing_indices = [label for label in selected_indices if label not in available_indices]
-    proxy_mode = index_source == "history cache proxy"
+    proxy_mask = index_history.get("Source_Type", pd.Series("", index=index_history.index)).eq("proxy")
+    proxy_mode = bool(proxy_mask.all()) if not index_history.empty else False
+    chart_history = index_history.copy()
+    if scale_mode == "Level asli" and proxy_mask.any():
+        chart_history = chart_history[~proxy_mask].copy()
+        if chart_history.empty:
+            st.info("Level asli hanya tersedia untuk data indeks resmi. Mode proxy memakai normalized 100 karena bukan level indeks resmi.")
+            chart_history = index_history.copy()
+            scale_mode = "Normalized 100"
+        else:
+            st.info("Level asli menampilkan data indeks resmi saja. Seri proxy disembunyikan karena bukan level resmi indeks.")
     y_column = "Normalized" if scale_mode == "Normalized 100" or proxy_mode else "Close"
     y_title = "Indeks normalized (awal periode = 100)" if y_column == "Normalized" else "Level indeks"
     hover_columns = {
@@ -3079,7 +3103,7 @@ def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode
         "Return_%": ":.2f",
     }
     fig = px.line(
-        index_history,
+        chart_history,
         x="Date",
         y=y_column,
         color="Index",
@@ -3112,7 +3136,7 @@ def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode
     )
     st.caption(
         f"Sumber: {index_source}. Skala default normalized 100 agar semua indeks dibandingkan pada satu sumbu yang sama."
-        + (" Mode proxy memakai rata-rata equal-weight saham anggota dari history_cache, bukan level indeks resmi." if proxy_mode else "")
+        + (" Seri proxy memakai rata-rata equal-weight saham anggota dari history_cache, bukan level indeks resmi." if proxy_mask.any() else "")
         + (f" Tidak tersedia dari provider: {', '.join(missing_indices)}." if missing_indices else "")
         + (f" Catatan provider: {index_error}" if index_error else "")
     )
@@ -5989,17 +6013,21 @@ with tab_summary:
         with index_controls[2]:
             index_source_mode = st.selectbox(
                 "Sumber grafik",
-                ["Proxy anggota cepat", "Online indeks resmi"],
+                ["Online resmi + proxy missing", "Online indeks resmi", "Proxy anggota cepat"],
                 index=0,
-                help="Proxy anggota cepat memakai cache histori saham anggota indeks agar grafik langsung tampil. Online indeks resmi mencoba simbol indeks dari provider.",
+                help="Hybrid memakai data indeks resmi bila tersedia dan proxy anggota hanya untuk indeks yang kosong. Proxy anggota cepat memakai cache histori saham anggota indeks.",
             )
         with index_controls[3]:
-            index_scale_mode = st.segmented_control(
-                "Skala",
-                ["Normalized 100", "Level asli"],
-                default="Normalized 100",
-                help="Normalized 100 memakai awal periode sebagai 100 supaya semua indeks berada pada satu skala perbandingan.",
-            )
+            if index_source_mode == "Proxy anggota cepat":
+                index_scale_mode = "Normalized 100"
+                st.caption("Skala: Normalized 100. Level asli tidak tersedia untuk proxy anggota.")
+            else:
+                index_scale_mode = st.segmented_control(
+                    "Skala",
+                    ["Normalized 100", "Level asli"],
+                    default="Normalized 100",
+                    help="Normalized 100 memakai awal periode sebagai 100. Level asli hanya valid untuk data indeks resmi.",
+                )
         render_index_comparison_chart(index_period, selected_indices, index_scale_mode, index_source_mode, scored_df)
 
         show_summary_charts = st.toggle("Tampilkan grafik distribusi dan sumber data", value=False)
