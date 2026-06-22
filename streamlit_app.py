@@ -50,6 +50,13 @@ INDEX_COMPARISON_SYMBOLS = {
     "LQ45": "LQ45.JK",
     "IDX30": "IDX30.JK",
 }
+INDEX_TRADINGVIEW_SYMBOLS = {
+    "IHSG": "IDX:COMPOSITE",
+    "IDX80": "IDX:IDX80",
+    "KOMPAS100": "IDX:KOMPAS100",
+    "LQ45": "IDX:LQ45",
+    "IDX30": "IDX:IDX30",
+}
 INDEX_COMPARISON_COLORS = {
     "IHSG": "#111827",
     "IDX80": "#2563eb",
@@ -3054,6 +3061,44 @@ def build_index_proxy_history(scored, selected_indices, period="1y", max_members
     return pd.concat(frames, ignore_index=True), None, "history cache proxy"
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_tradingview_index_latest(selected_indices):
+    selected_indices = [label for label in selected_indices if label in INDEX_TRADINGVIEW_SYMBOLS]
+    if not selected_indices:
+        return pd.DataFrame(), None, "TradingView scanner"
+    tickers = [INDEX_TRADINGVIEW_SYMBOLS[label] for label in selected_indices]
+    labels_by_symbol = {INDEX_TRADINGVIEW_SYMBOLS[label]: label for label in selected_indices}
+    payload = {
+        "symbols": {"tickers": tickers, "query": {"types": []}},
+        "columns": ["name", "close", "change", "change_abs", "description", "type", "subtype", "update_mode"],
+    }
+    try:
+        response = post_json(TRADINGVIEW_SCAN_URL, payload)
+    except Exception as exc:
+        return pd.DataFrame(), f"TradingView scanner indeks gagal: {exc}", "TradingView scanner"
+
+    rows = []
+    for item in response.get("data", []) or []:
+        symbol = clean_text(item.get("s"), "")
+        data = item.get("d", []) or []
+        rows.append(
+            {
+                "Index": labels_by_symbol.get(symbol, clean_text(data[0] if len(data) > 0 else symbol, symbol)),
+                "TradingView_Symbol": symbol,
+                "Official_Close_Latest": pd.to_numeric(data[1] if len(data) > 1 else np.nan, errors="coerce"),
+                "Official_Change_%": pd.to_numeric(data[2] if len(data) > 2 else np.nan, errors="coerce"),
+                "Official_Change": pd.to_numeric(data[3] if len(data) > 3 else np.nan, errors="coerce"),
+                "Official_Description": clean_text(data[4] if len(data) > 4 else "-", "-"),
+                "Official_Update_Mode": clean_text(data[7] if len(data) > 7 else "-", "-"),
+                "Official_Source": "TradingView scanner",
+            }
+        )
+    latest = pd.DataFrame(rows)
+    missing = [label for label in selected_indices if label not in latest.get("Index", pd.Series(dtype=str)).tolist()]
+    error = f"Tidak tersedia dari TradingView: {', '.join(missing)}" if missing else None
+    return latest, error, "TradingView scanner"
+
+
 def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode="Normalized 100", source_mode="Proxy anggota cepat", proxy_source=None):
     selected_indices = selected_indices or list(INDEX_COMPARISON_SYMBOLS)
     selected_indices = [label for label in selected_indices if label in INDEX_COMPARISON_SYMBOLS]
@@ -3079,6 +3124,8 @@ def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode
     if index_history.empty:
         st.warning(index_error or "Data indeks belum tersedia dari provider.")
         return
+
+    official_latest, latest_error, latest_source = fetch_tradingview_index_latest(selected_indices)
 
     available_indices = index_history["Index"].dropna().unique().tolist()
     missing_indices = [label for label in selected_indices if label not in available_indices]
@@ -3134,13 +3181,19 @@ def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode
         .tail(1)
         .sort_values("Latest_Return_%", ascending=False)
     )
+    if not official_latest.empty:
+        latest = latest.merge(official_latest, on="Index", how="left")
     st.caption(
         f"Sumber: {index_source}. Skala default normalized 100 agar semua indeks dibandingkan pada satu sumbu yang sama."
         + (" Seri proxy memakai rata-rata equal-weight saham anggota dari history_cache, bukan level indeks resmi." if proxy_mask.any() else "")
         + (f" Tidak tersedia dari provider: {', '.join(missing_indices)}." if missing_indices else "")
         + (f" Catatan provider: {index_error}" if index_error else "")
+        + (f" Latest resmi: {latest_source}." if not official_latest.empty else "")
+        + (f" {latest_error}." if latest_error else "")
     )
     latest_columns = ["Index", "Date", "Close", "Latest_Return_%"]
+    if "Official_Close_Latest" in latest.columns:
+        latest_columns.extend(["Official_Close_Latest", "Official_Change_%", "Official_Source"])
     if "Members" in latest.columns:
         latest_columns.append("Members")
     if "Source_Detail" in latest.columns:
@@ -3153,6 +3206,9 @@ def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode
             "Date": st.column_config.DateColumn("Tanggal", width="small"),
             "Close": st.column_config.NumberColumn("Close", format="%.2f"),
             "Latest_Return_%": st.column_config.NumberColumn("Return periode", format="%.2f%%"),
+            "Official_Close_Latest": st.column_config.NumberColumn("Close resmi terbaru", format="%.3f"),
+            "Official_Change_%": st.column_config.NumberColumn("Perubahan resmi", format="%.2f%%"),
+            "Official_Source": st.column_config.TextColumn("Sumber resmi", width="medium"),
             "Members": st.column_config.NumberColumn("Anggota", format="%.0f"),
             "Source_Detail": st.column_config.TextColumn("Detail sumber", width="large"),
         },
