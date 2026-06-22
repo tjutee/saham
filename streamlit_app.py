@@ -3112,12 +3112,20 @@ def render_index_comparison_chart(period="1y", selected_indices=None, scale_mode
     elif source_mode == "Online resmi + proxy missing":
         symbol_map = {label: INDEX_COMPARISON_SYMBOLS[label] for label in selected_indices}
         official_history, official_error, official_source = build_index_comparison_history(symbol_map, period=period)
-        available_official = official_history["Index"].dropna().unique().tolist() if not official_history.empty else []
-        missing_for_proxy = [label for label in selected_indices if label not in available_official]
+        if not official_history.empty:
+            official_counts = official_history.groupby("Index")["Date"].nunique()
+            sufficient_official = official_counts[official_counts.ge(5)].index.tolist()
+            short_official = official_counts[official_counts.lt(5)].index.tolist()
+            official_history = official_history[official_history["Index"].isin(sufficient_official)].copy()
+        else:
+            sufficient_official = []
+            short_official = []
+        missing_for_proxy = [label for label in selected_indices if label not in sufficient_official]
         proxy_history, proxy_error, _ = build_index_proxy_history(proxy_source, missing_for_proxy, period=period) if missing_for_proxy else (pd.DataFrame(), None, "history cache proxy")
         parts = [frame for frame in [official_history, proxy_history] if frame is not None and not frame.empty]
         index_history = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
-        index_error = official_error or proxy_error
+        short_note = f"Histori resmi terlalu pendek, memakai proxy: {', '.join(short_official)}" if short_official else None
+        index_error = short_note or official_error or proxy_error
         index_source = "online official + history cache proxy"
     else:
         index_history, index_error, index_source = build_index_proxy_history(proxy_source, selected_indices, period=period)
