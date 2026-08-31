@@ -1,3 +1,4 @@
+import io
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -10,7 +11,6 @@ import re
 import json
 import hashlib
 from pathlib import Path
-from io import StringIO
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 from datetime import timezone, timedelta
@@ -175,6 +175,58 @@ BASE_WEIGHTS = {
     "momentum": 10,
     "index_strength": 5,
 }
+
+# Score component weights — extracted from calculate_scores() for auditability
+VALUATION_COMPONENT_WEIGHTS = {"PER": 0.58, "PBV": 0.42}
+QUALITY_COMPONENT_WEIGHTS = {"ROE": 0.45, "ROA": 0.30, "NPM": 0.25}
+RISK_NONBANK_WEIGHTS = {"DER": 0.72, "Volatility": 0.28}
+RISK_BANK_WEIGHTS = {"CAR": 0.30, "NPL": 0.30, "BOPO": 0.25, "LDR": 0.15}
+LIQUIDITY_COMPONENT_WEIGHTS = {"Volume": 0.55, "Turnover": 0.45}
+MOMENTUM_COMPONENT_WEIGHTS = {"History": 0.60, "Trend": 0.20, "Daily": 0.20}
+HISTORY_MOMENTUM_WEIGHTS = {"Return_4W": 0.25, "Return_13W": 0.30, "Return_26W": 0.25, "Return_52W": 0.20}
+
+# Quantile cutoffs used to define "valid" (non-outlier) ranges for scoring
+SCORE_QUANTILE_CUTOFFS = {"PER": 0.95, "PBV": 0.95, "DER": 0.97}
+
+# Momentum scoring ranges: (low, high, center) passed to score_target_range
+MOMENTUM_RANGES = {
+    "Trend": (-7, 9, 2),
+    "Return_4W": (-20, 35, 8),
+    "Return_13W": (-25, 45, 12),
+    "Return_26W": (-35, 70, 18),
+    "Return_52W": (-45, 100, 25),
+}
+
+# LDR optimal range for banking risk
+LDR_RANGE = (70, 100)
+LDR_CENTER = 85
+
+# Penalty values applied to raw weighted score
+PENALTY_VALUES = {
+    "PER_PBV_NEGATIVE": 10,
+    "PROFITABILITY_NEGATIVE": 9,
+    "NPM_NEGATIVE": 6,
+    "VOLUME_LOW": 6,
+    "PRICE_INVALID": 25,
+    "DAILY_CHANGE_EXTREME": 6,
+    "THRESHOLD_PASS_LOW": 5,
+}
+VOLUME_PENALTY_THRESHOLD = 1_000_000
+DAILY_CHANGE_PENALTY_THRESHOLD = 25
+
+# Recommendation score thresholds
+RECOMMENDATION_THRESHOLDS = [
+    (78, "Strong Buy"),
+    (68, "Buy"),
+    (55, "Watchlist"),
+    (42, "Speculative"),
+]
+RECOMMENDATION_DEFAULT = "Avoid"
+
+# Risk level thresholds
+RISK_VOLUME_MIN = 10_000_000
+RISK_INTRADAY_MAX = 7
+RISK_DAILY_CHANGE_MAX = 10
 
 HISTORY_COLUMNS = {
     "4-wk %Pr. Chg.": "Return_4W",
@@ -1467,14 +1519,6 @@ def load_idx_universe_online():
     fallback = pd.DataFrame(columns=["Kode", "Nama Perusahaan", "Sektor", "Industry", "Universe_Source"])
     fallback.attrs["universe_error"] = "; ".join(errors) if errors else "Sumber universe online kosong."
     return fallback
-
-
-def ensure_expected_columns(dataframe, columns):
-    output = dataframe.copy()
-    for column in columns:
-        if column not in output.columns:
-            output[column] = np.nan
-    return output
 
 
 def get_history_cache_status():
@@ -5424,39 +5468,62 @@ def load_data(data_signature=None):
     return df, raw
 
 
-def calculate_scores(df, weights):
+def _df_parquet_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_parquet()
+
+
+def _weights_hash(weights: dict) -> str:
+    return hashlib.sha256(json.dumps(weights, sort_keys=True).encode()).hexdigest()[:16]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_score_pipeline(df_hash: str, weights_hash: str, df_parquet: bytes, weights_json: str):
+    df = pd.read_parquet(io.BytesIO(df_parquet))
+    weights = json.loads(weights_json)
+    return _score_pipeline(df, weights)
+
+
+def _score_pipeline(df, weights):
     scored = df.copy()
 
-    positive_per = scored["PER"].between(0.1, scored["PER"].quantile(0.95), inclusive="both")
-    positive_pbv = scored["PBV"].between(0.05, scored["PBV"].quantile(0.95), inclusive="both")
-    positive_der = scored["DER"].between(0, scored["DER"].quantile(0.97), inclusive="both")
+    positive_per = scored["PER"].between(0.1, scored["PER"].quantile(SCORE_QUANTILE_CUTOFFS["PER"]), inclusive="both")
+    positive_pbv = scored["PBV"].between(0.05, scored["PBV"].quantile(SCORE_QUANTILE_CUTOFFS["PBV"]), inclusive="both")
+    positive_der = scored["DER"].between(0, scored["DER"].quantile(SCORE_QUANTILE_CUTOFFS["DER"]), inclusive="both")
 
     scored["PER_Score"] = score_percentile(scored["PER"], higher_is_better=False, valid_mask=positive_per)
     scored["PBV_Score"] = score_percentile(scored["PBV"], higher_is_better=False, valid_mask=positive_pbv)
-    scored["Valuation_Score"] = (scored["PER_Score"] * 0.58) + (scored["PBV_Score"] * 0.42)
+    scored["Valuation_Score"] = (
+        scored["PER_Score"] * VALUATION_COMPONENT_WEIGHTS["PER"]
+        + scored["PBV_Score"] * VALUATION_COMPONENT_WEIGHTS["PBV"]
+    )
 
     scored["ROE_Score"] = score_percentile(scored["ROE"], higher_is_better=True, valid_mask=scored["ROE"] > 0)
     scored["ROA_Score"] = score_percentile(scored["ROA"], higher_is_better=True, valid_mask=scored["ROA"] > 0)
     scored["NPM_Score"] = score_percentile(scored["NPM"], higher_is_better=True, valid_mask=scored["NPM"] > 0)
     scored["Quality_Score"] = (
-        scored["ROE_Score"] * 0.45 + scored["ROA_Score"] * 0.30 + scored["NPM_Score"] * 0.25
+        scored["ROE_Score"] * QUALITY_COMPONENT_WEIGHTS["ROE"]
+        + scored["ROA_Score"] * QUALITY_COMPONENT_WEIGHTS["ROA"]
+        + scored["NPM_Score"] * QUALITY_COMPONENT_WEIGHTS["NPM"]
     )
 
     scored["DER_Score"] = score_percentile(scored["DER"], higher_is_better=False, valid_mask=positive_der)
     scored["Volatility_Score"] = score_percentile(
         scored["Intraday_Range_%"], higher_is_better=False, valid_mask=scored["Intraday_Range_%"] >= 0
     )
-    scored["Risk_Score"] = scored["DER_Score"] * 0.72 + scored["Volatility_Score"] * 0.28
+    scored["Risk_Score"] = (
+        scored["DER_Score"] * RISK_NONBANK_WEIGHTS["DER"]
+        + scored["Volatility_Score"] * RISK_NONBANK_WEIGHTS["Volatility"]
+    )
     banking_mask = scored.get("Threshold_Mode", pd.Series("", index=scored.index)).eq("Banking")
     scored["CAR_Score"] = score_percentile(scored.get("CAR", pd.Series(index=scored.index)), higher_is_better=True, valid_mask=scored.get("CAR", pd.Series(index=scored.index)).gt(0))
     scored["NPL_Score"] = score_percentile(scored.get("NPL", pd.Series(index=scored.index)), higher_is_better=False, valid_mask=scored.get("NPL", pd.Series(index=scored.index)).ge(0))
     scored["BOPO_Score"] = score_percentile(scored.get("BOPO", pd.Series(index=scored.index)), higher_is_better=False, valid_mask=scored.get("BOPO", pd.Series(index=scored.index)).gt(0))
-    scored["LDR_Score"] = score_target_range(scored.get("LDR", pd.Series(index=scored.index)), low=70, high=100, center=85)
+    scored["LDR_Score"] = score_target_range(scored.get("LDR", pd.Series(index=scored.index)), low=LDR_RANGE[0], high=LDR_RANGE[1], center=LDR_CENTER)
     scored["Banking_Risk_Score"] = (
-        scored["CAR_Score"] * 0.30
-        + scored["NPL_Score"] * 0.30
-        + scored["BOPO_Score"] * 0.25
-        + scored["LDR_Score"] * 0.15
+        scored["CAR_Score"] * RISK_BANK_WEIGHTS["CAR"]
+        + scored["NPL_Score"] * RISK_BANK_WEIGHTS["NPL"]
+        + scored["BOPO_Score"] * RISK_BANK_WEIGHTS["BOPO"]
+        + scored["LDR_Score"] * RISK_BANK_WEIGHTS["LDR"]
     )
     scored["Risk_Score"] = np.where(
         banking_mask,
@@ -5466,24 +5533,27 @@ def calculate_scores(df, weights):
 
     scored["Volume_Score"] = score_percentile(scored["Volume"], higher_is_better=True, valid_mask=scored["Volume"] > 0)
     scored["Turnover_Score"] = score_percentile(scored["Turnover"], higher_is_better=True, valid_mask=scored["Turnover"] > 0)
-    scored["Liquidity_Score"] = scored["Volume_Score"] * 0.55 + scored["Turnover_Score"] * 0.45
+    scored["Liquidity_Score"] = (
+        scored["Volume_Score"] * LIQUIDITY_COMPONENT_WEIGHTS["Volume"]
+        + scored["Turnover_Score"] * LIQUIDITY_COMPONENT_WEIGHTS["Turnover"]
+    )
 
-    scored["Trend_Score"] = score_target_range(scored["%Change"], low=-7, high=9, center=2)
-    scored["Return_4W_Score"] = score_target_range(scored.get("Return_4W", pd.Series(index=scored.index)), low=-20, high=35, center=8)
-    scored["Return_13W_Score"] = score_target_range(scored.get("Return_13W", pd.Series(index=scored.index)), low=-25, high=45, center=12)
-    scored["Return_26W_Score"] = score_target_range(scored.get("Return_26W", pd.Series(index=scored.index)), low=-35, high=70, center=18)
-    scored["Return_52W_Score"] = score_target_range(scored.get("Return_52W", pd.Series(index=scored.index)), low=-45, high=100, center=25)
+    scored["Trend_Score"] = score_target_range(scored["%Change"], *MOMENTUM_RANGES["Trend"])
+    scored["Return_4W_Score"] = score_target_range(scored.get("Return_4W", pd.Series(index=scored.index)), *MOMENTUM_RANGES["Return_4W"])
+    scored["Return_13W_Score"] = score_target_range(scored.get("Return_13W", pd.Series(index=scored.index)), *MOMENTUM_RANGES["Return_13W"])
+    scored["Return_26W_Score"] = score_target_range(scored.get("Return_26W", pd.Series(index=scored.index)), *MOMENTUM_RANGES["Return_26W"])
+    scored["Return_52W_Score"] = score_target_range(scored.get("Return_52W", pd.Series(index=scored.index)), *MOMENTUM_RANGES["Return_52W"])
     scored["History_Momentum_Score"] = (
-        scored["Return_4W_Score"] * 0.25
-        + scored["Return_13W_Score"] * 0.30
-        + scored["Return_26W_Score"] * 0.25
-        + scored["Return_52W_Score"] * 0.20
+        scored["Return_4W_Score"] * HISTORY_MOMENTUM_WEIGHTS["Return_4W"]
+        + scored["Return_13W_Score"] * HISTORY_MOMENTUM_WEIGHTS["Return_13W"]
+        + scored["Return_26W_Score"] * HISTORY_MOMENTUM_WEIGHTS["Return_26W"]
+        + scored["Return_52W_Score"] * HISTORY_MOMENTUM_WEIGHTS["Return_52W"]
     )
     scored["Momentum_Score"] = (
-        scored["History_Momentum_Score"] * 0.60
-        + scored["Trend_Score"] * 0.20
+        scored["History_Momentum_Score"] * MOMENTUM_COMPONENT_WEIGHTS["History"]
+        + scored["Trend_Score"] * MOMENTUM_COMPONENT_WEIGHTS["Trend"]
         + score_percentile(scored["%Change"], higher_is_better=True, valid_mask=scored["%Change"].between(-15, 20))
-        * 0.20
+        * MOMENTUM_COMPONENT_WEIGHTS["Daily"]
     )
 
     scored["Index_Score"] = score_percentile(
@@ -5500,26 +5570,21 @@ def calculate_scores(df, weights):
     ) / sum(weights.values())
 
     penalty = np.zeros(len(scored))
-    penalty += np.where(scored["PER"].le(0) | scored["PBV"].le(0), 10, 0)
-    penalty += np.where(scored["ROE"].le(0) | scored["ROA"].le(0), 9, 0)
-    penalty += np.where(scored["NPM"].le(0), 6, 0)
-    penalty += np.where(scored["Volume"].lt(1_000_000), 6, 0)
-    penalty += np.where(scored["Penutupan"].le(0), 25, 0)
-    penalty += np.where(scored["%Change"].abs().gt(25), 6, 0)
+    penalty += np.where(scored["PER"].le(0) | scored["PBV"].le(0), PENALTY_VALUES["PER_PBV_NEGATIVE"], 0)
+    penalty += np.where(scored["ROE"].le(0) | scored["ROA"].le(0), PENALTY_VALUES["PROFITABILITY_NEGATIVE"], 0)
+    penalty += np.where(scored["NPM"].le(0), PENALTY_VALUES["NPM_NEGATIVE"], 0)
+    penalty += np.where(scored["Volume"].lt(VOLUME_PENALTY_THRESHOLD), PENALTY_VALUES["VOLUME_LOW"], 0)
+    penalty += np.where(scored["Penutupan"].le(0), PENALTY_VALUES["PRICE_INVALID"], 0)
+    penalty += np.where(scored["%Change"].abs().gt(DAILY_CHANGE_PENALTY_THRESHOLD), PENALTY_VALUES["DAILY_CHANGE_EXTREME"], 0)
     if "Threshold_Pass_Ratio" in scored.columns:
-        penalty += np.where(scored["Threshold_Pass_Ratio"].lt(40), 5, 0)
+        penalty += np.where(scored["Threshold_Pass_Ratio"].lt(40), PENALTY_VALUES["THRESHOLD_PASS_LOW"], 0)
 
     scored["Penalty"] = penalty
     scored["Score"] = (weighted_score - scored["Penalty"]).clip(0, 100)
 
-    conditions = [
-        scored["Score"] >= 78,
-        scored["Score"] >= 68,
-        scored["Score"] >= 55,
-        scored["Score"] >= 42,
-    ]
-    labels = ["Strong Buy", "Buy", "Watchlist", "Speculative"]
-    scored["Recommendation"] = np.select(conditions, labels, default="Avoid")
+    conditions = [scored["Score"] >= threshold for threshold, _ in RECOMMENDATION_THRESHOLDS]
+    labels = [label for _, label in RECOMMENDATION_THRESHOLDS]
+    scored["Recommendation"] = np.select(conditions, labels, default=RECOMMENDATION_DEFAULT)
 
     banking_high_risk = banking_mask & (
         (scored.get("NPL", pd.Series(index=scored.index)) > 5)
@@ -5528,15 +5593,15 @@ def calculate_scores(df, weights):
         | (scored.get("LDR", pd.Series(index=scored.index)) > 110)
         | (scored["ROE"] < 0)
         | (scored["NPM"] < 0)
-        | (scored["Volume"] < 1_000_000)
+        | (scored["Volume"] < VOLUME_PENALTY_THRESHOLD)
     )
     banking_medium_risk = banking_mask & (
         (scored.get("NPL", pd.Series(index=scored.index)) > 3.5)
         | (scored.get("BOPO", pd.Series(index=scored.index)) > 80)
-        | (scored.get("LDR", pd.Series(index=scored.index)) < 75)
-        | (scored.get("LDR", pd.Series(index=scored.index)) > 100)
-        | (scored["Volume"] < 10_000_000)
-        | (scored["%Change"].abs() > 10)
+        | (scored.get("LDR", pd.Series(index=scored.index)) < LDR_RANGE[0])
+        | (scored.get("LDR", pd.Series(index=scored.index)) > LDR_RANGE[1])
+        | (scored["Volume"] < RISK_VOLUME_MIN)
+        | (scored["%Change"].abs() > RISK_DAILY_CHANGE_MAX)
     )
     nonbank_mask = ~banking_mask
     high_risk = banking_high_risk | (
@@ -5545,7 +5610,7 @@ def calculate_scores(df, weights):
             (scored["DER"] > 2.5)
             | (scored["ROE"] < 0)
             | (scored["NPM"] < 0)
-            | (scored["Volume"] < 1_000_000)
+            | (scored["Volume"] < VOLUME_PENALTY_THRESHOLD)
             | (scored["Intraday_Range_%"] > 12)
         )
     )
@@ -5553,13 +5618,21 @@ def calculate_scores(df, weights):
         nonbank_mask
         & (
             (scored["DER"] > 1.2)
-            | (scored["Volume"] < 10_000_000)
-            | (scored["Intraday_Range_%"] > 7)
-            | (scored["%Change"].abs() > 10)
+            | (scored["Volume"] < RISK_VOLUME_MIN)
+            | (scored["Intraday_Range_%"] > RISK_INTRADAY_MAX)
+            | (scored["%Change"].abs() > RISK_DAILY_CHANGE_MAX)
         )
     )
     scored["Risk_Level"] = np.select([high_risk, medium_risk], ["High", "Medium"], default="Low")
     return scored.sort_values("Score", ascending=False)
+
+
+def calculate_scores(df, weights):
+    df_parquet = _df_parquet_bytes(df)
+    df_hash = hashlib.sha256(df_parquet).hexdigest()[:16]
+    weights_json = json.dumps(weights, sort_keys=True)
+    weights_hash = hashlib.sha256(weights_json.encode()).hexdigest()[:16]
+    return _cached_score_pipeline(df_hash, weights_hash, df_parquet, weights_json)
 
 
 data_dependency_signature = build_data_dependency_signature()
