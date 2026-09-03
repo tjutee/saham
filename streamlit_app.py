@@ -1495,7 +1495,7 @@ def load_idx_universe_online():
 
     for url in IDX_COMPANY_PROFILE_URLS:
         try:
-            payload = pd.read_json(StringIO(read_url_text(url)))
+            payload = pd.read_json(io.StringIO(read_url_text(url)))
             if isinstance(payload, pd.DataFrame) and not payload.empty:
                 if "data" in payload.columns and payload["data"].apply(lambda value: isinstance(value, dict)).any():
                     payload = pd.DataFrame(payload["data"].dropna().tolist())
@@ -1507,7 +1507,7 @@ def load_idx_universe_online():
             errors.append(f"IDX: {exc}")
 
     try:
-        tables = pd.read_html(StringIO(read_url_text(STOCKANALYSIS_IDX_URL)))
+        tables = pd.read_html(io.StringIO(read_url_text(STOCKANALYSIS_IDX_URL)))
         for table in tables:
             universe = normalize_universe_frame(table, "StockAnalysis online")
             if not universe.empty:
